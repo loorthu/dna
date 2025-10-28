@@ -68,9 +68,60 @@ The application communicates with Vexa to:
 
 For detailed Vexa setup instructions, API documentation, and troubleshooting, visit [https://vexa.ai/get-started](https://vexa.ai/get-started).
 
-## ShotGrid Integration
+#### API Routing (Optional)
 
-The application integrates directly with ShotGrid (formerly Shotgun) to provide seamless access to your studio's project and playlist data. This allows users to select shots directly from existing ShotGrid playlists rather than manually uploading CSV files.
+The backend provides optional VEXA API routing to bypass CORS restrictions when accessing VEXA services directly from the frontend.
+
+**Configuration:**
+Set the following environment variables in your `.env` file:
+
+```bash
+# VEXA Configuration
+VEXA_BASE_URL=http://localhost:18056
+VEXA_API_KEY=your_vexa_api_key
+VEXA_ADMIN_KEY=your_vexa_admin_key
+```
+
+If `VEXA_BASE_URL` is not configured, the VEXA routing endpoints will be disabled.
+
+**Available Endpoints:**
+
+HTTP Endpoints:
+- `GET /vexa/bots/status` - Get running bots status
+- `POST /vexa/bots` - Request a new bot
+- `DELETE /vexa/bots/{platform}/{native_meeting_id}` - Stop a bot
+
+WebSocket Proxy:
+- `WS /vexa/ws` - WebSocket proxy to VEXA backend
+
+The WebSocket proxy forwards all query parameters and messages bidirectionally between your frontend and the VEXA backend, allowing you to use the same client code for both direct VEXA connections and proxied connections.
+
+**Usage:**
+To use the backend VEXA routing, update your frontend `.local.env` file to point to the backend instead of the VEXA API directly:
+
+```bash
+# Frontend .local.env - Direct VEXA connection
+VITE_VEXA_BASE_URL=http://localhost:18056
+
+# Frontend .local.env - Via backend proxy (when CORS is an issue)
+VITE_VEXA_BASE_URL=http://localhost:8000/vexa
+```
+
+Frontend code can use the same WebSocket connection logic for both scenarios:
+
+```javascript
+// Direct VEXA connection
+const ws = new WebSocket('ws://localhost:18056/ws?api_key=your_key&platform=zoom&...');
+
+// Proxied through backend (when CORS is an issue)
+const ws = new WebSocket('ws://localhost:8000/vexa/ws?api_key=your_key&platform=zoom&...');
+```
+
+The backend will automatically proxy all messages and handle connection lifecycle management.
+
+## ShotGrid Integration (Optional)
+
+The application integrates directly with ShotGrid (formerly Shotgun) to provide seamless access to your studio's project and playlist data. This allows users to select shots directly from existing ShotGrid playlists rather than manually uploading CSV files. Note this is optional and the application can work with traditional CSV import/export for other production tracking systems.
 
 ### ShotGrid Setup
 
@@ -103,8 +154,6 @@ The ShotGrid integration provides:
 - **Playlist Access**: View recent playlists for selected projects
 - **Shot Import**: Import shots/versions directly from ShotGrid playlists
 - **Demo Mode**: Anonymize ShotGrid data for demonstrations (see Demo Mode section)
-
-### Optional ShotGrid Integration
 
 **ShotGrid integration is completely optional.** The application can function without ShotGrid by using CSV file uploads for shot lists instead.
 
@@ -407,3 +456,5 @@ See the main repository for licensing information.
 ## Support
 
 For issues and questions, please use the GitHub issues tracker in the main repository.
+
+
