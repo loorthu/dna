@@ -30,13 +30,15 @@ class EmailNotesRequest(BaseModel):
 def get_gmail_service():
     creds = None
     if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        except Exception as e:
+            raise RuntimeError(f"Google credentials file is missing or invalid: {e}")
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            with open(TOKEN_FILE, 'w') as token:
-                token.write(creds.to_json())
+            raise RuntimeError("Google credentials are missing or invalid. Please contact your administrator.")
     return build('gmail', 'v1', credentials=creds)
 
 def create_gmail_message(sender, to, subject, html_content):
@@ -54,11 +56,10 @@ def send_gmail_email(to, subject, html_content):
     return sent
 
 @router.post("/email-notes")
-async def email_notes(data: EmailNotesRequest, background_tasks: BackgroundTasks):
+async def email_notes(data: EmailNotesRequest):
     """
     Send the notes as an HTML table to the given email address using Gmail API.
     """
-    # Build HTML table
     html = """
     <h2>Dailies Shot Notes</h2>
     <table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;font-family:sans-serif;'>
@@ -81,14 +82,18 @@ async def email_notes(data: EmailNotesRequest, background_tasks: BackgroundTasks
         html += "</tr>"
     html += "</tbody></table>"
     subject = "Dailies Shot Notes"
-    def send_task():
+    try:
         send_gmail_email(data.email, subject, html)
-    background_tasks.add_task(send_task)
-    return {"status": "success", "message": f"Notes sent to {data.email}"}
+        return {"status": "success", "message": f"Notes sent to {data.email}"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": f"Email service error: {str(e)}"}
 
 def main():
     """
     Standalone test for sending a Gmail message using the Gmail API.
+    If token.json does not exist, run OAuth flow to create it.
     """
     TO_EMAIL = sys.argv[1] if len(sys.argv) > 1 else GMAIL_SENDER
     FROM_EMAIL = GMAIL_SENDER
@@ -97,6 +102,14 @@ def main():
     <h2>Hello from Gmail API!</h2>
     <p>This is a test email sent using the Gmail API and Python.</p>
     '''
+    creds = None
+    if not os.path.exists(TOKEN_FILE):
+        print("token.json not found. Running OAuth flow to create it...")
+        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+        creds = flow.run_local_server(port=0)
+        with open(TOKEN_FILE, 'w') as token:
+            token.write(creds.to_json())
+        print("token.json created.")
     service = get_gmail_service()
     message = create_gmail_message(FROM_EMAIL, TO_EMAIL, SUBJECT, HTML_CONTENT)
     sent = service.users().messages().send(userId="me", body=message).execute()
