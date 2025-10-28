@@ -391,29 +391,13 @@ function App() {
 
   // --- Transcript Download Helper ---
   const downloadTranscript = () => {
-    if (!Object.keys(shotSegments).length) return;
-    
+    if (!rows.length) return;
     let transcriptContent = 'Audio Transcript\n================\n\n';
-    
-    // Iterate through each shot in shotSegments
-    Object.keys(shotSegments).forEach(shotKey => {
-      transcriptContent += `${shotKey}\n`;
+    rows.forEach(row => {
+      transcriptContent += `${row.shot}\n`;
       transcriptContent += '-------------------\n';
-      
-      const segments = shotSegments[shotKey];
-      // Sort segments by timestamp
-      const sortedTimestamps = Object.keys(segments).sort();
-      
-      sortedTimestamps.forEach(timestamp => {
-        const segment = segments[timestamp];
-        const speaker = segment.speaker || 'Unknown';
-        const text = segment.combinedText || '';
-        transcriptContent += `[${timestamp}] ${speaker}:\n${text}\n\n`;
-      });
-      
-      transcriptContent += '\n';
+      transcriptContent += `${row.transcription || ''}\n\n`;
     });
-    
     // Create blob and trigger download
     const blob = new Blob([transcriptContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
