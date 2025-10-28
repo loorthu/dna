@@ -250,6 +250,14 @@ DEMO_MODE=false
    - Enable Gmail API
    - Create OAuth 2.0 credentials
    - Download the credentials and save as `client_secret.json` in the backend directory
+   - **Generate `token.json` for Gmail API authentication:**
+     - Run the following command in your backend directory:
+       ```bash
+       python email_service.py
+       ```
+     - The first time you run this, it will launch a browser window for Google authentication.
+     - After you log in and authorize, a `token.json` file will be created automatically.
+     - This file is required for sending emails via the Gmail API.
 
 ### Frontend Setup
 

@@ -860,7 +860,16 @@ function App() {
                           if (res.ok && data.status === "success") {
                             setEmailStatus({ msg: data.message, type: "success" });
                           } else {
-                            setEmailStatus({ msg: data.message || "Failed to send email", type: "error" });
+                            // Enhanced error handling for credential issues
+                            let errorMsg = data.message || "Failed to send email";
+                            if (
+                              errorMsg.toLowerCase().includes("jsondecodeerror") ||
+                              errorMsg.toLowerCase().includes("credentials") ||
+                              errorMsg.includes("Expecting value: line 1 column 1 (char 0)")
+                            ) {
+                              errorMsg = "Email service error: Google credentials are missing or invalid. Please contact your administrator.";
+                            }
+                            setEmailStatus({ msg: errorMsg, type: "error" });
                           }
                         } catch (err) {
                           setEmailStatus({ msg: "Network error while sending email", type: "error" });
