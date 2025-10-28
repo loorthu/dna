@@ -20,93 +20,7 @@ except ImportError:
     pass
 
 # Default Base URL (can be overridden by environment variable)
-DEFAULT_BASE_URL = os.getenv("VITE_VEXA_API_URL", "http://localhost:18056")
-# Webhook URL can be set via environment variable
-WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "ws://localhost:18056/ws")
-
-class WebhookHandler(BaseHTTPRequestHandler):
-    """Simple HTTP handler for receiving webhook notifications"""
-    
-    def do_POST(self):
-        if self.path == '/webhook':
-            # Get content length
-            content_length = int(self.headers.get('Content-Length', 0))
-            
-            # Read the POST data
-            post_data = self.rfile.read(content_length)
-            
-            try:
-                # Parse JSON data
-                webhook_data = json.loads(post_data.decode('utf-8'))
-                
-                # Print webhook event details
-                print("\n" + "=" * 60)
-                print("🎉 WEBHOOK EVENT RECEIVED!")
-                print("=" * 60)
-                print(f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-                print(f"Event Type: {webhook_data.get('event_type', 'unknown')}")
-                print(f"Platform: {webhook_data.get('platform', 'N/A')}")
-                print(f"Meeting ID: {webhook_data.get('native_meeting_id', 'N/A')}")
-                print(f"Bot ID: {webhook_data.get('bot_id', 'N/A')}")
-                print(f"Status: {webhook_data.get('status', 'N/A')}")
-                print(f"Data: {json.dumps(webhook_data.get('data', {}), indent=2)}")
-                print("=" * 60)
-                
-                # Send success response
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "status": "success",
-                    "message": "Webhook received and processed"
-                }).encode())
-                
-            except json.JSONDecodeError as e:
-                print(f"❌ Failed to parse webhook JSON: {e}")
-                self.send_response(400)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({
-                    "error": "Invalid JSON"
-                }).encode())
-        else:
-            # Handle other paths
-            self.send_response(404)
-            self.end_headers()
-    
-    def do_GET(self):
-        if self.path == '/webhook' or self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(b"""
-            <html>
-            <body>
-                <h1>Webhook Test Server</h1>
-                <p>This server is ready to receive webhook notifications.</p>
-                <p>POST to /webhook to send webhook events.</p>
-            </body>
-            </html>
-            """)
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
-        # Suppress default HTTP server logging
-        pass
-
-def start_webhook_server(port=8080):
-    """Start a simple HTTP server to receive webhooks"""
-    server = HTTPServer(('localhost', port), WebhookHandler)
-    print(f"🚀 Webhook server started on http://localhost:{port}")
-    print(f"📡 Webhook endpoint: http://localhost:{port}/webhook")
-    
-    # Start server in a separate thread
-    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-    server_thread.start()
-    
-    return server, server_thread 
+DEFAULT_BASE_URL = os.getenv("VEXA_BASE_URL", "http://localhost:18056")
 
 class VexaClientError(Exception):
     """Custom exception for Vexa client errors."""
@@ -137,7 +51,6 @@ class VexaClient:
         self._api_key = api_key
         self._admin_key = admin_key
         self._session = requests.Session()
-        print("Client with api_key:", api_key, "admin_key:", admin_key, "base_url:", base_url)
 
     def _get_headers(self, api_type: str = 'user') -> Dict[str, str]:
         """Prepares headers for the request based on API type."""
@@ -178,16 +91,14 @@ class VexaClient:
             requests.exceptions.RequestException: For connection or other request errors.
             requests.exceptions.HTTPError: For non-2xx status codes.
         """
-        print(f"\n--- VexaClient _request ---", self.base_url)
         url = urljoin(self.base_url, path)
-        print("url:", url)
         headers = self._get_headers(api_type)
         
         #Debug output - print URL and headers for troubleshooting
-        print(f"\nDEBUG: Making {method} request to {url}")
-        print(f"DEBUG: Headers: {headers}")
-        print(f"DEBUG: Params: {params}")
-        print(f"DEBUG: JSON data: {json_data}")
+        # print(f"\nDEBUG: Making {method} request to {url}")
+        # print(f"DEBUG: Headers: {headers}")
+        # print(f"DEBUG: Params: {params}")
+        # print(f"DEBUG: JSON data: {json_data}")
         
         try:
             response = self._session.request(
@@ -198,12 +109,12 @@ class VexaClient:
                 json=json_data
             )
             #Debug response
-            print(f"DEBUG: Response status: {response.status_code}")
-            print(f"DEBUG: Response headers: {dict(response.headers)}")
-            try:
-                print(f"DEBUG: Response content: {response.text[:500]}...")
-            except:
-                print(f"DEBUG: Could not display response content")
+            # print(f"DEBUG: Response status: {response.status_code}")
+            # print(f"DEBUG: Response headers: {dict(response.headers)}")
+            # try:
+            #     print(f"DEBUG: Response content: {response.text[:500]}...")
+            # except:
+            #     print(f"DEBUG: Could not display response content")
                 
             response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
             
@@ -242,7 +153,6 @@ class VexaClient:
         Returns:
             Dictionary representing the created/updated Meeting object.
         """
-        print("At request_bot method")
         payload = {
             "platform": platform, 
             "native_meeting_id": native_meeting_id
@@ -616,92 +526,7 @@ if __name__ == "__main__":
         client = VexaClient(api_key=user_token)
         bots = client.get_running_bots_status()
         for bot in bots:
+            print("Stopping bot:", bot)
             client.stop_bot(bot.get('platform'), bot.get('native_meeting_id'))
         print(f"client {u['id']} has {bots} (token: {user_token})")
 
-    # # Simple webhook testing with local HTTP server
-    # client = VexaClient(api_key=os.getenv('VEXA_API_KEY'))
-
-    # try:
-    #     bots = client.get_running_bots_status()
-    #     for i, bot in enumerate(bots):
-    #         print(f"[{(i+1)*5}s] Bot status: {bot.get('status')}")
-    #         #ret = client.stop_bot(bot.get('platform'), bot.get('native_meeting_id'))
-    #         #print(ret)
-    # except Exception as e:
-    #     print(f"[{(i+1)*5}s] Status check error: {e}")
-    
-    # print("=" * 60)
-    # print("WEBHOOK TESTING WITH LOCAL SERVER")
-    # print("=" * 60)
-    
-    
-    # print("Starting local webhook server...")
-    
-    # # Start local webhook server
-    # try:
-    #     webhook_server, server_thread = start_webhook_server(port=8080)
-    #     webhook_base_url = "http://localhost:8080"
-    #     print("✅ Local webhook server started successfully!")
-    # except Exception as e:
-    #     print(f"❌ Failed to start local server: {e}")
-    #     print("You can set WEBHOOK_BASE_URL environment variable instead.")
-    #     exit()
-
-    # webhook_base_url =  'https://40e5d5e2807b.ngrok-free.app' #False #os.getenv('WEBHOOK_BASE_URL')
-    # webhook_url = f"{webhook_base_url}/webhook"
-    # print(f"Webhook endpoint: {webhook_url}")
-    
-    # # Test 1: Set webhook URL
-    # print("\n" + "=" * 40)
-    # print("Setting webhook URL...")
-    # try:
-    #     result = client.set_webhook_url(webhook_url)
-    #     print(f"✅ Webhook URL configured successfully!")
-    # except Exception as e:
-    #     print(f"❌ Failed to set webhook URL: {e}")
-    #     webhook_server.shutdown()
-    #     exit()
-    
-    # # Test 2: Request bot for a meeting
-    # print("\n" + "=" * 40)
-    # print("Bot request test")
-    # print("=" * 40)
-    
-    # test_meeting = input("Enter a Google Meet ID to test (or press Enter to skip): ").strip()
-    
-    # if test_meeting:
-    #     try:
-    #         print(f"Requesting bot to join meeting: {test_meeting}")
-    #         bot_result = client.request_bot('google_meet', test_meeting)
-    #         print(f"✅ Bot request successful!")
-            
-    #         print(f"\n📡 Webhook events will be sent to: {webhook_url}")
- 
-    #         # Monitor bot status and wait for webhooks
-    #         try:
-    #             bots = client.get_running_bots_status()
-    #             for i, bot in enumerate(bots):
-    #                 if bot.get('native_meeting_id') == test_meeting:
-    #                     print(f"[{(i+1)*5}s] Bot status: {bot.get('status')}")
-    #                     break
-    #         except Exception as e:
-    #             print(f"[{(i+1)*5}s] Status check error: {e}")
-                    
-    #     except Exception as e:
-    #         print(f"❌ Bot request failed: {e}")
-
-    #     print("\nLocal webhook server is running. You can:")
-    #     print("1. Test it manually: curl -X POST http://localhost:8080/webhook -d '{\"test\":\"data\"}'")
-    #     print("2. Or request a bot from another terminal using the same webhook URL")
-    #     print("\nPress Ctrl+C to stop the server...")
-        
-    #     try:
-    #         while True:
-    #             time.sleep(1)
-    #     except KeyboardInterrupt:
-    #         print("\nShutting down...")
-    
-    # # Cleanup
-    # webhook_server.shutdown()
-    
