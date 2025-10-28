@@ -4,10 +4,12 @@ import os
 import sys
 import base64
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+import smtplib
 
 # Load environment variables from .env file (optional)
 try:
@@ -20,6 +22,12 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 CREDENTIALS_FILE = 'client_secret.json'  # Place this in your backend dir
 TOKEN_FILE = 'token.json'
 GMAIL_SENDER = os.getenv('GMAIL_SENDER')
+EMAIL_PROVIDER = os.getenv('EMAIL_PROVIDER', 'gmail')
+SMTP_HOST = os.getenv('SMTP_HOST')
+SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+SMTP_USER = os.getenv('SMTP_USER')
+SMTP_PASSWORD = os.getenv('SMTP_PASSWORD')
+SMTP_TLS = os.getenv('SMTP_TLS', 'true').lower() == 'true'
 
 router = APIRouter()
 
@@ -55,6 +63,28 @@ def send_gmail_email(to, subject, html_content):
     sent = service.users().messages().send(userId="me", body=message).execute()
     return sent
 
+def send_smtp_email(to, subject, html_content):
+    msg = MIMEMultipart()
+    msg['From'] = GMAIL_SENDER
+    msg['To'] = to
+    msg['Subject'] = subject
+    msg.attach(MIMEText(html_content, 'html'))
+    try:
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        if SMTP_TLS:
+            server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(GMAIL_SENDER, to, msg.as_string())
+        server.quit()
+    except Exception as e:
+        raise RuntimeError(f"SMTP email send failed: {e}")
+
+def send_email(to, subject, html_content):
+    if EMAIL_PROVIDER == 'smtp':
+        send_smtp_email(to, subject, html_content)
+    else:
+        send_gmail_email(to, subject, html_content)
+
 @router.post("/email-notes")
 async def email_notes(data: EmailNotesRequest):
     """
@@ -83,7 +113,7 @@ async def email_notes(data: EmailNotesRequest):
     html += "</tbody></table>"
     subject = "Dailies Shot Notes"
     try:
-        send_gmail_email(data.email, subject, html)
+        send_email(data.email, subject, html)
         return {"status": "success", "message": f"Notes sent to {data.email}"}
     except Exception as e:
         import traceback
