@@ -88,24 +88,33 @@ function App() {
       await startWebSocketTranscription(
         meetingIdForWS,
         (segments) => {
-          //console.log('🟢 WebSocket Segments:', segments);
+          // --- WORKAROUND: Some platforms (e.g. vexa) never send 'active' status, but do send transcript segments ---
+          // If we receive transcript segments and bot is not marked active, flip bot status to 'active'
+          if (segments && segments.length > 0 && !botIsActive) {
+            setBotIsActive(true);
+            setStatus({ msg: 'Bot Status: active', type: 'success' });
+          }
+          console.log('🟢 WebSocket Segments:', segments);
           updateTranscriptionFromSegments(segments);
         },
         // onTranscriptFinalized (optional, not used here)
         () => {},
         // onMeetingStatus
         (statusValue) => {
-          const isActiveStatus = statusValue === 'active' || statusValue === 'test-mode-running';
-          setStatus({ msg: `Bot Status: ${statusValue}`, type: isActiveStatus ? 'success' : 'info' });
-          setBotIsActive(isActiveStatus);
-          if (waitingForActive && isActiveStatus) {
-            setWaitingForActive(false);
-          }
-          // Stop stream when status is 'completed' or 'error'
-          if (statusValue === 'completed' || statusValue === 'error') {
-            setBotIsActive(false);
-            setStatus({ msg: `Bot Status: ${statusValue}`, type: 'info' });
-            stopTranscriptStream();
+          // Only update status if bot is not already active, or if status is 'completed' or 'error'
+          if (!botIsActive || statusValue === 'completed' || statusValue === 'error') {
+            const isActiveStatus = statusValue === 'active' || statusValue === 'test-mode-running';
+            setStatus({ msg: `Bot Status: ${statusValue}`, type: isActiveStatus ? 'success' : 'info' });
+            setBotIsActive(isActiveStatus);
+            if (waitingForActive && isActiveStatus) {
+              setWaitingForActive(false);
+            }
+            // Stop stream when status is 'completed' or 'error'
+            if (statusValue === 'completed' || statusValue === 'error') {
+              setBotIsActive(false);
+              setStatus({ msg: `Bot Status: ${statusValue}`, type: 'info' });
+              stopTranscriptStream();
+            }
           }
         },
         // onError
