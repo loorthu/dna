@@ -1,6 +1,10 @@
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from vexa_client import VexaClient
 import os
+import httpx
+from starlette.websockets import WebSocketState
+from urllib.parse import urlencode
+import websockets
 
 router = APIRouter(prefix="/vexa", tags=["vexa"])
 
@@ -41,3 +45,41 @@ async def delete_bot_route(platform: str, native_meeting_id: str):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.websocket("/ws")
+async def vexa_ws_proxy(websocket: WebSocket):
+    await websocket.accept()
+    query_params = dict(websocket._query_params)
+    vexa_ws_url = f"{BASE_URL.replace('http', 'ws')}/ws?{urlencode(query_params)}"
+
+    try:
+        vexa_ws = await websockets.connect(vexa_ws_url)
+        try:
+            async def from_frontend():
+                while websocket.application_state == WebSocketState.CONNECTED:
+                    try:
+                        data = await websocket.receive_text()
+                        await vexa_ws.send(data)
+                    except Exception:
+                        break
+            async def from_vexa():
+                try:
+                    async for msg in vexa_ws:
+                        await websocket.send_text(msg)
+                except Exception:
+                    pass
+            import asyncio
+            tasks = [asyncio.create_task(from_frontend()), asyncio.create_task(from_vexa())]
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+        finally:
+            await vexa_ws.close()
+    except WebSocketDisconnect:
+        print("Frontend disconnected")
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close()
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+        if websocket.application_state == WebSocketState.CONNECTED:
+            await websocket.close(code=1011, reason=str(e))
