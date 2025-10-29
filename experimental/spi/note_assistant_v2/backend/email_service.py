@@ -21,7 +21,7 @@ except ImportError:
 SCOPES = ['https://www.googleapis.com/auth/gmail.send']
 CREDENTIALS_FILE = 'client_secret.json'  # Place this in your backend dir
 TOKEN_FILE = 'token.json'
-GMAIL_SENDER = os.getenv('GMAIL_SENDER')
+EMAIL_SENDER = os.getenv('EMAIL_SENDER')
 EMAIL_PROVIDER = os.getenv('EMAIL_PROVIDER', 'gmail')
 SMTP_HOST = os.getenv('SMTP_HOST')
 SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
@@ -59,23 +59,32 @@ def create_gmail_message(sender, to, subject, html_content):
 
 def send_gmail_email(to, subject, html_content):
     service = get_gmail_service()
-    message = create_gmail_message(GMAIL_SENDER, to, subject, html_content)
+    message = create_gmail_message(EMAIL_SENDER, to, subject, html_content)
     sent = service.users().messages().send(userId="me", body=message).execute()
     return sent
 
-def send_smtp_email(to, subject, html_content):
-    msg = MIMEMultipart()
-    msg['From'] = GMAIL_SENDER
-    msg['To'] = to
+def send_smtp_email(to, subject, html_content, cc=None, bcc=None):
+    recipients = [to]
+    if cc:
+        recipients += cc
+    if bcc:
+        recipients += bcc
+    msg = MIMEMultipart('')
     msg['Subject'] = subject
-    msg.attach(MIMEText(html_content, 'html'))
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = ','.join([to])
+    if cc:
+        msg['Cc'] = ','.join(cc)
+    msg.attach(MIMEText(html_content, 'html', 'utf-8'))
     try:
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        smtp_msg = smtplib.SMTP()
+        smtp_msg.connect(SMTP_HOST, SMTP_PORT)
         if SMTP_TLS:
-            server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(GMAIL_SENDER, to, msg.as_string())
-        server.quit()
+            smtp_msg.starttls()
+        if SMTP_USER and SMTP_PASSWORD:
+            smtp_msg.login(SMTP_USER, SMTP_PASSWORD)
+        smtp_msg.sendmail(EMAIL_SENDER, recipients, msg.as_string())
+        smtp_msg.close()
     except Exception as e:
         raise RuntimeError(f"SMTP email send failed: {e}")
 
@@ -125,8 +134,8 @@ def main():
     Standalone test for sending a Gmail message using the Gmail API.
     If token.json does not exist, run OAuth flow to create it.
     """
-    TO_EMAIL = sys.argv[1] if len(sys.argv) > 1 else GMAIL_SENDER
-    FROM_EMAIL = GMAIL_SENDER
+    TO_EMAIL = sys.argv[1] if len(sys.argv) > 1 else EMAIL_SENDER
+    FROM_EMAIL = EMAIL_SENDER
     SUBJECT = 'Gmail API Test Email'
     HTML_CONTENT = '''
     <h2>Hello from Gmail API!</h2>
