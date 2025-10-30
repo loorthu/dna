@@ -20,16 +20,16 @@ default:
     {conversation}
 
   models:
-    - display_name: "GPT-4o"
+    - display_name: "ChatGPT"
       model_name: "gpt-4o"
       provider: "openai"
-    - display_name: "Claude 3 Sonnet"
+    - display_name: "Claude"
       model_name: "claude-3-sonnet-20240229"
       provider: "claude"
-    - display_name: "Llama 3.2"
+    - display_name: "Llama"
       model_name: "llama3.2"
       provider: "ollama"
-    - display_name: "Gemini 2.5 Flash"
+    - display_name: "Gemini"
       model_name: "gemini-2.5-flash-preview-05-20"
       provider: "gemini"
 

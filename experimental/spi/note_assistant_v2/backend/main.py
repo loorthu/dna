@@ -58,5 +58,9 @@ def get_config():
     """Return application configuration including feature availability."""
     return JSONResponse(content={
         "shotgrid_enabled": shotgrid_enabled,
-        "vexa_routing_enabled": vexa_routing_enabled
+        "vexa_routing_enabled": vexa_routing_enabled,
+        "chatgpt_enabled": os.environ.get("ENABLE_CHATGPT", "false").lower() == "true",
+        "claude_enabled": os.environ.get("ENABLE_CLAUDE", "false").lower() == "true",
+        "llama_enabled": os.environ.get("ENABLE_LLAMA", "false").lower() == "true",
+        "gemini_enabled": os.environ.get("ENABLE_GEMINI", "false").lower() == "true"
     })
