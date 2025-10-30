@@ -301,7 +301,11 @@ function App() {
   };
 
   const setTabForRow = (rowIndex, tabName) => {
-    setActiveTab(prev => ({ ...prev, [rowIndex]: tabName }));
+    setActiveTab(prev => {
+      const newState = { ...prev };
+      newState[rowIndex] = tabName;
+      return newState;
+    });
   };
 
   const getActiveTabForRow = (rowIndex) => {
@@ -607,9 +611,10 @@ function App() {
         // Use the actual available models from the backend
         if (modelsData.available_models) {
           const llms = modelsData.available_models.map(model => ({
-            key: model.provider,
+            key: model.model_name, // Use model name as unique key
             name: model.display_name,
-            model_name: model.model_name
+            model_name: model.model_name,
+            provider: model.provider
           }));
           setEnabledLLMs(llms);
         } else {
@@ -982,7 +987,11 @@ function App() {
                               <button
                                 type="button"
                                 className={`tab-button ${getActiveTabForRow(idx) === 'notes' ? 'active' : ''}`}
-                                onClick={() => setTabForRow(idx, 'notes')}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setTabForRow(idx, 'notes');
+                                }}
                               >
                                 Notes
                               </button>
@@ -992,7 +1001,11 @@ function App() {
                                   type="button"
                                   className={`tab-button ${getActiveTabForRow(idx) === llm.key ? 'active' : ''}`}
                                   style={{ position: 'relative' }}
-                                  onClick={() => setTabForRow(idx, llm.key)}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setTabForRow(idx, llm.key);
+                                  }}
                                 >
                                   {llm.name}
                                   {getActiveTabForRow(idx) === llm.key && (
@@ -1021,7 +1034,7 @@ function App() {
                                         const inputText = row.transcription || row.notes || '';
                                         if (!inputText.trim()) return;
                                         updateCell(idx, `${llm.key}_summary`, '...'); // Show loading
-                                        const summary = await getLLMSummary(inputText, llm.key);
+                                        const summary = await getLLMSummary(inputText, llm.provider);
                                         updateCell(idx, `${llm.key}_summary`, summary || '[No summary returned]');
                                       }}
                                     >
@@ -1037,31 +1050,40 @@ function App() {
                             </div>
                             {/* Tab Content */}
                             <div style={{ flex: 1 }}>
-                              {getActiveTabForRow(idx) === 'notes' && (
-                                <textarea
-                                  value={row.notes || ''}
-                                  onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
-                                  onChange={(e) => updateCell(idx, 'notes', e.target.value)}
-                                  className="table-textarea"
-                                  placeholder="Enter notes..."
-                                  rows={3}
-                                  style={{ height: '100%', minHeight: '72px' }}
-                                />
-                              )}
-                              {enabledLLMs.map(llm => (
-                                getActiveTabForRow(idx) === llm.key && (
-                                  <textarea
-                                    key={llm.key}
-                                    value={row[`${llm.key}_summary`] || ''}
-                                    onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
-                                    onChange={(e) => updateCell(idx, `${llm.key}_summary`, e.target.value)}
-                                    className="table-textarea"
-                                    placeholder={`${llm.name} summary goes here...`}
-                                    rows={3}
-                                    style={{ height: '100%', minHeight: '72px' }}
-                                  />
-                                )
-                              ))}
+                              {(() => {
+                                const activeTab = getActiveTabForRow(idx);
+                                if (activeTab === 'notes') {
+                                  return (
+                                    <textarea
+                                      value={row.notes || ''}
+                                      onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                      onChange={(e) => updateCell(idx, 'notes', e.target.value)}
+                                      className="table-textarea"
+                                      placeholder="Enter notes..."
+                                      rows={3}
+                                      style={{ height: '100%', minHeight: '72px' }}
+                                    />
+                                  );
+                                }
+                                
+                                const activeLLM = enabledLLMs.find(llm => llm.key === activeTab);
+                                if (activeLLM) {
+                                  return (
+                                    <textarea
+                                      key={activeLLM.key}
+                                      value={row[`${activeLLM.key}_summary`] || ''}
+                                      onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                      onChange={(e) => updateCell(idx, `${activeLLM.key}_summary`, e.target.value)}
+                                      className="table-textarea"
+                                      placeholder={`${activeLLM.name} summary goes here...`}
+                                      rows={3}
+                                      style={{ height: '100%', minHeight: '72px' }}
+                                    />
+                                  );
+                                }
+                                
+                                return null;
+                              })()}
                             </div>
                           </div>
                         </td>
