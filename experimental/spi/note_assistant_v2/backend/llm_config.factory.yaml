@@ -25,13 +25,13 @@ default:
       provider: "openai"
     - display_name: "Claude"
       model_name: "claude-3-sonnet-20240229"
-      provider: "claude"
+      provider: "anthropic"
     - display_name: "Llama"
       model_name: "llama3.2"
       provider: "ollama"
     - display_name: "Gemini"
       model_name: "gemini-2.5-flash-preview-05-20"
-      provider: "gemini"
+      provider: "google"
 
 # Model-specific overrides (optional - for fine-tuning specific models)
 model_overrides:
