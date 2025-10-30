@@ -69,11 +69,11 @@ def get_enabled_providers():
     if os.getenv('ENABLE_OPENAI', 'false').lower() in ('1', 'true', 'yes'):
         enabled.append('openai')
     if os.getenv('ENABLE_ANTHROPIC', 'false').lower() in ('1', 'true', 'yes'):
-        enabled.append('claude')
+        enabled.append('anthropic')
     if os.getenv('ENABLE_OLLAMA', 'false').lower() in ('1', 'true', 'yes'):
         enabled.append('ollama')
     if os.getenv('ENABLE_GOOGLE', 'false').lower() in ('1', 'true', 'yes'):
-        enabled.append('gemini')
+        enabled.append('google')
     return enabled
 
 def get_available_models_for_enabled_providers():
@@ -182,12 +182,12 @@ print(f"Enabled LLM providers: {enabled_providers}")
 # Initialize clients for enabled providers
 llm_clients = {}
 
-if 'gemini' in enabled_providers:
+if 'google' in enabled_providers:
     gemini_api_key = os.getenv("GEMINI_API_KEY")
-    gemini_model = get_model_for_provider("gemini")
+    gemini_model = get_model_for_provider("google")
     if gemini_api_key and gemini_model:
         try:
-            llm_clients['gemini'] = {
+            llm_clients['google'] = {
                 'client': create_llm_client("gemini", api_key=gemini_api_key, model=gemini_model),
                 'model': gemini_model
             }
@@ -208,12 +208,12 @@ if 'openai' in enabled_providers:
         except Exception as e:
             print(f"Error initializing OpenAI client: {e}")
 
-if 'claude' in enabled_providers:
+if 'anthropic' in enabled_providers:
     claude_api_key = os.getenv("CLAUDE_API_KEY")
-    claude_model = get_model_for_provider("claude")
+    claude_model = get_model_for_provider("anthropic")
     if claude_api_key and claude_model:
         try:
-            llm_clients['claude'] = {
+            llm_clients['anthropic'] = {
                 'client': create_llm_client("claude", api_key=claude_api_key, model=claude_model),
                 'model': claude_model
             }
@@ -288,11 +288,11 @@ async def llm_summary(data: LLMSummaryRequest):
         
         if provider == 'openai':
             summary = summarize_openai(data.text, model, client, config)
-        elif provider == 'claude':
+        elif provider == 'anthropic':
             summary = summarize_claude(data.text, model, client, config)
         elif provider == 'ollama':
             summary = summarize_ollama(data.text, model, client, config)
-        elif provider == 'gemini':
+        elif provider == 'google':
             summary = summarize_gemini(data.text, model, client, config)
         else:
             raise HTTPException(status_code=500, detail=f"Unsupported provider: {provider}")
