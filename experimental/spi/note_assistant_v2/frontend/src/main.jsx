@@ -26,6 +26,7 @@ function App() {
   // --- Configuration State ---
   const [config, setConfig] = useState({ shotgrid_enabled: false });
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [enabledLLMs, setEnabledLLMs] = useState([]);
 
   // --- ShotGrid Project/Playlist State ---
   const [sgProjects, setSgProjects] = useState([]); // List of active projects
@@ -308,12 +309,12 @@ function App() {
   };
 
   // Function to get LLM summary from backend
-  const getLLMSummary = async (text) => {
+  const getLLMSummary = async (text, llmProvider = null) => {
     try {
       const res = await fetch(`${BACKEND_URL}/llm-summary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, llm_provider: llmProvider }),
       });
       const data = await res.json();
       if (res.ok && data.summary) {
@@ -599,11 +600,19 @@ function App() {
       .then(data => {
         setConfig(data);
         setConfigLoaded(true);
+        // Extract enabled LLMs from config
+        const llms = [];
+        if (data.chatgpt_enabled) llms.push({ key: 'chatgpt', name: 'ChatGPT' });
+        if (data.claude_enabled) llms.push({ key: 'claude', name: 'Claude' });
+        if (data.llama_enabled) llms.push({ key: 'llama', name: 'Llama' });
+        if (data.gemini_enabled) llms.push({ key: 'gemini', name: 'Gemini' });
+        setEnabledLLMs(llms);
       })
       .catch(() => {
         console.error("Failed to fetch app config, assuming ShotGrid disabled");
         setConfig({ shotgrid_enabled: false });
         setConfigLoaded(true);
+        setEnabledLLMs([]);
       });
   }, []);
 
@@ -970,50 +979,53 @@ function App() {
                               >
                                 Notes
                               </button>
-                              <button
-                                type="button"
-                                className={`tab-button ${getActiveTabForRow(idx) === 'summary' ? 'active' : ''}`}
-                                style={{ position: 'relative' }}
-                                onClick={() => setTabForRow(idx, 'summary')}
-                              >
-                                Gemini
-                                {getActiveTabForRow(idx) === 'summary' && (
-                                  <button
-                                    type="button"
-                                    className="btn"
-                                    style={{ 
-                                      position: 'absolute', 
-                                      top: '-2px', 
-                                      right: '-8px', 
-                                      padding: '2px', 
-                                      minWidth: '20px', 
-                                      height: '20px', 
-                                      display: 'flex', 
-                                      alignItems: 'center', 
-                                      justifyContent: 'center',
-                                      fontSize: '10px',
-                                      background: '#3d82f6',
-                                      color: 'white',
-                                      border: 'none',
-                                      borderRadius: '50%'
-                                    }}
-                                    aria-label="Refresh Summary"
-                                    onClick={async (e) => {
-                                      e.stopPropagation();
-                                      const inputText = row.transcription || row.notes || '';
-                                      if (!inputText.trim()) return;
-                                      updateCell(idx, 'summary', '...'); // Show loading
-                                      const summary = await getLLMSummary(inputText);
-                                      updateCell(idx, 'summary', summary || '[No summary returned]');
-                                    }}
-                                  >
-                                    <svg width="12" height="12" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                      <path d="M9 3a6 6 0 1 1-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                      <path d="M3 3v6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                                    </svg>
-                                  </button>
-                                )}
-                              </button>
+                              {enabledLLMs.map(llm => (
+                                <button
+                                  key={llm.key}
+                                  type="button"
+                                  className={`tab-button ${getActiveTabForRow(idx) === llm.key ? 'active' : ''}`}
+                                  style={{ position: 'relative' }}
+                                  onClick={() => setTabForRow(idx, llm.key)}
+                                >
+                                  {llm.name}
+                                  {getActiveTabForRow(idx) === llm.key && (
+                                    <button
+                                      type="button"
+                                      className="btn"
+                                      style={{ 
+                                        position: 'absolute', 
+                                        top: '-2px', 
+                                        right: '-8px', 
+                                        padding: '2px', 
+                                        minWidth: '20px', 
+                                        height: '20px', 
+                                        display: 'flex', 
+                                        alignItems: 'center', 
+                                        justifyContent: 'center',
+                                        fontSize: '10px',
+                                        background: '#3d82f6',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '50%'
+                                      }}
+                                      aria-label="Refresh Summary"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        const inputText = row.transcription || row.notes || '';
+                                        if (!inputText.trim()) return;
+                                        updateCell(idx, `${llm.key}_summary`, '...'); // Show loading
+                                        const summary = await getLLMSummary(inputText, llm.key);
+                                        updateCell(idx, `${llm.key}_summary`, summary || '[No summary returned]');
+                                      }}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <path d="M9 3a6 6 0 1 1-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                        <path d="M3 3v6h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                      </svg>
+                                    </button>
+                                  )}
+                                </button>
+                              ))}
                             </div>
                             {/* Tab Content */}
                             <div style={{ flex: 1 }}>
@@ -1028,17 +1040,20 @@ function App() {
                                   style={{ height: '100%', minHeight: '72px' }}
                                 />
                               )}
-                              {getActiveTabForRow(idx) === 'summary' && (
-                                <textarea
-                                  value={row.summary || ''}
-                                  onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
-                                  onChange={(e) => updateCell(idx, 'summary', e.target.value)}
-                                  className="table-textarea"
-                                  placeholder="Summary goes here..."
-                                  rows={3}
-                                  style={{ height: '100%', minHeight: '72px' }}
-                                />
-                              )}
+                              {enabledLLMs.map(llm => (
+                                getActiveTabForRow(idx) === llm.key && (
+                                  <textarea
+                                    key={llm.key}
+                                    value={row[`${llm.key}_summary`] || ''}
+                                    onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                    onChange={(e) => updateCell(idx, `${llm.key}_summary`, e.target.value)}
+                                    className="table-textarea"
+                                    placeholder={`${llm.name} summary goes here...`}
+                                    rows={3}
+                                    style={{ height: '100%', minHeight: '72px' }}
+                                  />
+                                )
+                              ))}
                             </div>
                           </div>
                         </td>
