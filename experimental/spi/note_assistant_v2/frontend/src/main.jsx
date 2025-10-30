@@ -243,7 +243,12 @@ function App() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.status === "success") {
-        const mapped = (data.items || []).map(v => ({ shot: v, transcription: "", summary: "" }));
+        const mapped = (data.items || []).map(v => ({
+          shot: v.name,
+          transcription: v.transcription,
+          notes: v.notes,
+          summary: ""
+        }));
         setRows(mapped);
         setCurrentIndex(0);
         setUploadStatus({ msg: "Playlist CSV uploaded successfully", type: "success" });
