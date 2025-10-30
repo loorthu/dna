@@ -68,11 +68,11 @@ def get_enabled_providers():
     enabled = []
     if os.getenv('ENABLE_OPENAI', 'false').lower() in ('1', 'true', 'yes'):
         enabled.append('openai')
-    if os.getenv('ENABLE_CLAUDE', 'false').lower() in ('1', 'true', 'yes'):
+    if os.getenv('ENABLE_ANTHROPIC', 'false').lower() in ('1', 'true', 'yes'):
         enabled.append('claude')
     if os.getenv('ENABLE_OLLAMA', 'false').lower() in ('1', 'true', 'yes'):
         enabled.append('ollama')
-    if os.getenv('ENABLE_GEMINI', 'false').lower() in ('1', 'true', 'yes'):
+    if os.getenv('ENABLE_GOOGLE', 'false').lower() in ('1', 'true', 'yes'):
         enabled.append('gemini')
     return enabled
 

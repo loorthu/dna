@@ -595,21 +595,29 @@ function App() {
   // --- ShotGrid Project/Playlist Fetch Logic ---
   // Fetch application configuration on mount
   useEffect(() => {
-    fetch(`${BACKEND_URL}/config`)
-      .then(res => res.json())
-      .then(data => {
-        setConfig(data);
+    // Fetch both config and available models
+    Promise.all([
+      fetch(`${BACKEND_URL}/config`).then(res => res.json()),
+      fetch(`${BACKEND_URL}/available-models`).then(res => res.json())
+    ])
+      .then(([configData, modelsData]) => {
+        setConfig(configData);
         setConfigLoaded(true);
-        // Extract enabled LLMs from config
-        const llms = [];
-        if (data.chatgpt_enabled) llms.push({ key: 'chatgpt', name: 'ChatGPT' });
-        if (data.claude_enabled) llms.push({ key: 'claude', name: 'Claude' });
-        if (data.llama_enabled) llms.push({ key: 'llama', name: 'Llama' });
-        if (data.gemini_enabled) llms.push({ key: 'gemini', name: 'Gemini' });
-        setEnabledLLMs(llms);
+        
+        // Use the actual available models from the backend
+        if (modelsData.available_models) {
+          const llms = modelsData.available_models.map(model => ({
+            key: model.provider,
+            name: model.display_name,
+            model_name: model.model_name
+          }));
+          setEnabledLLMs(llms);
+        } else {
+          setEnabledLLMs([]);
+        }
       })
       .catch(() => {
-        console.error("Failed to fetch app config, assuming ShotGrid disabled");
+        console.error("Failed to fetch app config and models");
         setConfig({ shotgrid_enabled: false });
         setConfigLoaded(true);
         setEnabledLLMs([]);
