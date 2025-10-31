@@ -1038,15 +1038,54 @@ function App() {
                                 const activeTab = getActiveTabForRow(idx);
                                 if (activeTab === 'notes') {
                                   return (
-                                    <textarea
-                                      value={row.notes || ''}
-                                      onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
-                                      onChange={(e) => updateCell(idx, 'notes', e.target.value)}
-                                      className="table-textarea"
-                                      placeholder="Enter notes..."
-                                      rows={3}
-                                      style={{ height: '100%', minHeight: '72px' }}
-                                    />
+                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                                      {/* Invisible prompt selector to match height of LLM tabs */}
+                                      <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px', visibility: 'hidden' }}>
+                                        <label style={{ fontSize: '12px', color: 'var(--text-muted)', minWidth: '60px' }}>
+                                          Prompt:
+                                        </label>
+                                        <select
+                                          style={{
+                                            fontSize: '12px',
+                                            padding: '2px 4px',
+                                            border: '1px solid #444',
+                                            background: 'var(--bg-secondary)',
+                                            color: 'var(--text-primary)',
+                                            borderRadius: '3px',
+                                            minWidth: '70px'
+                                          }}
+                                        >
+                                          <option>short</option>
+                                        </select>
+                                        <button
+                                          type="button"
+                                          style={{ 
+                                            padding: '2px', 
+                                            minWidth: '20px', 
+                                            height: '20px', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            fontSize: '10px',
+                                            background: '#3d82f6',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '3px'
+                                          }}
+                                        >
+                                          ↻
+                                        </button>
+                                      </div>
+                                      <textarea
+                                        value={row.notes || ''}
+                                        onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                        onChange={(e) => updateCell(idx, 'notes', e.target.value)}
+                                        className="table-textarea"
+                                        placeholder="Enter notes..."
+                                        rows={3}
+                                        style={{ flex: 1, minHeight: '50px' }}
+                                      />
+                                    </div>
                                   );
                                 }
                                 
