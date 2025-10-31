@@ -20,34 +20,74 @@ import re
 from dotenv import load_dotenv
 
 # === CONFIGURATION LOADING ===
-def load_llm_config():
-    """Load LLM configuration from YAML file. Checks for user config first, falls back to factory defaults."""
+def load_llm_prompts():
+    """Load LLM prompts configuration from YAML file. Checks for user config first, falls back to factory defaults."""
     base_dir = os.path.dirname(__file__)
-    user_config_path = os.path.join(base_dir, 'llm_config.yaml')
-    factory_config_path = os.path.join(base_dir, 'llm_config.factory.yaml')
+    user_config_path = os.path.join(base_dir, 'llm_prompts.yaml')
+    factory_config_path = os.path.join(base_dir, 'llm_prompts.factory.yaml')
     
     # Try to load user configuration first
     if os.path.exists(user_config_path):
-        print(f"Loading user LLM configuration from: {user_config_path}")
+        print(f"Loading user LLM prompts configuration from: {user_config_path}")
         with open(user_config_path, 'r') as f:
             return yaml.safe_load(f)
     
     # Fall back to factory configuration
-    print(f"Loading factory LLM configuration from: {factory_config_path}")
+    print(f"Loading factory LLM prompts configuration from: {factory_config_path}")
     with open(factory_config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def get_model_config(provider, model=None, config=None):
+def load_llm_models():
+    """Load LLM models configuration from YAML file. Checks for user config first, falls back to factory defaults."""
+    base_dir = os.path.dirname(__file__)
+    user_config_path = os.path.join(base_dir, 'llm_models.yaml')
+    factory_config_path = os.path.join(base_dir, 'llm_models.factory.yaml')
+    
+    # Try to load user configuration first
+    if os.path.exists(user_config_path):
+        print(f"Loading user LLM models configuration from: {user_config_path}")
+        with open(user_config_path, 'r') as f:
+            return yaml.safe_load(f)
+    
+    # Fall back to factory configuration
+    print(f"Loading factory LLM models configuration from: {factory_config_path}")
+    with open(factory_config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def load_llm_config():
+    """Load combined LLM configuration for backward compatibility."""
+    models_config = load_llm_models()
+    
+    # Return models configuration directly since prompts are now handled separately
+    return {
+        'default': models_config.get('default', {}),
+        'models': models_config.get('models', []),
+        'model_overrides': models_config.get('model_overrides', {})
+    }
+
+def get_model_config(provider, model=None, config=None, prompt_type="short"):
     """Get configuration for a specific provider/model, merging defaults with model-specific overrides."""
     if config is None:
         config = LLM_CONFIG
     
-    # Start with default configuration
-    merged_config = config['default'].copy()
+    # Start with default configuration from models config
+    models_config = load_llm_models()
+    merged_config = models_config.get('default', {}).copy()
+    
+    # Add prompts from the specified prompt type
+    prompts_config = load_llm_prompts()
+    if prompt_type in prompts_config:
+        merged_config.update(prompts_config[prompt_type])
+    else:
+        # Fall back to first available prompt type if specified one doesn't exist
+        available_prompt_types = list(prompts_config.keys())
+        if available_prompt_types:
+            fallback_prompt = available_prompt_types[0]
+            merged_config.update(prompts_config[fallback_prompt])
     
     # Apply model-specific overrides if specified
-    if model and 'model_overrides' in config and model in config['model_overrides']:
-        merged_config.update(config['model_overrides'][model])
+    if model and 'model_overrides' in models_config and model in models_config['model_overrides']:
+        merged_config.update(models_config['model_overrides'][model])
     
     return merged_config
 
@@ -58,10 +98,7 @@ def get_available_models(config=None):
     if config is None:
         config = LLM_CONFIG
     
-    if 'models' in config['default']:
-        return config['default']['models']
-    
-    return []
+    return config.get('models', [])
 
 def get_enabled_providers():
     """Get list of enabled LLM providers based on environment variables."""
@@ -81,16 +118,15 @@ def get_available_models_for_enabled_providers():
     enabled_providers = get_enabled_providers()
     available_models = []
     
-    if 'models' in LLM_CONFIG['default']:
-        for model in LLM_CONFIG['default']['models']:
-            if model['provider'] in enabled_providers:
-                available_models.append(model)
+    for model in LLM_CONFIG.get('models', []):
+        if model['provider'] in enabled_providers:
+            available_models.append(model)
     
     return available_models
 
 def get_model_for_provider(provider):
     """Get the model name for a specific provider from configuration."""
-    for model in LLM_CONFIG['default']['models']:
+    for model in LLM_CONFIG.get('models', []):
         if model['provider'] == provider:
             return model['model_name']
     return None
@@ -246,9 +282,14 @@ async def get_available_models_endpoint():
         available_models = get_available_models_for_enabled_providers()
         enabled_providers = get_enabled_providers()
         
+        # Get available prompt types
+        prompts_config = load_llm_prompts()
+        available_prompt_types = list(prompts_config.keys())
+        
         return {
             "available_models": available_models,
             "enabled_providers": enabled_providers,
+            "available_prompt_types": available_prompt_types,
             "disable_llm": DISABLE_LLM
         }
     except Exception as e:
@@ -256,10 +297,20 @@ async def get_available_models_endpoint():
         raise HTTPException(status_code=500, detail=f"Error getting available models: {str(e)}")
 
 @router.post("/llm-summary")
-async def llm_summary(data: LLMSummaryRequest):
+async def llm_summary(request: dict):
     """
-    Generate a summary using available LLM providers.
+    Generate a summary using specified or available LLM providers.
     """
+    text = request.get("text", "")
+    llm_provider = request.get("llm_provider")
+    prompt_type = request.get("prompt_type")  # No default assumption
+    
+    # If no prompt_type specified, use the first available one
+    if not prompt_type:
+        prompts_config = load_llm_prompts()
+        available_prompt_types = list(prompts_config.keys())
+        prompt_type = available_prompt_types[0] if available_prompt_types else "short"
+    
     if DISABLE_LLM:
         # Return a random summary for testing
         random_summaries = [
@@ -277,27 +328,31 @@ async def llm_summary(data: LLMSummaryRequest):
     if not llm_clients:
         raise HTTPException(status_code=500, detail="No LLM clients initialized.")
     
-    # Use the first available client (you could add logic to choose a specific one)
-    provider = list(llm_clients.keys())[0]
+    # Choose provider: use specified provider if available, otherwise use first available
+    if llm_provider and llm_provider in llm_clients:
+        provider = llm_provider
+    else:
+        provider = list(llm_clients.keys())[0]
+    
     client_info = llm_clients[provider]
     client = client_info['client']
     model = client_info['model']
     
     try:
-        config = get_model_config(provider, model)
+        config = get_model_config(provider, model, prompt_type=prompt_type)
         
         if provider == 'openai':
-            summary = summarize_openai(data.text, model, client, config)
+            summary = summarize_openai(text, model, client, config)
         elif provider == 'anthropic':
-            summary = summarize_claude(data.text, model, client, config)
+            summary = summarize_claude(text, model, client, config)
         elif provider == 'ollama':
-            summary = summarize_ollama(data.text, model, client, config)
+            summary = summarize_ollama(text, model, client, config)
         elif provider == 'google':
-            summary = summarize_gemini(data.text, model, client, config)
+            summary = summarize_gemini(text, model, client, config)
         else:
             raise HTTPException(status_code=500, detail=f"Unsupported provider: {provider}")
         
-        return {"summary": summary, "provider": provider, "model": model}
+        return {"summary": summary, "provider": provider, "model": model, "prompt_type": prompt_type}
     except Exception as e:
         print(f"Error in /llm-summary with {provider}: {e}")
         raise HTTPException(status_code=500, detail=f"LLM summary error: {str(e)}")
@@ -318,7 +373,7 @@ if __name__ == "__main__":
     print(f"Testing {provider} summary with model {model}...")
     try:
         client = create_llm_client(provider, api_key=api_key, model=model)
-        config = get_model_config(provider, model, LLM_CONFIG)
+        config = get_model_config(provider, model)
         print(f"Using config: temperature={config['temperature']}, max_tokens={config['max_tokens']}")
         if provider == 'openai':
             summary = summarize_openai(text, model, client, config)
