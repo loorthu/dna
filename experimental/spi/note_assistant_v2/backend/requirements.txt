@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic[email]
+requests
+python-dotenv
+grpcio
+openai
+anthropic
+google-generativeai
+google_auth_oauthlib
+shotgun_api3
+httpx
+websockets
