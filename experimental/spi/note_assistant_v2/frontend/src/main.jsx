@@ -27,6 +27,8 @@ function App() {
   const [config, setConfig] = useState({ shotgrid_enabled: false });
   const [configLoaded, setConfigLoaded] = useState(false);
   const [enabledLLMs, setEnabledLLMs] = useState([]);
+  const [availablePromptTypes, setAvailablePromptTypes] = useState([]);
+  const [promptTypeSelection, setPromptTypeSelection] = useState({}); // Track prompt type per row per LLM
 
   // --- ShotGrid Project/Playlist State ---
   const [sgProjects, setSgProjects] = useState([]); // List of active projects
@@ -312,13 +314,25 @@ function App() {
     return activeTab[rowIndex] || 'notes';
   };
 
+  // Helper functions for prompt type selection
+  const setPromptTypeForRowAndLLM = (rowIndex, llmKey, promptType) => {
+    setPromptTypeSelection(prev => ({
+      ...prev,
+      [`${rowIndex}_${llmKey}`]: promptType
+    }));
+  };
+
+  const getPromptTypeForRowAndLLM = (rowIndex, llmKey) => {
+    return promptTypeSelection[`${rowIndex}_${llmKey}`] || (availablePromptTypes[0] || '');
+  };
+
   // Function to get LLM summary from backend
-  const getLLMSummary = async (text, llmProvider = null) => {
+  const getLLMSummary = async (text, llmProvider = null, promptType = 'short') => {
     try {
       const res = await fetch(`${BACKEND_URL}/llm-summary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, llm_provider: llmProvider }),
+        body: JSON.stringify({ text, llm_provider: llmProvider, prompt_type: promptType }),
       });
       const data = await res.json();
       if (res.ok && data.summary) {
@@ -368,7 +382,7 @@ function App() {
         if (inputText.trim()) {
           // Show loading
           updateCell(prevIdx, 'summary', '...');
-          getLLMSummary(inputText).then(summary => {
+          getLLMSummary(inputText, null, availablePromptTypes[0] || '').then(summary => {
             updateCell(prevIdx, 'summary', summary || '[No summary returned]');
           });
         }
@@ -619,6 +633,13 @@ function App() {
           setEnabledLLMs(llms);
         } else {
           setEnabledLLMs([]);
+        }
+        
+        // Set available prompt types
+        if (modelsData.available_prompt_types) {
+          setAvailablePromptTypes(modelsData.available_prompt_types);
+        } else {
+          setAvailablePromptTypes([]); // No assumptions about available prompt types
         }
       })
       .catch(() => {
@@ -1008,43 +1029,6 @@ function App() {
                                   }}
                                 >
                                   {llm.name}
-                                  {getActiveTabForRow(idx) === llm.key && (
-                                    <button
-                                      type="button"
-                                      className="btn"
-                                      style={{ 
-                                        position: 'absolute', 
-                                        top: '-2px', 
-                                        right: '-8px', 
-                                        padding: '2px', 
-                                        minWidth: '20px', 
-                                        height: '20px', 
-                                        display: 'flex', 
-                                        alignItems: 'center', 
-                                        justifyContent: 'center',
-                                        fontSize: '10px',
-                                        background: '#3d82f6',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '50%'
-                                      }}
-                                      aria-label="Refresh Summary"
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        const inputText = row.transcription || row.notes || '';
-                                        if (!inputText.trim()) return;
-                                        updateCell(idx, `${llm.key}_summary`, '...'); // Show loading
-                                        const summary = await getLLMSummary(inputText, llm.provider);
-                                        updateCell(idx, `${llm.key}_summary`, summary || '[No summary returned]');
-                                      }}
-                                    >
-                                      {/* Refresh icon from Iconoir (https://iconoir.com/) */}
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                        <path d="M21.8883 13.5C21.1645 18.3113 17.013 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C16.1006 2 19.6248 4.46819 21.1679 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                        <path d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                                      </svg>
-                                    </button>
-                                  )}
                                 </button>
                               ))}
                             </div>
@@ -1069,16 +1053,76 @@ function App() {
                                 const activeLLM = enabledLLMs.find(llm => llm.key === activeTab);
                                 if (activeLLM) {
                                   return (
-                                    <textarea
-                                      key={activeLLM.key}
-                                      value={row[`${activeLLM.key}_summary`] || ''}
-                                      onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
-                                      onChange={(e) => updateCell(idx, `${activeLLM.key}_summary`, e.target.value)}
-                                      className="table-textarea"
-                                      placeholder={`${activeLLM.name} summary goes here...`}
-                                      rows={3}
-                                      style={{ height: '100%', minHeight: '72px' }}
-                                    />
+                                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                                      {/* Prompt Type Selector */}
+                                      <div style={{ marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <label style={{ fontSize: '12px', color: 'var(--text-muted)', minWidth: '60px' }}>
+                                          Prompt:
+                                        </label>
+                                        <select
+                                          value={getPromptTypeForRowAndLLM(idx, activeLLM.key)}
+                                          onChange={(e) => setPromptTypeForRowAndLLM(idx, activeLLM.key, e.target.value)}
+                                          style={{
+                                            fontSize: '12px',
+                                            padding: '2px 4px',
+                                            border: '1px solid #444',
+                                            background: 'var(--bg-secondary)',
+                                            color: 'var(--text-primary)',
+                                            borderRadius: '3px',
+                                            minWidth: '70px'
+                                          }}
+                                        >
+                                          {availablePromptTypes.map(promptType => (
+                                            <option key={promptType} value={promptType}>
+                                              {promptType}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          type="button"
+                                          className="btn"
+                                          style={{ 
+                                            padding: '2px', 
+                                            minWidth: '20px', 
+                                            height: '20px', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            fontSize: '10px',
+                                            background: '#3d82f6',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '3px'
+                                          }}
+                                          aria-label="Refresh Summary"
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const inputText = row.transcription || row.notes || '';
+                                            if (!inputText.trim()) return;
+                                            const promptType = getPromptTypeForRowAndLLM(idx, activeLLM.key);
+                                            updateCell(idx, `${activeLLM.key}_summary`, '...'); // Show loading
+                                            const summary = await getLLMSummary(inputText, activeLLM.provider, promptType);
+                                            updateCell(idx, `${activeLLM.key}_summary`, summary || '[No summary returned]');
+                                          }}
+                                        >
+                                          {/* Refresh icon from Iconoir (https://iconoir.com/) */}
+                                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                            <path d="M21.8883 13.5C21.1645 18.3113 17.013 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C16.1006 2 19.6248 4.46819 21.1679 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                            <path d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                          </svg>
+                                        </button>
+                                      </div>
+                                      <textarea
+                                        key={activeLLM.key}
+                                        value={row[`${activeLLM.key}_summary`] || ''}
+                                        onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                        onChange={(e) => updateCell(idx, `${activeLLM.key}_summary`, e.target.value)}
+                                        className="table-textarea"
+                                        placeholder={`${activeLLM.name} summary goes here...`}
+                                        rows={3}
+                                        style={{ flex: 1, minHeight: '50px' }}
+                                      />
+                                    </div>
                                   );
                                 }
                                 
