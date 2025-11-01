@@ -1004,7 +1004,7 @@ function App() {
                         <td style={{ width: '45%' }}>
                           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                             {/* Tab Navigation */}
-                            <div style={{ display: 'flex', borderBottom: '1px solid #2c323c', marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', borderBottom: '1px solid #2c323c', marginBottom: '8px', alignItems: 'center' }}>
                               <button
                                 type="button"
                                 className={`tab-button ${getActiveTabForRow(idx) === 'notes' ? 'active' : ''}`}
@@ -1031,6 +1031,45 @@ function App() {
                                   {llm.name}
                                 </button>
                               ))}
+                              <div style={{ flex: 1 }}></div>
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ 
+                                  padding: '2px', 
+                                  minWidth: '20px', 
+                                  height: '20px', 
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  justifyContent: 'center',
+                                  fontSize: '10px',
+                                  background: '#3d82f6',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '3px',
+                                  marginLeft: '8px'
+                                }}
+                                aria-label="Refresh All Summaries"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const inputText = row.transcription || row.notes || '';
+                                  if (!inputText.trim()) return;
+                                  
+                                  // Generate summaries for all enabled LLMs
+                                  enabledLLMs.forEach(async (llm) => {
+                                    const promptType = getPromptTypeForRowAndLLM(idx, llm.key);
+                                    updateCell(idx, `${llm.key}_summary`, '...'); // Show loading
+                                    const summary = await getLLMSummary(inputText, llm.provider, promptType);
+                                    updateCell(idx, `${llm.key}_summary`, summary || '[No summary returned]');
+                                  });
+                                }}
+                              >
+                                {/* Refresh icon from Iconoir (https://iconoir.com/) */}
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                  <path d="M21.8883 13.5C21.1645 18.3113 17.013 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C16.1006 2 19.6248 4.46819 21.1679 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                  <path d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              </button>
                             </div>
                             {/* Tab Content */}
                             <div style={{ flex: 1 }}>
