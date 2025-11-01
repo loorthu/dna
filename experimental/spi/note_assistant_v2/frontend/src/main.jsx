@@ -1150,9 +1150,60 @@ function App() {
                                             <path d="M17 8H21.4C21.7314 8 22 7.73137 22 7.4V3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                                           </svg>
                                         </button>
+                                        <div style={{ flex: 1 }}></div>
+                                        <button
+                                          type="button"
+                                          className="btn"
+                                          style={{ 
+                                            padding: '4px 8px', 
+                                            height: '20px', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            justifyContent: 'center',
+                                            fontSize: '10px',
+                                            background: '#3d82f6',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '3px',
+                                            whiteSpace: 'nowrap'
+                                          }}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            // Find the active summary textarea using data attributes
+                                            const summaryTextarea = document.querySelector(
+                                              `textarea[data-row-index="${idx}"][data-llm-key="${activeLLM.key}"]`
+                                            );
+                                            
+                                            let contentToCopy = '';
+                                            if (summaryTextarea && summaryTextarea.selectionStart !== summaryTextarea.selectionEnd) {
+                                              // Use selected text if there's a selection
+                                              contentToCopy = summaryTextarea.value.substring(
+                                                summaryTextarea.selectionStart, 
+                                                summaryTextarea.selectionEnd
+                                              );
+                                            } else {
+                                              // Use entire summary if no selection
+                                              contentToCopy = row[`${activeLLM.key}_summary`] || '';
+                                            }
+                                            
+                                            if (contentToCopy.trim()) {
+                                              const currentNotes = row.notes || '';
+                                              const separator = currentNotes.trim() ? '\n\n' : '';
+                                              updateCell(idx, 'notes', currentNotes + separator + contentToCopy);
+                                            }
+                                          }}
+                                        >
+                                          Add to Notes
+                                        </button>
                                       </div>
                                       <textarea
                                         key={activeLLM.key}
+                                        ref={(el) => {
+                                          if (el) {
+                                            el.dataset.rowIndex = idx;
+                                            el.dataset.llmKey = activeLLM.key;
+                                          }
+                                        }}
                                         value={row[`${activeLLM.key}_summary`] || ''}
                                         onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
                                         onChange={(e) => updateCell(idx, `${activeLLM.key}_summary`, e.target.value)}
