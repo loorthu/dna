@@ -105,71 +105,78 @@ function FloatingControls({
     }
   };
   return (
-    <>
+    <div className="floating-controls" style={{ 
+      position: 'fixed', 
+      top: '20px', 
+      right: '20px', 
+      zIndex: 1000,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px'
+    }}>
       {/* Add Shot Controls */}
-      <div className="floating-add-shot-controls">
-        <div className="add-shot-controls">
-          <input
-            type="text"
-            className="text-input"
-            placeholder={config.shotgrid_enabled ? "Add shot/version or ID..." : "Add shot/version..."}
-            value={newShotValue}
-            onChange={(e) => setNewShotValue(e.target.value)}
-            onKeyDown={handleAddShotKeyPress}
-            style={{ flex: 1, height: '36px', fontSize: '13px' }}
-            disabled={addingShotLoading}
-          />
-          <button
-            type="button"
-            className="btn primary"
-            onClick={addNewShot}
-            disabled={!newShotValue.trim() || addingShotLoading}
-            title={config.shotgrid_enabled ? 
-              "Add Shot/Version (validates against ShotGrid when enabled)" : 
-              "Add Shot/Version"
-            }
-            style={{
-              backgroundColor: addShotStatus.type === 'error' ? 'var(--danger)' : undefined
-            }}
-          >
-            {addingShotLoading ? '...' : '+'}
-          </button>
-        </div>
-        {/* Always render status container, but only show badge when there's a message */}
-        <div className="add-shot-status" style={{ 
-          display: addShotStatus.msg ? 'flex' : 'none'
-        }}>
-          <StatusBadge type={addShotStatus.type}>{addShotStatus.msg}</StatusBadge>
-        </div>
+      <div className="add-shot-controls">
+        <input
+          type="text"
+          className="text-input"
+          placeholder={config.shotgrid_enabled ? "Add shot/version or ID..." : "Add shot/version..."}
+          value={newShotValue}
+          onChange={(e) => setNewShotValue(e.target.value)}
+          onKeyDown={handleAddShotKeyPress}
+          style={{ flex: 1, height: '36px', fontSize: '13px' }}
+          disabled={addingShotLoading}
+        />
+        <button
+          type="button"
+          className="btn primary"
+          onClick={addNewShot}
+          disabled={!newShotValue.trim() || addingShotLoading}
+          title={config.shotgrid_enabled ? 
+            "Add Shot/Version (validates against ShotGrid when enabled)" : 
+            "Add Shot/Version"
+          }
+          style={{
+            backgroundColor: addShotStatus.type === 'error' ? 'var(--danger)' : undefined
+          }}
+        >
+          {addingShotLoading ? '...' : '+'}
+        </button>
       </div>
 
-      {/* Bot Status and Transcript Controls */}
-      {(botIsActive || status.msg) && (
-        <div className="floating-controls">
-          <div className="bot-status-display">
-            <StatusBadge 
-              type={status.type} 
-              detailedMessage={status.detailedMsg}
-              maxLength={25}
-            >
-              {status.msg}
-            </StatusBadge>
-          </div>
-          {botIsActive && (
-            <div className="transcript-controls">
-              <button 
-                type="button" 
-                className={`btn ${isReceivingTranscripts ? (botIsActive ? 'danger' : 'primary') : 'primary'}`}
-                onClick={onTranscriptToggle}
-                disabled={!joinedMeetId}
-              >
-                {isReceivingTranscripts ? 'Pause Transcripts' : 'Get Transcripts'}
-              </button>
-            </div>
-          )}
+      {/* Add Shot Status */}
+      <div className="add-shot-status" style={{ 
+        display: addShotStatus.msg ? 'flex' : 'none'
+      }}>
+        <StatusBadge type={addShotStatus.type}>{addShotStatus.msg}</StatusBadge>
+      </div>
+
+      {/* Bot Status */}
+      {status.msg && (
+        <div className="bot-status-display">
+          <StatusBadge 
+            type={status.type} 
+            detailedMessage={status.detailedMsg}
+            maxLength={25}
+          >
+            {status.msg}
+          </StatusBadge>
         </div>
       )}
-    </>
+
+      {/* Transcript Controls */}
+      {botIsActive && (
+        <div className="transcript-controls">
+          <button 
+            type="button" 
+            className={`btn ${isReceivingTranscripts ? (botIsActive ? 'danger' : 'primary') : 'primary'}`}
+            onClick={onTranscriptToggle}
+            disabled={!joinedMeetId}
+          >
+            {isReceivingTranscripts ? 'Pause Transcripts' : 'Get Transcripts'}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
