@@ -93,11 +93,49 @@ function ShotTable({
           setTimeout(() => { recentlyToggled.current = false; }, 1000); // Prevent rapid toggling
         }
       }
+      
+      // Handle Ctrl+P to toggle pin/unpin
+      if (event.ctrlKey && event.key === 'p') {
+        event.preventDefault(); // Prevent browser print dialog
+        
+        // Determine which row to pin/unpin based on current focus
+        const focusedElement = document.activeElement;
+        let targetRowIndex = currentIndex; // Default to current index
+        
+        // Try to get row index from focused element
+        if (focusedElement && focusedElement.tagName === 'TEXTAREA') {
+          const rowElement = focusedElement.closest('tr');
+          if (rowElement) {
+            const allRows = Array.from(rowElement.parentElement.children);
+            const rowIndex = allRows.indexOf(rowElement);
+            if (rowIndex >= 0) {
+              targetRowIndex = rowIndex;
+            }
+          }
+        }
+        
+        // Handle pin/unpin logic
+        if (pinnedIndex === targetRowIndex) {
+          // If the target row is currently pinned, unpin it
+          setPinnedIndex(null);
+        } else if (pinnedIndex !== null) {
+          // If another row is pinned and we're pressing Ctrl+P on a different row,
+          // unpin the current pinned row and switch context to the target row (but don't pin it)
+          setPinnedIndex(null);
+          setCurrentIndex(targetRowIndex);
+          setHasActiveFocus(true);
+        } else {
+          // If no row is pinned, pin the target row and make it active for transcription
+          setPinnedIndex(targetRowIndex);
+          setCurrentIndex(targetRowIndex);
+          setHasActiveFocus(true);
+        }
+      }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isReceivingTranscripts, onTranscriptToggle, pinnedIndex]);
+  }, [isReceivingTranscripts, onTranscriptToggle, pinnedIndex, currentIndex, setPinnedIndex, setCurrentIndex]);
 
   // Handle text field focus to restore active focus
   const handleTextFieldFocus = (rowIndex, event) => {

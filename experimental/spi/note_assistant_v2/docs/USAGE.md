@@ -101,6 +101,13 @@ Choose one of two methods to load your shots:
    - **Works from anywhere**: No need to click floating controls
    - **Respects pinned shots**: Functions the same whether shots are pinned or not
 
+2. **Ctrl+P**: Smart pin/unpin and context switching
+   - **No shot pinned**: Pins the current/focused shot for extended discussion
+   - **Same shot pinned**: Unpins the currently pinned shot (returns to normal workflow)
+   - **Different shot**: Unpins previous shot and switches context to current shot (without pinning)
+   - **Intelligent targeting**: Automatically detects which row you're editing
+   - **Quick workflow**: Seamlessly switch between shots during complex reviews
+
 #### Monitor Real-time Activity
 
 - **Active row highlight**: Blue border shows which row is receiving transcripts
