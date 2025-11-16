@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import GoogleMeetPanel from './Panels/GoogleMeetPanel';
 import ShotGridPanel from './Panels/ShotGridPanel';
 import UploadPanel from './Panels/UploadPanel';
@@ -57,6 +57,22 @@ function AppLayout({
   setRows,
   selectedProjectId
 }) {
+  // Separate state for import sub-tabs vs shot table row tabs
+  const [importSubTab, setImportSubTab] = React.useState(config.shotgrid_enabled ? 'shotgrid' : 'upload');
+  const [shotTableRowTabs, setShotTableRowTabs] = React.useState({});
+  // Initialize tabs on component mount
+  useEffect(() => {
+    // Always set default top tab to import on mount
+    setActiveTopTab('import');
+    
+    // Set default import sub-tab based on config
+    if (config.shotgrid_enabled) {
+      setImportSubTab('shotgrid');
+    } else {
+      setImportSubTab('upload');
+    }
+  }, [config.shotgrid_enabled, setActiveTopTab]);
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -65,9 +81,16 @@ function AppLayout({
       </header>
 
       <main className="app-main">
-        <section className="panel" style={{ height: '280px', minWidth: '600px' }}>
+        <section className="panel" style={{ height: '295px', minWidth: '600px' }}>
           {/* Tab Navigation */}
           <div style={{ display: 'flex', borderBottom: '1px solid #2c323c', marginBottom: '16px' }}>
+            <button
+              type="button"
+              className={`tab-button ${activeTopTab === 'import' ? 'active' : ''}`}
+              onClick={() => setActiveTopTab('import')}
+            >
+              Import
+            </button>
             <button
               type="button"
               className={`tab-button ${activeTopTab === 'panel' ? 'active' : ''}`}
@@ -75,28 +98,12 @@ function AppLayout({
             >
               Google Meet
             </button>
-            {config.shotgrid_enabled && (
-              <button
-                type="button"
-                className={`tab-button ${activeTopTab === 'shotgrid' ? 'active' : ''}`}
-                onClick={() => setActiveTopTab('shotgrid')}
-              >
-                ShotGrid
-              </button>
-            )}
-            <button
-              type="button"
-              className={`tab-button ${activeTopTab === 'upload' ? 'active' : ''}`}
-              onClick={() => setActiveTopTab('upload')}
-            >
-              Upload Playlist
-            </button>
             <button
               type="button"
               className={`tab-button ${activeTopTab === 'export' ? 'active' : ''}`}
               onClick={() => setActiveTopTab('export')}
             >
-              Export Notes
+              Export
             </button>
             <button
               type="button"
@@ -108,7 +115,52 @@ function AppLayout({
           </div>
 
           {/* Tab Content */}
-          <div style={{ height: '240px' }}>
+          <div style={{ height: '255px' }}>
+            {activeTopTab === 'import' && (
+              <div style={{ height: '100%' }}>
+                {/* Import Sub-tabs */}
+                <div style={{ display: 'flex', marginBottom: '12px' }}>
+                  {config.shotgrid_enabled && (
+                    <button
+                      type="button"
+                      className={`tab-button ${importSubTab === 'shotgrid' ? 'active' : ''}`}
+                      onClick={() => setImportSubTab('shotgrid')}
+                      style={{ fontSize: '14px', padding: '6px 12px' }}
+                    >
+                      ShotGrid
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={`tab-button ${importSubTab === 'upload' ? 'active' : ''}`}
+                    onClick={() => setImportSubTab('upload')}
+                    style={{ fontSize: '14px', padding: '6px 12px' }}
+                  >
+                    Upload Playlist
+                  </button>
+                </div>
+                
+                {/* Import Content */}
+                <div style={{ height: 'calc(100% - 40px)' }}>
+                  {importSubTab === 'shotgrid' && config.shotgrid_enabled && (
+                    <ShotGridPanel
+                      config={config}
+                      configLoaded={configLoaded}
+                      setRows={setRows}
+                      setCurrentIndex={setCurrentIndex}
+                    />
+                  )}
+                  
+                  {importSubTab === 'upload' && (
+                    <UploadPanel 
+                      setRows={setRows} 
+                      setCurrentIndex={setCurrentIndex} 
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
             {activeTopTab === 'panel' && (
               <GoogleMeetPanel
                 meetId={meetId}
@@ -118,22 +170,6 @@ function AppLayout({
                 botIsActive={botIsActive}
                 submitting={submitting}
                 waitingForActive={waitingForActive}
-              />
-            )}
-
-            {activeTopTab === 'shotgrid' && config.shotgrid_enabled && (
-              <ShotGridPanel
-                config={config}
-                configLoaded={configLoaded}
-                setRows={setRows}
-                setCurrentIndex={setCurrentIndex}
-              />
-            )}
-
-            {activeTopTab === 'upload' && (
-              <UploadPanel 
-                setRows={setRows} 
-                setCurrentIndex={setCurrentIndex} 
               />
             )}
 
@@ -169,8 +205,8 @@ function AppLayout({
             setCurrentIndex={setCurrentIndex}
             pinnedIndex={pinnedIndex}
             setPinnedIndex={setPinnedIndex}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
+            activeTab={shotTableRowTabs}
+            setActiveTab={setShotTableRowTabs}
             enabledLLMs={enabledLLMs}
             availablePromptTypes={availablePromptTypes}
             promptTypeSelection={promptTypeSelection}

@@ -165,6 +165,17 @@ function ShotTable({
     return activeTab[rowIndex] || 'notes';
   };
 
+  // Initialize all rows to 'notes' tab when rows change (e.g., new playlist upload)
+  React.useEffect(() => {
+    if (rows.length > 0) {
+      const newActiveTab = {};
+      rows.forEach((_, idx) => {
+        newActiveTab[idx] = 'notes';
+      });
+      setActiveTab(newActiveTab);
+    }
+  }, [rows]);
+
   const setPromptTypeForRowAndLLM = (rowIndex, llmKey, promptType) => {
     setPromptTypeSelection(prev => ({
       ...prev,
