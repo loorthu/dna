@@ -60,6 +60,7 @@ function AppLayout({
   // Separate state for import sub-tabs vs shot table row tabs
   const [importSubTab, setImportSubTab] = React.useState(config.shotgrid_enabled ? 'shotgrid' : 'upload');
   const [shotTableRowTabs, setShotTableRowTabs] = React.useState({});
+  const [isPanelExpanded, setIsPanelExpanded] = React.useState(true);
   // Initialize tabs on component mount
   useEffect(() => {
     // Always set default top tab to import on mount
@@ -81,41 +82,87 @@ function AppLayout({
       </header>
 
       <main className="app-main">
-        <section className="panel" style={{ height: '295px', minWidth: '600px' }}>
-          {/* Tab Navigation */}
-          <div style={{ display: 'flex', borderBottom: '1px solid #2c323c', marginBottom: '16px' }}>
+        <section className="panel" style={{ height: isPanelExpanded ? '295px' : '60px', minWidth: '600px', transition: 'height 0.3s ease', padding: '8px' }}>
+          {/* Header with expand/collapse button */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isPanelExpanded ? '8px' : '0px' }}>
+            {/* Tab Navigation - only show when expanded */}
+            {isPanelExpanded && (
+              <div style={{ display: 'flex', borderBottom: '1px solid #2c323c', flex: 1 }}>
+                <button
+                  type="button"
+                  className={`tab-button ${activeTopTab === 'import' ? 'active' : ''}`}
+                  onClick={() => setActiveTopTab('import')}
+                >
+                  Import
+                </button>
+                <button
+                  type="button"
+                  className={`tab-button ${activeTopTab === 'panel' ? 'active' : ''}`}
+                  onClick={() => setActiveTopTab('panel')}
+                >
+                  Google Meet
+                </button>
+                <button
+                  type="button"
+                  className={`tab-button ${activeTopTab === 'export' ? 'active' : ''}`}
+                  onClick={() => setActiveTopTab('export')}
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  className={`tab-button ${activeTopTab === 'settings' ? 'active' : ''}`}
+                  onClick={() => setActiveTopTab('settings')}
+                >
+                  Settings
+                </button>
+              </div>
+            )}
+            
+            {/* Collapsed state title and expand/collapse button */}
+            {!isPanelExpanded && (
+              <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                <h3 style={{ margin: 0, color: 'var(--text-muted)', fontSize: '14px' }}>
+                  {activeTopTab === 'import' ? 'Import' : 
+                   activeTopTab === 'panel' ? 'Google Meet' : 
+                   activeTopTab === 'export' ? 'Export' : 'Settings'}
+                </h3>
+              </div>
+            )}
+            
             <button
               type="button"
-              className={`tab-button ${activeTopTab === 'import' ? 'active' : ''}`}
-              onClick={() => setActiveTopTab('import')}
+              onClick={() => setIsPanelExpanded(!isPanelExpanded)}
+              style={{
+                padding: '8px',
+                background: 'none',
+                border: '1px solid #444',
+                borderRadius: '4px',
+                color: 'var(--text-primary)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginLeft: isPanelExpanded ? '12px' : '0px'
+              }}
+              title={isPanelExpanded ? 'Collapse panel' : 'Expand panel'}
             >
-              Import
-            </button>
-            <button
-              type="button"
-              className={`tab-button ${activeTopTab === 'panel' ? 'active' : ''}`}
-              onClick={() => setActiveTopTab('panel')}
-            >
-              Google Meet
-            </button>
-            <button
-              type="button"
-              className={`tab-button ${activeTopTab === 'export' ? 'active' : ''}`}
-              onClick={() => setActiveTopTab('export')}
-            >
-              Export
-            </button>
-            <button
-              type="button"
-              className={`tab-button ${activeTopTab === 'settings' ? 'active' : ''}`}
-              onClick={() => setActiveTopTab('settings')}
-            >
-              Settings
+              {/* Expand/Collapse icon */}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                {isPanelExpanded ? (
+                  // Collapse icon (chevron up)
+                  <path d="M6 15L12 9L18 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                ) : (
+                  // Expand icon (chevron down)
+                  <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                )}
+              </svg>
             </button>
           </div>
 
-          {/* Tab Content */}
-          <div style={{ height: '255px' }}>
+          {/* Tab Content - only show when expanded */}
+          {isPanelExpanded && (
+            <div style={{ height: '255px' }}>
             {activeTopTab === 'import' && (
               <div style={{ height: '100%' }}>
                 {/* Import Sub-tabs */}
@@ -192,6 +239,7 @@ function AppLayout({
               />
             )}
           </div>
+          )}
         </section>
 
         <section className="panel full-span">
