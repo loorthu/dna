@@ -6,7 +6,6 @@ import ExportPanel from './Panels/ExportPanel';
 import SettingsPanel from './Panels/SettingsPanel';
 import ShotTable from './ShotTable';
 import FloatingControls from './FloatingControls';
-import AddShotControls from './AddShotControls';
 
 function AppLayout({
   // Configuration
@@ -267,22 +266,18 @@ function AppLayout({
         </section>
       </main>
 
-      {/* Floating Add Shot Controls */}
-      <AddShotControls
-        config={config}
-        rows={rows}
-        setRows={setRows}
-        setCurrentIndex={setCurrentIndex}
-        selectedProjectId={selectedProjectId}
-      />
-
-      {/* Floating Bot Status and Transcript Control */}
+      {/* Floating Controls (includes Add Shot and Bot Status) */}
       <FloatingControls
         botIsActive={botIsActive}
         status={status}
         isReceivingTranscripts={isReceivingTranscripts}
         joinedMeetId={joinedMeetId}
         onTranscriptToggle={onTranscriptToggle}
+        config={config}
+        rows={rows}
+        setRows={setRows}
+        setCurrentIndex={setCurrentIndex}
+        selectedProjectId={selectedProjectId}
       />
 
       <footer className="app-footer">
