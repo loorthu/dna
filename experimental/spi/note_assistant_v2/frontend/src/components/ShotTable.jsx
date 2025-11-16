@@ -13,8 +13,16 @@ function ShotTable({
   availablePromptTypes,
   promptTypeSelection,
   setPromptTypeSelection,
-  updateCell
+  updateCell,
+  isReceivingTranscripts,
+  setIsReceivingTranscripts,
+  onTranscriptToggle
 }) {
+  const [hasActiveFocus, setHasActiveFocus] = React.useState(true);
+
+  // Add a ref to track if we recently toggled to prevent rapid toggling
+  const recentlyToggled = React.useRef(false);
+
   // Helper function to set all rows to notes tab
   const switchAllRowsToNotes = () => {
     const newActiveTab = {};
@@ -22,6 +30,90 @@ function ShotTable({
       newActiveTab[idx] = 'notes';
     });
     setActiveTab(newActiveTab);
+  };
+
+  // Handle clicking outside to deactivate focus
+  React.useEffect(() => {
+    const handleClickOutside = (event) => {
+      // Check if click is on a text input or within a text input
+      const isTextInput = event.target.tagName === 'TEXTAREA' || 
+                         (event.target.tagName === 'INPUT' && event.target.type === 'text') ||
+                         event.target.closest('textarea') ||
+                         event.target.closest('input[type="text"]');
+      
+      // If clicking on a text input, don't deactivate focus
+      if (isTextInput) {
+        return;
+      }
+      
+      // Check if click is within the table
+      const isWithinTable = event.target.closest('.data-table');
+      
+      // Check if click is within floating controls (don't interfere with those)
+      const isWithinFloatingControls = event.target.closest('.floating-controls');
+      
+      // Check if click is on interactive elements we want to ignore
+      const isButton = event.target.tagName === 'BUTTON' || event.target.closest('button');
+      const isSelect = event.target.tagName === 'SELECT' || event.target.closest('select');
+      const isSVG = event.target.tagName === 'SVG' || event.target.closest('svg');
+      
+      // Only deactivate if we're clicking in non-interactive areas, but NOT in floating controls
+      if (isWithinTable && !isButton && !isSelect && !isSVG) {
+        setHasActiveFocus(false);
+        // Only pause transcript collection if no shot is pinned (pinned shots should continue receiving transcripts)
+        if (isReceivingTranscripts && !recentlyToggled.current && pinnedIndex === null) {
+          recentlyToggled.current = true;
+          setIsReceivingTranscripts(); // This toggles from true to false
+          setTimeout(() => { recentlyToggled.current = false; }, 1000); // Prevent rapid toggling
+        }
+      } else if (!isWithinTable && !isWithinFloatingControls) {
+        setHasActiveFocus(false);
+        // Only pause transcript collection if no shot is pinned (pinned shots should continue receiving transcripts)
+        if (isReceivingTranscripts && !recentlyToggled.current && pinnedIndex === null) {
+          recentlyToggled.current = true;
+          setIsReceivingTranscripts(); // This toggles from true to false
+          setTimeout(() => { recentlyToggled.current = false; }, 1000); // Prevent rapid toggling
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isReceivingTranscripts, pinnedIndex]);
+
+  // Handle Escape key to toggle transcript streaming
+  React.useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setHasActiveFocus(false);
+        // Use the same toggle logic as the floating control button
+        if (!recentlyToggled.current) {
+          recentlyToggled.current = true;
+          onTranscriptToggle(); // Use the same function as the floating control button
+          setTimeout(() => { recentlyToggled.current = false; }, 1000); // Prevent rapid toggling
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isReceivingTranscripts, onTranscriptToggle, pinnedIndex]);
+
+  // Handle text field focus to restore active focus
+  const handleTextFieldFocus = (rowIndex, event) => {
+    // Prevent the event from bubbling up
+    if (event) {
+      event.stopPropagation();
+    }
+    // Only set the current index when focusing on a text field if no shot is pinned
+    // When a shot is pinned, transcription should continue to the pinned shot regardless of focus
+    if (pinnedIndex === null) {
+      setCurrentIndex(rowIndex);
+    }
+    // Use a small delay to ensure this runs after any click handlers
+    setTimeout(() => {
+      setHasActiveFocus(true);
+    }, 10);
   };
 
   const setTabForRow = (rowIndex, tabName) => {
@@ -52,6 +144,18 @@ function ShotTable({
 
   return (
     <div className="table-wrapper" style={{ width: '100%' }}>
+      <style dangerouslySetInnerHTML={{
+        __html: `
+          .current-row-focused {
+            border: 2px solid #3d82f6 !important;
+            background-color: rgba(59, 130, 246, 0.1) !important;
+          }
+          .current-row-unfocused {
+            border: 2px dotted rgba(59, 130, 246, 0.7) !important;
+            background-color: rgba(59, 130, 246, 0.04) !important;
+          }
+        `
+      }} />
       <table className="data-table" style={{ width: '100%', tableLayout: 'fixed' }}>
         <thead>
           <tr>
@@ -110,8 +214,15 @@ function ShotTable({
           {rows.map((row, idx) => {
             const isPinned = pinnedIndex === idx;
             const isCurrent = pinnedIndex !== null ? isPinned : idx === currentIndex;
+            // Show dotted border when transcripts are NOT being received, regardless of focus
+            // Show solid border when transcripts ARE being received
+            const shouldShowDottedBorder = isCurrent && !isReceivingTranscripts;
+            const rowClass = isCurrent 
+              ? (shouldShowDottedBorder ? 'current-row current-row-unfocused' : 'current-row current-row-focused')
+              : '';
+            
             return (
-              <tr key={idx} className={isCurrent ? 'current-row' : ''}>
+              <tr key={idx} className={rowClass}>
                 {/* Shot/Version Cell */}
                 <td className="readonly-cell" style={{ width: '10%', position: 'relative', paddingRight: '40px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.2', wordWrap: 'break-word', overflowWrap: 'break-word', wordBreak: 'break-all', maxWidth: '100%' }}>
@@ -271,7 +382,7 @@ function ShotTable({
                               </div>
                               <textarea
                                 value={row.notes || ''}
-                                onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                onFocus={(e) => handleTextFieldFocus(idx, e)}
                                 onChange={(e) => updateCell(idx, 'notes', e.target.value)}
                                 className="table-textarea"
                                 placeholder="Enter notes..."
@@ -398,7 +509,7 @@ function ShotTable({
                                   }
                                 }}
                                 value={row[`${activeLLM.key}_summary`] || ''}
-                                onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                                onFocus={(e) => handleTextFieldFocus(idx, e)}
                                 onChange={(e) => updateCell(idx, `${activeLLM.key}_summary`, e.target.value)}
                                 className="table-textarea"
                                 placeholder={`${activeLLM.name} summary goes here...`}
@@ -421,7 +532,7 @@ function ShotTable({
                     <textarea
                       name="transcription"
                       value={row.transcription}
-                      onFocus={() => { if (pinnedIndex === null) setCurrentIndex(idx); }}
+                      onFocus={(e) => handleTextFieldFocus(idx, e)}
                       onChange={(e) => updateCell(idx, 'transcription', e.target.value)}
                       className="table-textarea"
                       placeholder="Transcription goes here..."

@@ -52,13 +52,19 @@ Choose one of two methods to load your shots:
 #### Focus Management for Shot Tracking
 
 1. **Set Row Focus**: Click on any field within a shot row to set it as the active row
-   - **Active row** is highlighted with a blue border
+   - **Active row** is highlighted with a blue border (solid when streaming, dotted when paused)
    - **Transcriptions automatically flow** to the currently focused row
    - **Switch focus** by clicking on a different row as the conversation moves to the next shot
+   - **Quick pause**: Click outside text areas or press Escape key to quickly pause streaming
 
-2. **Follow the Conversation**: As the review progresses through different shots, click on the corresponding rows to redirect transcription capture
+2. **Follow the Conversation**: As the review progresses through different shots, click on the corresponding text fields in the rows to redirect transcription capture
 
-3. **Automatic Summary Generation**: When enabled in settings, summaries are automatically generated when switching shot context
+3. **Visual Streaming Feedback**: Monitor transcript streaming status through border styling
+   - **Solid blue border**: Transcripts are actively streaming to this shot
+   - **Dotted blue border**: Transcript streaming is paused for this shot
+   - **No border**: Shot is not currently selected for transcript capture
+
+4. **Automatic Summary Generation**: When enabled in settings, summaries are automatically generated when switching shot context
    - **Triggers on focus change**: When you switch from one shot to another, the previous shot's transcription is automatically summarized
    - **Uses preferred LLM and prompt**: Respects your configured default LLM model and prompt type settings
    - **Background processing**: Summaries generate in the background without interrupting your workflow
@@ -66,12 +72,16 @@ Choose one of two methods to load your shots:
 
 #### Pause and Resume Transcription
 
-1. **Pause When Needed**: Click "Pause Transcripts" to temporarily stop streaming
+1. **Manual and Automatic Pause/Resume**: 
+   - **Click "Pause Transcripts"** to temporarily stop streaming
+   - **Click "Get Transcripts"** to resume when conversation becomes relevant
+   - **Press Escape key** to quickly toggle between pause/resume states
+   - **Click outside text areas** to automatically pause streaming when no shot is pinned
+
+2. **When to Pause**:
    - **Use during off-topic discussions** (breaks, unrelated conversations)
    - **Helps improve LLM summarization** by avoiding irrelevant content
-   - **Connection remains active** - no need to rejoin the meeting
-
-2. **Resume Capture**: Click "Get Transcripts" again when the conversation becomes relevant
+   - **During administrative portions** of the review session
 
 #### Pin Shots for Extended Discussions
 
@@ -79,8 +89,17 @@ Choose one of two methods to load your shots:
    - **Locks transcription** to that specific shot regardless of row focus
    - **Allows multitasking**: Edit other rows, generate summaries, add notes
    - **Prevents accidental redirection** during complex discussions
+   - **Overrides automatic pause**: Pinned shots continue receiving transcripts even when clicking outside text areas
 
 2. **Unpin to Resume**: Click "Unpin" to return to normal focus-based workflow
+
+#### Keyboard Shortcuts
+
+1. **Escape Key**: Quick toggle for transcript streaming
+   - **First press**: Starts transcript streaming if not active
+   - **Subsequent presses**: Toggles between pause/resume states
+   - **Works from anywhere**: No need to click floating controls
+   - **Respects pinned shots**: Functions the same whether shots are pinned or not
 
 #### Monitor Real-time Activity
 

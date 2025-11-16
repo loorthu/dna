@@ -124,10 +124,6 @@ export function useTranscription(rows, setRows, currentIndex, pinnedIndex, inclu
             setStatus({ msg: `Bot Status: ${statusValue}`, type: isActiveStatus ? 'success' : 'info', detailedMsg: null });
             setBotIsActive(isActiveStatus);
             
-            if (setWaitingForActive && isActiveStatus) {
-              setWaitingForActive(false);
-            }
-            
             // Stop stream when status is 'completed' or 'error'
             if (statusValue === 'completed' || statusValue === 'error') {
               setBotIsActive(false);

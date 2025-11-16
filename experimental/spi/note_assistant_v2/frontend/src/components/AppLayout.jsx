@@ -176,6 +176,9 @@ function AppLayout({
             promptTypeSelection={promptTypeSelection}
             setPromptTypeSelection={setPromptTypeSelection}
             updateCell={updateCell}
+            isReceivingTranscripts={isReceivingTranscripts}
+            setIsReceivingTranscripts={onTranscriptToggle}
+            onTranscriptToggle={onTranscriptToggle}
           />
         </section>
       </main>
