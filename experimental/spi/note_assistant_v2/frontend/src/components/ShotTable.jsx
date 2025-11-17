@@ -414,9 +414,10 @@ function ShotTable({
                           marginLeft: '8px'
                         }}
                         aria-label="Refresh All Summaries"
+                        title="Generate summaries for all enabled LLMs for this shot using current transcription"
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const inputText = row.transcription || row.notes || '';
+                          const inputText = row.transcription || '';
                           if (!inputText.trim()) return;
                           
                           // Generate summaries for all enabled LLMs
@@ -538,9 +539,10 @@ function ShotTable({
                                     borderRadius: '3px'
                                   }}
                                   aria-label="Refresh Summary"
+                                  title={`Generate ${activeLLM.name} summary for this shot using current transcription`}
                                   onClick={async (e) => {
                                     e.stopPropagation();
-                                    const inputText = row.transcription || row.notes || '';
+                                    const inputText = row.transcription || '';
                                     if (!inputText.trim()) return;
                                     const promptType = getPromptTypeForRowAndLLM(idx, activeLLM.key);
                                     updateCell(idx, `${activeLLM.key}_summary`, '...'); // Show loading
@@ -571,6 +573,7 @@ function ShotTable({
                                     borderRadius: '3px',
                                     whiteSpace: 'nowrap'
                                   }}
+                                  title="Copy summary content to Notes tab (copies selected text or entire summary if none selected)"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     // Find the active summary textarea using data attributes
