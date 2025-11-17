@@ -108,6 +108,13 @@ Choose one of two methods to load your shots:
    - **Intelligent targeting**: Automatically detects which row you're editing
    - **Quick workflow**: Seamlessly switch between shots during complex reviews
 
+3. **Alt+Up/Down Arrow**: Navigate between shot rows
+   - **Alt+Up Arrow**: Move to the previous shot row
+   - **Alt+Down Arrow**: Move to the next shot row
+   - **Smart focus**: Automatically focuses the active tab (Notes or LLM summary) in the target row
+   - **Respects tabs**: Maintains your current tab selection when navigating
+   - **Boundary aware**: Won't navigate beyond first or last row
+
 #### Monitor Real-time Activity
 
 - **Active row highlight**: Blue border shows which row is receiving transcripts

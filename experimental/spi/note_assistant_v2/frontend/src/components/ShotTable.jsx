@@ -131,11 +131,61 @@ function ShotTable({
           setHasActiveFocus(true);
         }
       }
+      
+      // Handle Alt+Arrow keys for navigation (changed from Ctrl to avoid macOS conflicts)
+      if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+        event.preventDefault(); // Prevent default scroll behavior
+        
+        let newIndex;
+        if (event.key === 'ArrowUp') {
+          newIndex = Math.max(0, currentIndex - 1);
+        } else {
+          newIndex = Math.min(rows.length - 1, currentIndex + 1);
+        }
+        
+        // Only change if we can actually move
+        if (newIndex !== currentIndex) {
+          // If a shot is pinned, only move the current index but keep the pin
+          if (pinnedIndex !== null) {
+            setCurrentIndex(newIndex);
+          } else {
+            // If no pin, move current index and focus
+            setCurrentIndex(newIndex);
+            setHasActiveFocus(true);
+          }
+          
+          // Focus the active tab textarea of the new row (Notes or LLM summary)
+          setTimeout(() => {
+            const tableRows = document.querySelectorAll('.data-table tbody tr');
+            if (tableRows[newIndex]) {
+              const activeTabName = getActiveTabForRow(newIndex);
+              let targetTextarea;
+              
+              if (activeTabName === 'notes') {
+                // Focus the notes textarea
+                targetTextarea = tableRows[newIndex].querySelector('textarea.table-textarea:not([name="transcription"])');
+              } else {
+                // Focus the active LLM summary textarea
+                targetTextarea = tableRows[newIndex].querySelector(`textarea[data-llm-key="${activeTabName}"]`);
+              }
+              
+              // Fallback to transcription if we can't find the target
+              if (!targetTextarea) {
+                targetTextarea = tableRows[newIndex].querySelector('textarea[name="transcription"]');
+              }
+              
+              if (targetTextarea) {
+                targetTextarea.focus();
+              }
+            }
+          }, 50);
+        }
+      }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isReceivingTranscripts, onTranscriptToggle, pinnedIndex, currentIndex, setPinnedIndex, setCurrentIndex]);
+  }, [isReceivingTranscripts, onTranscriptToggle, pinnedIndex, currentIndex, setPinnedIndex, setCurrentIndex, rows, activeTab]);
 
   // Handle text field focus to restore active focus
   const handleTextFieldFocus = (rowIndex, event) => {
