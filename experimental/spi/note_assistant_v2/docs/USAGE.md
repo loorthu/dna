@@ -113,7 +113,23 @@ Choose one of two methods to load your shots:
 - **Active row highlight**: Blue border shows which row is receiving transcripts
 - **Transcription text** appears in real-time in the "Transcription" column
 - **Timestamps** show when text was captured
-- **Pin status** indicates if a shot is locked for capture
+
+## User Interface Controls
+
+### Collapsible Panels
+
+The interface includes collapsible components to save screen space:
+
+#### Left Panel Controls
+- **Top Panel**: Contains Import, Google Meet, Export, and Settings tabs
+- **Collapsible**: Click chevron (▲/▼) button to collapse/expand
+- **Purpose**: Save space for the shot notes table during active reviews
+
+#### Floating Controls
+- **Location**: Top-right corner of the screen
+- **Contains**: Add shot input, status messages, and transcript controls  
+- **Collapsible**: Click chevron (▲/▼) button to show/hide non-essential controls
+- **Purpose**: Minimize distractions while keeping transcript controls accessible
 
 ### Step 4: Generate AI Summaries
 
