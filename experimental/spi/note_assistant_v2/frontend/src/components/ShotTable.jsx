@@ -145,16 +145,16 @@ function ShotTable({
         
         // Only change if we can actually move
         if (newIndex !== currentIndex) {
-          // If a shot is pinned, only move the current index but keep the pin
-          if (pinnedIndex !== null) {
-            setCurrentIndex(newIndex);
-          } else {
-            // If no pin, move current index and focus
-            setCurrentIndex(newIndex);
+          // Always move the current index for navigation
+          setCurrentIndex(newIndex);
+          
+          // Only set focus if no shot is pinned (pinned shots should continue receiving transcripts)
+          if (pinnedIndex === null) {
             setHasActiveFocus(true);
           }
           
           // Focus the active tab textarea of the new row (Notes or LLM summary)
+          // But don't trigger handleTextFieldFocus when a shot is pinned
           setTimeout(() => {
             const tableRows = document.querySelectorAll('.data-table tbody tr');
             if (tableRows[newIndex]) {
@@ -175,7 +175,13 @@ function ShotTable({
               }
               
               if (targetTextarea) {
+                // Add a flag to prevent handleTextFieldFocus from changing currentIndex when shot is pinned
+                targetTextarea.dataset.keyboardNavigation = 'true';
                 targetTextarea.focus();
+                // Remove the flag after a short delay
+                setTimeout(() => {
+                  delete targetTextarea.dataset.keyboardNavigation;
+                }, 100);
               }
             }
           }, 50);
@@ -193,11 +199,18 @@ function ShotTable({
     if (event) {
       event.stopPropagation();
     }
+    
+    // Check if this focus event is from keyboard navigation
+    const isKeyboardNavigation = event && event.target && event.target.dataset.keyboardNavigation;
+    
     // Only set the current index when focusing on a text field if no shot is pinned
     // When a shot is pinned, transcription should continue to the pinned shot regardless of focus
     if (pinnedIndex === null) {
       setCurrentIndex(rowIndex);
     }
+    // If a shot is pinned, DO NOT change currentIndex regardless of how focus happened
+    // The pinned shot should always remain the target for transcription
+    
     // Use a small delay to ensure this runs after any click handlers
     setTimeout(() => {
       setHasActiveFocus(true);
@@ -312,6 +325,9 @@ function ShotTable({
         <tbody>
           {rows.map((row, idx) => {
             const isPinned = pinnedIndex === idx;
+            // When determining which row is "current" for transcription purposes:
+            // - If a shot is pinned, only the pinned shot is "current" 
+            // - If no shot is pinned, the currentIndex determines which shot is "current"
             const isCurrent = pinnedIndex !== null ? isPinned : idx === currentIndex;
             // Show dotted border when transcripts are NOT being received, regardless of focus
             // Show solid border when transcripts ARE being received
