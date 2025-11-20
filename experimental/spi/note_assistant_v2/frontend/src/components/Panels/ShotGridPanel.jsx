@@ -40,36 +40,34 @@ function ShotGridPanel({ config, configLoaded, setRows, setCurrentIndex }) {
   return (
     <div>
       <p className="help-text">Select an active ShotGrid project and a recent playlist to add shots to the shot list.</p>
-      <div className="field-row" style={{ flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ minWidth: 220, marginRight: 16 }}>
+      <div className="field-row" style={{ flexWrap: 'wrap', alignItems: 'flex-start', gap: 16 }}>
+        <div style={{ minWidth: 160, maxWidth: 200, flex: '0 1 200px' }}>
           <label htmlFor="sg-project-select" className="field-label" style={{ marginBottom: 4, display: 'block' }}>Project</label>
           <select
             id="sg-project-select"
             value={selectedProjectId}
             onChange={e => setSelectedProjectId(e.target.value)}
             className="text-input"
-            style={{ width: '100%' }}
+            style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             disabled={sgLoading || sgProjects.length === 0}
           >
-            <option value="">-- Select Project --</option>
+            <option value="">...</option>
             {sgProjects.map(pr => (
               <option key={pr.id} value={pr.id}>{pr.code}</option>
             ))}
           </select>
         </div>
-      </div>
-      <div className="field-row" style={{ marginTop: 8 }}>
-        <div style={{ minWidth: 240 }}>
+        <div style={{ minWidth: 200, maxWidth: 260, flex: '1 1 260px' }}>
           <label htmlFor="sg-playlist-select" className="field-label" style={{ marginBottom: 4, display: 'block' }}>Playlist</label>
           <select
             id="sg-playlist-select"
             value={selectedPlaylistId}
             onChange={e => setSelectedPlaylistId(e.target.value)}
             className="text-input"
-            style={{ width: '100%' }}
+            style={{ width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
             disabled={!selectedProjectId || sgLoading || sgPlaylists.length === 0}
           >
-            <option value="">-- Select Playlist --</option>
+            <option value="">...</option>
             {sgPlaylists.map(pl => (
               <option key={pl.id} value={pl.id}>{pl.code} ({pl.created_at?.slice(0,10)})</option>
             ))}
