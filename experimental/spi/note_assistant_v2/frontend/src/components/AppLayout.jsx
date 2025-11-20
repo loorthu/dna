@@ -6,6 +6,7 @@ import ExportPanel from './Panels/ExportPanel';
 import SettingsPanel from './Panels/SettingsPanel';
 import ShotTable from './ShotTable';
 import FloatingControls from './FloatingControls';
+import { getLLMSummary } from '../services/llmService';
 
 function AppLayout({
   // Configuration
@@ -72,6 +73,49 @@ function AppLayout({
       setImportSubTab('upload');
     }
   }, [config.shotgrid_enabled, setActiveTopTab]);
+
+  // Handle refresh all summaries functionality
+  const handleRefreshAllSummaries = async (progressCallback, isCancelledCallback) => {
+    const selectedLLM = enabledLLMs.find(llm => llm.key === autoSummaryLLM);
+    if (!selectedLLM) return;
+
+    const rowsWithTranscription = rows.filter(row => row.transcription && row.transcription.trim());
+    const totalRows = rowsWithTranscription.length;
+    
+    if (totalRows === 0) return;
+
+    for (let i = 0; i < rowsWithTranscription.length; i++) {
+      // Check if cancelled
+      if (isCancelledCallback()) {
+        break;
+      }
+
+      const row = rowsWithTranscription[i];
+      const rowIndex = rows.indexOf(row);
+      
+      try {
+        // Get the prompt type for this row and LLM (use default if not set)
+        const promptType = promptTypeSelection[`${rowIndex}_${selectedLLM.key}`] || (availablePromptTypes[0] || '');
+        
+        // Show loading state
+        updateCell(rowIndex, `${selectedLLM.key}_summary`, '...');
+        
+        // Generate summary
+        const summary = await getLLMSummary(row.transcription, selectedLLM.provider, promptType);
+        updateCell(rowIndex, `${selectedLLM.key}_summary`, summary || '[No summary returned]');
+      } catch (error) {
+        console.error('Error generating summary for row', rowIndex, error);
+        updateCell(rowIndex, `${selectedLLM.key}_summary`, '[Error generating summary]');
+      }
+
+      // Update progress
+      const progress = ((i + 1) / totalRows) * 100;
+      progressCallback(progress);
+
+      // Small delay to prevent overwhelming the API
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  };
 
   return (
     <div className="app-shell">
@@ -235,6 +279,7 @@ function AppLayout({
                 autoSummaryLLM={autoSummaryLLM}
                 setAutoSummaryLLM={setAutoSummaryLLM}
                 enabledLLMs={enabledLLMs}
+                onRefreshAllSummaries={handleRefreshAllSummaries}
               />
             )}
           </div>

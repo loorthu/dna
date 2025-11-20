@@ -22,6 +22,7 @@ function ShotTable({
 
   // Add a ref to track if we recently toggled to prevent rapid toggling
   const recentlyToggled = React.useRef(false);
+  const prevRowsRef = React.useRef(rows);
 
   // Helper function to set all rows to notes tab
   const switchAllRowsToNotes = () => {
@@ -228,16 +229,57 @@ function ShotTable({
     return activeTab[rowIndex] || 'notes';
   };
 
-  // Initialize all rows to 'notes' tab when rows change (e.g., new playlist upload)
+  // Initialize tabs for new rows while preserving existing selections
   React.useEffect(() => {
-    if (rows.length > 0) {
+    const prevRows = prevRowsRef.current;
+    
+    // Detect when a completely new dataset replaces the current rows (e.g., new playlist import)
+    const isDatasetReplacement = (
+      prevRows.length === rows.length &&
+      rows.length > 0 &&
+      prevRows.some((prevRow, idx) => {
+        const currentRow = rows[idx];
+        if (!currentRow || !prevRow) return true;
+        const prevIdentifier = `${prevRow.shot || ''}__${prevRow.version || ''}`;
+        const currentIdentifier = `${currentRow.shot || ''}__${currentRow.version || ''}`;
+        return prevIdentifier !== currentIdentifier;
+      })
+    );
+
+    if (isDatasetReplacement) {
       const newActiveTab = {};
       rows.forEach((_, idx) => {
         newActiveTab[idx] = 'notes';
       });
       setActiveTab(newActiveTab);
+    } else if (rows.length > 0) {
+      setActiveTab(prev => {
+        const nextTabs = { ...prev };
+        let changed = false;
+        
+        // Ensure every row has an assigned tab (default to notes)
+        rows.forEach((_, idx) => {
+          if (!nextTabs[idx]) {
+            nextTabs[idx] = 'notes';
+            changed = true;
+          }
+        });
+
+        // Remove any stale tab entries for rows that no longer exist
+        Object.keys(nextTabs).forEach(key => {
+          const idx = Number(key);
+          if (Number.isInteger(idx) && idx >= rows.length) {
+            delete nextTabs[idx];
+            changed = true;
+          }
+        });
+
+        return changed ? nextTabs : prev;
+      });
     }
-  }, [rows]);
+
+    prevRowsRef.current = rows;
+  }, [rows, setActiveTab]);
 
   const setPromptTypeForRowAndLLM = (rowIndex, llmKey, promptType) => {
     setPromptTypeSelection(prev => ({

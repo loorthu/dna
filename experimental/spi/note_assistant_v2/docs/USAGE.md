@@ -143,8 +143,9 @@ The interface includes collapsible components to save screen space:
 1. **Select LLM Model**: Choose from available models (ChatGPT, Claude, etc.)
 2. **Select Prompt Type**: Choose prompt style (short, long, technical, creative)
 3. **Click Refresh Icon** in the Summary column for specific shots
-4. **Review Generated Summary**: AI-generated summary appears in Summary column
-5. **Copy to Notes**: Use the "Add to Notes" button to transfer content to your personal notes
+4. **Bulk Refresh (optional)**: Open the **Settings** tab, enable *Auto generate summary on context switch*, pick your preferred LLM, and click **Refresh All** to queue summaries for every shot with transcription data. Progress and cancellation controls let you run this in the background without disrupting your current tab selections.
+5. **Review Generated Summary**: AI-generated summary appears in Summary column
+6. **Copy to Notes**: Use the "Add to Notes" button to transfer content to your personal notes
    - **Select specific text**: Highlight portions of the LLM summary to copy only selected content
    - **Copy entire summary**: Leave text unselected to copy the complete LLM summary
    - **Combine sources**: Mix and match content from different LLM models and prompt types
