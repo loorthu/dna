@@ -114,7 +114,7 @@ function ShotGridPanel({ config, configLoaded, setRows, setCurrentIndex }) {
         {sgLoading && <span className="spinner" aria-hidden="true" style={{ marginLeft: 12, marginTop: 32 }} />}
         {sgError && <span style={{ color: 'red', marginLeft: 12, marginTop: 32 }}>{sgError}</span>}
       </div>
-      <div style={{ width: '100%', textAlign: 'center', margin: '8px 0 4px 0', fontWeight: 600, color: '#666' }}>
+      <div style={{ width: '100%', textAlign: 'left', margin: '8px 0 4px 0', fontWeight: 700, color: 'var(--accent)' }}>
         <span>------ OR ------</span>
       </div>
       <div className="field-row" style={{ marginTop: 8 }}>
