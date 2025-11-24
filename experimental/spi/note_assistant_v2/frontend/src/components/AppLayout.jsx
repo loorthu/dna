@@ -90,6 +90,10 @@ function AppLayout({
         break;
       }
 
+      // Update progress before processing
+      const progress = (i / totalRows) * 100;
+      progressCallback(progress);
+
       const row = rowsWithTranscription[i];
       const rowIndex = rows.indexOf(row);
       
@@ -108,9 +112,9 @@ function AppLayout({
         updateCell(rowIndex, `${selectedLLM.key}_summary`, '[Error generating summary]');
       }
 
-      // Update progress
-      const progress = ((i + 1) / totalRows) * 100;
-      progressCallback(progress);
+      // Update progress after completion
+      const completedProgress = ((i + 1) / totalRows) * 100;
+      progressCallback(completedProgress);
 
       // Small delay to prevent overwhelming the API
       await new Promise(resolve => setTimeout(resolve, 100));
