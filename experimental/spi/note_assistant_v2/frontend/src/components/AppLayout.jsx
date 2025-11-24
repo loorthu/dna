@@ -101,7 +101,7 @@ function AppLayout({
         updateCell(rowIndex, `${selectedLLM.key}_summary`, '...');
         
         // Generate summary
-        const summary = await getLLMSummary(row.transcription, selectedLLM.provider, promptType);
+        const summary = await getLLMSummary(row.transcription, selectedLLM.provider, promptType, selectedLLM.model_name);
         updateCell(rowIndex, `${selectedLLM.key}_summary`, summary || '[No summary returned]');
       } catch (error) {
         console.error('Error generating summary for row', rowIndex, error);
