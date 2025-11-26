@@ -52,12 +52,20 @@ function ExportPanel({ rows, shotSegments, originalFilename }) {
       transcriptContent += '-------------------\n';
       transcriptContent += `${row.transcription || ''}\n\n`;
     });
+    
+    // Generate filename based on original source
+    let filename = 'audio_transcript.txt';
+    if (originalFilename) {
+      const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
+      filename = `${baseName}_transcript.txt`;
+    }
+    
     // Create blob and trigger download
     const blob = new Blob([transcriptContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'audio_transcript.txt';
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -68,10 +76,21 @@ function ExportPanel({ rows, shotSegments, originalFilename }) {
     setSendingEmail(true);
     setEmailStatus({ msg: "Sending notes...", type: "info" });
     try {
+      // Generate email subject based on original filename
+      let emailSubject = "Shot Notes";
+      if (originalFilename) {
+        const baseName = originalFilename.replace(/\.[^/.]+$/, ''); // Remove extension
+        emailSubject = `Shot Notes - ${baseName}`;
+      }
+      
       const res = await fetch(`${BACKEND_URL}/email-notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, notes: rows }),
+        body: JSON.stringify({ 
+          email, 
+          notes: rows, 
+          subject: emailSubject 
+        }),
       });
       const data = await res.json();
       if (res.ok && data.status === "success") {
