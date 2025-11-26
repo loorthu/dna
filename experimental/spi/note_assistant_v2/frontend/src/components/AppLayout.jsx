@@ -61,6 +61,7 @@ function AppLayout({
   const [importSubTab, setImportSubTab] = React.useState(config.shotgrid_enabled ? 'shotgrid' : 'upload');
   const [shotTableRowTabs, setShotTableRowTabs] = React.useState({});
   const [isPanelExpanded, setIsPanelExpanded] = React.useState(true);
+  const [originalFilename, setOriginalFilename] = React.useState(null);
   // Initialize tabs on component mount
   useEffect(() => {
     // Always set default top tab to import on mount
@@ -242,6 +243,7 @@ function AppLayout({
                       configLoaded={configLoaded}
                       setRows={setRows}
                       setCurrentIndex={setCurrentIndex}
+                      setOriginalFilename={setOriginalFilename}
                     />
                   )}
                   
@@ -249,6 +251,7 @@ function AppLayout({
                     <UploadPanel 
                       setRows={setRows} 
                       setCurrentIndex={setCurrentIndex} 
+                      setOriginalFilename={setOriginalFilename}
                     />
                   )}
                 </div>
@@ -270,7 +273,8 @@ function AppLayout({
             {activeTopTab === 'export' && (
               <ExportPanel 
                 rows={rows} 
-                shotSegments={shotSegments} 
+                shotSegments={shotSegments}
+                originalFilename={originalFilename}
               />
             )}
 
