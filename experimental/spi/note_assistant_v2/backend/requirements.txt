@@ -14,3 +14,12 @@ shotgun_api3
 httpx
 websockets
 PyYAML>=6.0
+openai-whisper
+
+# CSV utilities
+pandas>=2.0.0
+
+# Image processing and OCR
+easyocr
+Pillow>=10.0.0
+opencv-python>=4.5.0
