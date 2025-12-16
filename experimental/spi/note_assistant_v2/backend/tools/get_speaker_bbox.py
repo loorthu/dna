@@ -1,137 +1,214 @@
 #!/usr/bin/env python3
 """
-Speaker Bounding Box Detection Tool
+Speaker Panel Detection Tool
 
-This script detects speaker panels in Google Meet recordings and extracts them.
-Supports both image files (PNG, JPG) and MP4 video files.
+This script detects and extracts speaker panels from video conference screenshots.
+It's designed to work with meeting recordings where the layout typically consists of:
+- A shared screen on the LEFT side
+- A speaker panel on the RIGHT side (containing video and name/room label)
 
-Usage:
-    python3 get_speaker_bbox.py [--save-image] <image_file.png>
-    python3 get_speaker_bbox.py [--save-image] <video_file.mp4>
+The tool provides two detection methods:
 
-For video files (.mp4), the script will:
-1. Extract the middle frame from the video (in memory)
-2. Process that frame to detect the speaker panel
-3. Optionally save cropped speaker panel if --save-image is specified
+1. Computer Vision (CV) Method:
+   - Uses edge detection to find the vertical split between shared screen and speaker panel
+   - Applies vertical trimming to remove black bars
+   - Fast and works well with consistent layouts
 
-For image files, it will:
-1. Process the image directly to detect the speaker panel
-2. Optionally save cropped speaker panel if --save-image is specified
+2. Large Language Model (LLM) Method:
+   - Uses Google's Gemini AI to visually analyze the screenshot
+   - More intelligent but requires API key and internet connection
+   - Better at handling unusual layouts or edge cases
 
-Output:
-- JSON results to stdout
-- Status messages to stderr
-- Cropped speaker panel (only if --save-image): <image_name>_speaker_crop.png
+Features:
+- Returns normalized bounding box coordinates (0.0-1.0 range)
+- Optional image cropping and saving
+- Debug mode for troubleshooting detection issues
+- Fallback support (try CV first, then LLM if needed)
 
-Options:
-    --save-image    Save the cropped speaker panel to disk
+Usage Examples:
+    # Basic CV detection
+    python get_speaker_bbox.py screenshot.png
+
+    # Use LLM method with cropped output
+    python get_speaker_bbox.py screenshot.png --method llm --save-image
+
+    # Try CV first, fallback to LLM if needed
+    python get_speaker_bbox.py screenshot.png --method cv+llm --debug
+
+Requirements:
+- OpenCV (cv2)
+- NumPy
+- PIL (Pillow)
+- Google Generative AI (for LLM method)
+- python-dotenv
+- GEMINI_API_KEY environment variable (for LLM method)
+
+Output Format:
+JSON with bounding box coordinates, confidence score, and metadata.
 """
+
 import os
 import sys
-import warnings
+import json
 import argparse
-
-import google.generativeai as genai
-
 import base64
 import logging
-from dotenv import load_dotenv
-from PIL import Image
+
 import cv2
+import numpy as np
+from PIL import Image
+from dotenv import load_dotenv
+import google.generativeai as genai
 
 logging.getLogger("grpc").setLevel(logging.ERROR)
 
-import sys
-
 # ---------------------------
-# CONFIGURATION
+# CONFIG
 # ---------------------------
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
-if not API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set in environment/.env")
-
-genai.configure(api_key=API_KEY)
 
 # ---------------------------
-# HELPER: Extract middle frame from video
+# VERTICAL TRIM HELPER
 # ---------------------------
-def extract_middle_frame(video_path):
+
+def trim_vertical_black_bars(panel_img):
     """
-    Extract the middle frame from an MP4 video file to a temporary file.
-    
-    Args:
-        video_path (str): Path to the video file
-    
-    Returns:
-        str: Path to the temporary frame image
+    Trim top/bottom black bars from a right-side panel image.
+    Keeps the largest contiguous vertical band with wide content.
     """
-    import tempfile
-    
-    # Create a temporary file for the frame
-    temp_fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='frame_')
-    os.close(temp_fd)  # Close the file descriptor, we just need the path
-    
-    # Open video file
-    cap = cv2.VideoCapture(video_path)
-    
-    if not cap.isOpened():
-        os.unlink(temp_path)  # Clean up temp file
-        raise ValueError(f"Could not open video file: {video_path}")
-    
-    # Get total number of frames
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    if total_frames == 0:
-        cap.release()
-        os.unlink(temp_path)  # Clean up temp file
-        raise ValueError(f"No frames found in video: {video_path}")
-    
-    # Calculate middle frame position
-    middle_frame = total_frames // 2
-    
-    # Set frame position to middle
-    cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame)
-    
-    # Read the frame
-    ret, frame = cap.read()
-    cap.release()
-    
-    if not ret:
-        os.unlink(temp_path)  # Clean up temp file
-        raise ValueError(f"Could not read frame {middle_frame} from video: {video_path}")
-    
-    # Save frame as PNG
-    success = cv2.imwrite(temp_path, frame)
-    if not success:
-        os.unlink(temp_path)  # Clean up temp file
-        raise ValueError(f"Could not save frame to: {temp_path}")
-    
-    return temp_path
+    gray = cv2.cvtColor(panel_img, cv2.COLOR_BGR2GRAY)
 
+    # Fraction of non-black pixels per row
+    row_activity = np.mean(gray > 25, axis=1)
+
+    # Require wide horizontal coverage (filters stray shared-screen text)
+    active = row_activity > 0.20
+
+    if not np.any(active):
+        return panel_img, 0, panel_img.shape[0]
+
+    idx = np.where(active)[0]
+    start, end = idx[0], idx[-1]
+
+    # Small safety padding
+    pad = int(0.03 * (end - start))
+    start = max(0, start - pad)
+    end = min(panel_img.shape[0], end + pad)
+
+    return panel_img[start:end, :], start, end
 
 # ---------------------------
-# HELPER: Load image as base64
+# CV DETECTION (VERTICAL SPLIT + TRIM)
 # ---------------------------
+
+def detect_speaker_bbox_cv(image_path, debug=False):
+    """
+    Detect speaker panel by:
+      1. Finding vertical split between shared screen (left)
+         and speaker panel (right)
+      2. Cropping full height from split to right edge
+      3. Trimming top/bottom black bars
+      4. Returning NORMALIZED bounding box
+    """
+    img = cv2.imread(image_path)
+    if img is None:
+        raise ValueError("Could not read image")
+
+    H, W = img.shape[:2]
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+
+    # Edge density per column
+    col_density = np.mean(edges > 0, axis=0)
+
+    # Smooth signal
+    kernel = np.ones(25) / 25
+    col_density = np.convolve(col_density, kernel, mode="same")
+
+    # Search in right half
+    search_start = int(0.5 * W)
+    region = col_density[search_start:]
+
+    # Strongest vertical transition
+    gradient = np.abs(np.gradient(region))
+    rel_x = int(np.argmax(gradient))
+    split_x = search_start + rel_x
+
+    if W - split_x < 0.1 * W:
+        raise ValueError("Detected speaker panel too narrow")
+
+    # Crop horizontally
+    panel = img[:, split_x:W]
+
+    # Trim vertical black bars
+    panel_trimmed, y0, y1 = trim_vertical_black_bars(panel)
+
+    if debug:
+        dbg = img.copy()
+        cv2.line(dbg, (split_x, 0), (split_x, H), (0, 0, 255), 2)
+        cv2.imwrite("debug_split.png", dbg)
+        cv2.imwrite("debug_panel_raw.png", panel)
+        cv2.imwrite("debug_panel_trimmed.png", panel_trimmed)
+
+    # Absolute bbox
+    abs_x = split_x
+    abs_y = y0
+    abs_w = W - split_x
+    abs_h = y1 - y0
+
+    # Normalized bbox
+    bbox_norm = {
+        "x": abs_x / W,
+        "y": abs_y / H,
+        "width": abs_w / W,
+        "height": abs_h / H,
+    }
+
+    return {
+        "found_speaker_panel": True,
+        "bounding_box": bbox_norm,
+        "confidence": 0.99,
+        "method": "cv",
+        "image_width": W,
+        "image_height": H,
+    }
+
+# ---------------------------
+# LLM DETECTION (IMPROVED PROMPT)
+# ---------------------------
+
 def load_image_base64(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-# ---------------------------
-# PROMPT: Structured extraction
-# ---------------------------
 VL_PROMPT = """
-You are an image-analysis assistant. The input is a single video frame from a Google
-Meet recording. Someone is typically sharing their screen (large main content area),
-and on the right side there is an active speaker panel showing the speaker’s face and
-their name as a text overlay near the bottom of the video tile.
+You are performing visual localization on a video-conference screenshot.
 
-Your task is to identify the bounding box of the active speaker panel in the image. Make sure 
-that the speaker's name label is included in the bounding box.
+Layout assumptions (very important):
+- The shared screen occupies the LEFT portion of the image.
+- The speaker panel occupies the RIGHT portion of the image.
+- The speaker panel includes:
+  - the speaker video
+  - a visible text label (person name or room name),
+    e.g. "TCSOB-3102-SB"
+- The label text MUST be included in the bounding box.
+
+Task:
+Return the bounding box of the speaker panel.
 
 Requirements:
-1. Return ONLY structured JSON.
-2. The JSON fields must be:
+- Coordinates must be pixel values relative to the original image.
+- (0,0) is the top-left corner.
+- x increases to the right, y increases downward.
+- Prefer a box that includes the ENTIRE speaker panel
+  rather than a tight crop of the face.
+- Do NOT include shared-screen content on the left.
+- Do NOT guess. If uncertain, return found_speaker_panel=false.
+
+Return ONLY JSON in the following format:
 
 {
   "found_speaker_panel": true | false,
@@ -143,59 +220,20 @@ Requirements:
   },
   "confidence": <0.0-1.0>
 }
-
-3. Coordinates must be pixel values relative to the original image.
-4. If you cannot confidently locate the panel, return:
-
-{
-  "found_speaker_panel": false,
-  "bounding_box": null,
-  "confidence": 0.0
-}
-
-5. The bounding box should tightly enclose the speaker video tile including the name label.
-
-Return ONLY the JSON object.
 """
 
-# ---------------------------
-# RUN REQUEST
-# ---------------------------
-def query_gemini_for_speaker_bbox(image_path):
+
+def detect_speaker_bbox_llm(image_path):
+    if not API_KEY:
+        raise RuntimeError("GEMINI_API_KEY not set")
+
+    genai.configure(api_key=API_KEY)
+
+    with Image.open(image_path) as img:
+        W, H = img.width, img.height
+
     image_b64 = load_image_base64(image_path)
-
-    # Gemini expects inline base64 as inline_data with mime_type and data
-    image_part = {
-        "inline_data": {
-            "mime_type": "image/png",
-            "data": image_b64,
-        }
-    }
-
     model = genai.GenerativeModel("gemini-2.5-pro")
-
-    generation_config = {
-        "response_mime_type": "application/json",
-        "response_schema": {
-            "type": "object",
-            "properties": {
-                "found_speaker_panel": {"type": "boolean"},
-                "bounding_box": {
-                    "type": "object",
-                    "nullable": True,
-                    "properties": {
-                        "x": {"type": "integer"},
-                        "y": {"type": "integer"},
-                        "width": {"type": "integer"},
-                        "height": {"type": "integer"}
-                    },
-                    "required": ["x", "y", "width", "height"]
-                },
-                "confidence": {"type": "number"}
-            },
-            "required": ["found_speaker_panel", "bounding_box", "confidence"]
-        }
-    }
 
     response = model.generate_content(
         contents=[
@@ -203,128 +241,111 @@ def query_gemini_for_speaker_bbox(image_path):
                 "role": "user",
                 "parts": [
                     {"text": VL_PROMPT},
-                    image_part,
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": image_b64,
+                        }
+                    },
                 ],
             }
-        ],
-        generation_config=generation_config,
+        ]
     )
 
-    # Parse JSON and return structured dict
-    import json as _json
-    return _json.loads(response.text)
+    data = json.loads(response.text)
 
+    if not data.get("found_speaker_panel"):
+        return data
+
+    bbox = data["bounding_box"]
+
+    # Normalize bbox
+    bbox_norm = {
+        "x": bbox["x"] / W,
+        "y": bbox["y"] / H,
+        "width": bbox["width"] / W,
+        "height": bbox["height"] / H,
+    }
+
+    return {
+        "found_speaker_panel": True,
+        "bounding_box": bbox_norm,
+        "confidence": data.get("confidence", 0.0),
+        "method": "llm",
+        "image_width": W,
+        "image_height": H,
+    }
 
 # ---------------------------
-# HELPER: Crop and save speaker image
+# CROP HELPER
 # ---------------------------
-def crop_and_save_speaker(image_path, bbox, output_path=None):
-    """
-    Crop the speaker panel from the original image and save it.
-    
-    Args:
-        image_path (str): Path to the original image
-        bbox (dict): Bounding box with keys 'x', 'y', 'width', 'height'
-        output_path (str): Optional output path. If None, generates based on input path
-    
-    Returns:
-        str: Path to the saved cropped image
-    """
-    if output_path is None:
-        # Generate output path based on input path
-        base_name = os.path.splitext(image_path)[0]
-        ext = os.path.splitext(image_path)[1]
-        output_path = f"{base_name}_speaker_crop{ext}"
-    
-    # Open the original image
+
+def crop_and_save(image_path, bbox_norm, image_width, image_height, output_path):
+    x = int(bbox_norm["x"] * image_width)
+    y = int(bbox_norm["y"] * image_height)
+    w = int(bbox_norm["width"] * image_width)
+    h = int(bbox_norm["height"] * image_height)
+
     with Image.open(image_path) as img:
-        # Calculate crop coordinates
-        left = bbox['x']
-        top = bbox['y']
-        right = left + bbox['width']
-        bottom = top + bbox['height']
-        
-        # Ensure coordinates are within image bounds
-        left = max(0, left)
-        top = max(0, top)
-        right = min(img.width, right)
-        bottom = min(img.height, bottom)
-        
-        # Crop the image
-        cropped_img = img.crop((left, top, right, bottom))
-        
-        # Save the cropped image
-        cropped_img.save(output_path)
-        
-    return output_path
-
+        crop = img.crop((x, y, x + w, y + h))
+        crop.save(output_path)
 
 # ---------------------------
 # MAIN
 # ---------------------------
-if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Detect speaker panels in Google Meet recordings')
-    parser.add_argument('input_path', nargs='?', default='frame.png', 
-                       help='Path to image file or MP4 video file')
-    parser.add_argument('--save-image', action='store_true', 
-                       help='Save the cropped speaker panel to disk')
-    
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Detect speaker panel in screenshots"
+    )
+    parser.add_argument("input_path", help="Input PNG image")
+    parser.add_argument("--save-image", action="store_true")
+    parser.add_argument(
+        "--method",
+        choices=["cv", "llm", "cv+llm"],
+        default="cv",
+        help="Detection method (default: cv)",
+    )
+    parser.add_argument("--debug", action="store_true")
+
     args = parser.parse_args()
-    input_path = args.input_path
-    save_image = args.save_image
-    
-    temp_frame_path = None  # Track temporary frame file for cleanup
-    
-    try:
-        # Check if input is a video file
-        if input_path.lower().endswith('.mp4'):
-            try:
-                # Extract middle frame from video to temporary file
-                temp_frame_path = extract_middle_frame(input_path)
-                image_path = temp_frame_path
-            except Exception as e:
-                print(f"Error extracting frame from video: {e}", file=sys.stderr)
-                sys.exit(1)
-        else:
-            # Input is already an image file
-            image_path = input_path
-        
-        # Process the image with Gemini
-        result = query_gemini_for_speaker_bbox(image_path)
-        
-        # If speaker panel was found and --save-image flag is set, crop and save the image
-        if result.get("found_speaker_panel") and result.get("bounding_box") and save_image:
-            try:
-                # For videos, use the original video name for the cropped output
-                if input_path.lower().endswith('.mp4'):
-                    base_name = os.path.splitext(input_path)[0]
-                    output_path = f"{base_name}_speaker_crop.png"
-                else:
-                    output_path = None  # Let the function generate the path
-                
-                cropped_path = crop_and_save_speaker(image_path, result["bounding_box"], output_path)
-                result["cropped_image_path"] = cropped_path
-                print(f"Speaker panel cropped and saved to: {cropped_path}", file=sys.stderr)
-            except Exception as e:
-                print(f"Error cropping image: {e}", file=sys.stderr)
-                result["crop_error"] = str(e)
-        elif result.get("found_speaker_panel") and result.get("bounding_box") and not save_image:
-            print("Speaker panel found but not saving image (use --save-image to save)", file=sys.stderr)
-        
-        # Add metadata about the processing
-        result["input_file"] = input_path
-        if not input_path.lower().endswith('.mp4'):
-            result["processed_image"] = image_path
-        
-        # Print JSON to stdout for redirection
-        import json
-        print(json.dumps(result, indent=2))
-        
-    finally:
-        # Clean up temporary frame file if it was created
-        if temp_frame_path and os.path.exists(temp_frame_path):
-            try:
-                os.unlink(temp_frame_path)
-            except:
-                pass  # Ignore cleanup errors
+
+    image_path = args.input_path
+    result = None
+
+    if args.method in ("cv", "cv+llm"):
+        try:
+            result = detect_speaker_bbox_cv(image_path, debug=args.debug)
+            print("Speaker panel detected using CV", file=sys.stderr)
+        except Exception as e:
+            print(f"CV detection failed: {e}", file=sys.stderr)
+
+    if result is None and args.method in ("llm", "cv+llm"):
+        try:
+            result = detect_speaker_bbox_llm(image_path)
+            print("Speaker panel detected using LLM", file=sys.stderr)
+        except Exception as e:
+            print(f"LLM detection failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    if not result or not result.get("found_speaker_panel"):
+        print("No speaker panel found", file=sys.stderr)
+        sys.exit(1)
+
+    if args.save_image and "bounding_box" in result:
+        out = os.path.splitext(image_path)[0] + "_speaker_crop.png"
+        crop_and_save(
+            image_path,
+            result["bounding_box"],
+            result["image_width"],
+            result["image_height"],
+            out,
+        )
+        result["cropped_image_path"] = out
+
+    result["input_file"] = image_path
+    print(json.dumps(result, indent=2))
+
+
+if __name__ == "__main__":
+    main()
