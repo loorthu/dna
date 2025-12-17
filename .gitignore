@@ -5,8 +5,9 @@ dist/
 .DS_Store
 .vscode/
 .env
-experimental/spi/note_assistant_v2/backend/client_secret.json
-experimental/spi/note_assistant_v2/backend/token.json
-experimental/spi/note_assistant_v2/frontend/.env.local
-experimental/spi/note_assistant_v2/frontend/package-lock.json
-experimental/spi/note_assistant_v2/frontend/package-lock.json
+.env.local
+*.mp3
+*.mp4
+*.csv
+*.json
+*.png
