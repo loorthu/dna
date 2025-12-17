@@ -1,3 +1,48 @@
+#!/usr/bin/env python3
+"""
+Speaker Name Detection Tool
+
+This script detects speaker names from video conference screenshots or video files.
+It automatically detects the speaker panel using computer vision and/or AI models,
+then extracts text from that region using OCR to identify speaker names.
+
+Key Features:
+- Automatic speaker panel detection (no manual bounding box required)
+- Support for both image files and video files
+- Batch processing for efficient video analysis
+- Uses EasyOCR for text recognition
+- Outputs results in CSV format for video processing
+
+Detection Methods:
+- CV (Computer Vision): Fast edge detection method
+- LLM (Large Language Model): AI-powered detection using Google Gemini
+- CV+LLM: Tries CV first, falls back to LLM if needed (default)
+
+Usage Examples:
+    # Process a single image
+    python get_speaker_names.py screenshot.png
+
+    # Process a video with default 5-second intervals
+    python get_speaker_names.py meeting.mp4 -v
+
+    # Process video with custom interval and output file
+    python get_speaker_names.py meeting.mp4 --interval 2.0 -o speakers.csv
+
+    # Process only first 5 minutes with verbose output
+    python get_speaker_names.py meeting.mp4 --duration 300 --verbose
+
+Requirements:
+- OpenCV (cv2)
+- NumPy
+- PIL (Pillow)
+- EasyOCR
+- FFmpeg (for video processing)
+- Google Generative AI (optional, for LLM fallback)
+- python-dotenv
+
+Note: This script imports detection functions from get_speaker_bbox.py
+"""
+
 import argparse
 import os
 import re
@@ -9,43 +54,48 @@ import json
 from PIL import Image
 import easyocr
 
+# Import speaker bbox detection functions
+from get_speaker_bbox import detect_speaker_bbox_cv, detect_speaker_bbox_llm
 
-def load_bounding_box_from_json(json_path: str) -> dict:
+
+def get_speaker_bbox(image_path: str, method: str = "cv+llm", verbose: bool = False) -> dict:
     """
-    Load bounding box coordinates from a JSON file.
+    Automatically detect speaker panel bounding box from an image.
     
     Args:
-        json_path: Path to the JSON file containing bounding box data
+        image_path: Path to the image file
+        method: Detection method ("cv", "llm", or "cv+llm")
+        verbose: If True, print progress information
         
     Returns:
-        Dictionary with bounding box coordinates or None if not found/error
+        Dictionary with normalized bounding box coordinates or None if not found
     """
-    try:
-        with open(json_path, 'r') as f:
-            content = f.read()
-        
-        # Try to parse as JSON first
+    result = None
+    
+    if method in ("cv", "cv+llm"):
         try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            # If JSON parsing fails, try to evaluate as Python literal (for dict format)
-            import ast
-            data = ast.literal_eval(content)
-        
-        if data.get('found_speaker_panel', False) and data.get('bounding_box'):
-            bbox = data['bounding_box']
-            return {
-                'x': bbox['x'],
-                'y': bbox['y'],
-                'width': bbox['width'],
-                'height': bbox['height']
-            }
-        else:
-            print(f"No speaker panel found in JSON file: {json_path}")
-            return None
-    except Exception as e:
-        print(f"Error loading bounding box from JSON file {json_path}: {e}")
-        return None
+            result = detect_speaker_bbox_cv(image_path, debug=False)
+            if verbose:
+                print("Speaker panel detected using CV method")
+        except Exception as e:
+            if verbose:
+                print(f"CV detection failed: {e}")
+    
+    if result is None and method in ("llm", "cv+llm"):
+        try:
+            result = detect_speaker_bbox_llm(image_path)
+            if verbose:
+                print("Speaker panel detected using LLM method")
+        except Exception as e:
+            if verbose:
+                print(f"LLM detection failed: {e}")
+    
+    if result and result.get("found_speaker_panel") and result.get("bounding_box"):
+        return result["bounding_box"]
+    
+    if verbose:
+        print("No speaker panel found")
+    return None
 
 
 def get_video_duration(video_path: str) -> float:
@@ -96,7 +146,7 @@ def extract_frame_at_time(video_path: str, timestamp: float, output_path: str) -
         return False
 
 
-def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, verbose: bool = False) -> dict:
+def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame_start_number: int = 0, verbose: bool = False) -> dict:
     """
     Extract multiple frames from a video at specified timestamps using FFmpeg.
     
@@ -104,6 +154,7 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, verbo
         video_path: Path to the video file
         timestamps: List of timestamps in seconds
         temp_dir: Directory to save extracted frames
+        frame_start_number: Starting frame number for naming (for sequential numbering)
         verbose: If True, print progress information
         
     Returns:
@@ -122,8 +173,9 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, verbo
         cmd = ["ffmpeg", "-y", "-i", video_path]
         
         # Add each timestamp as a separate output
-        for timestamp in timestamps:
-            frame_path = os.path.join(temp_dir, f"frame_{timestamp:.2f}.png")
+        for i, timestamp in enumerate(timestamps):
+            frame_number = frame_start_number + i
+            frame_path = os.path.join(temp_dir, f"frame_{frame_number:04d}_{timestamp:.2f}s.png")
             cmd.extend([
                 "-ss", str(timestamp),
                 "-t", "0.04",  # Very short duration to get just one frame
@@ -135,8 +187,9 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, verbo
         subprocess.run(cmd, capture_output=True, check=True)
         
         # Check which frames were successfully created
-        for timestamp in timestamps:
-            frame_path = os.path.join(temp_dir, f"frame_{timestamp:.2f}.png")
+        for i, timestamp in enumerate(timestamps):
+            frame_number = frame_start_number + i
+            frame_path = os.path.join(temp_dir, f"frame_{frame_number:04d}_{timestamp:.2f}s.png")
             if os.path.exists(frame_path):
                 result[timestamp] = frame_path
             else:
@@ -155,8 +208,9 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, verbo
         if verbose:
             print("Falling back to individual frame extraction...")
         
-        for timestamp in timestamps:
-            frame_path = os.path.join(temp_dir, f"frame_{timestamp:.2f}.png")
+        for i, timestamp in enumerate(timestamps):
+            frame_number = frame_start_number + i
+            frame_path = os.path.join(temp_dir, f"frame_{frame_number:04d}_{timestamp:.2f}s.png")
             if extract_frame_at_time(video_path, timestamp, frame_path):
                 result[timestamp] = frame_path
         
@@ -164,8 +218,7 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, verbo
 
 
 def process_video(video_path: str, interval: float, output_csv: str, 
-                 bbox_json_path: str = None, 
-                 max_duration: float = None, batch_size: int = 20, verbose: bool = False) -> bool:
+                 max_duration: float = None, batch_size: int = 20, verbose: bool = False, debug: bool = False, no_crop: bool = False) -> bool:
     """
     Process a video file, extracting frames at intervals and detecting speaker names.
     
@@ -173,10 +226,11 @@ def process_video(video_path: str, interval: float, output_csv: str,
         video_path: Path to the video file
         interval: Time interval in seconds between frame extractions
         output_csv: Path to output CSV file
-        bbox_json_path: Path to JSON file containing speaker panel bounding box coordinates
         max_duration: Maximum duration in seconds to process (None = entire video)
         batch_size: Number of frames to extract in each batch
         verbose: If True, print progress information
+        debug: If True, preserve temporary frame files for troubleshooting
+        no_crop: If True, skip speaker panel detection and process entire images
         
     Returns:
         True if successful, False otherwise
@@ -215,9 +269,27 @@ def process_video(video_path: str, interval: float, output_csv: str,
         print(f"Will process {len(all_timestamps)} frames in batches of {batch_size}")
     
     # Create temporary directory for extracted frames
-    with tempfile.TemporaryDirectory() as temp_dir:
+    if debug:
+        # Create a persistent temp directory for debugging (cropped regions only)
+        mode_suffix = "full_images" if no_crop else "cropped_regions"
+        debug_dir = f"debug_{mode_suffix}_{os.path.basename(video_path).split('.')[0]}"
+        os.makedirs(debug_dir, exist_ok=True)
+        if no_crop:
+            print(f"Debug mode: Full images will be saved in '{debug_dir}' directory")
+        else:
+            print(f"Debug mode: Cropped speaker regions will be saved in '{debug_dir}' directory")
+        # Still need a temp dir for the full frames during processing
+        temp_dir_context = tempfile.TemporaryDirectory()
+        temp_dir = temp_dir_context.name
+    else:
+        debug_dir = None
+        temp_dir_context = tempfile.TemporaryDirectory()
+        temp_dir = temp_dir_context.name
+    
+    try:
         results = []
         timestamps = []
+        frame_counter = 0
         
         # Process frames in batches
         for batch_start in range(0, len(all_timestamps), batch_size):
@@ -229,7 +301,9 @@ def process_video(video_path: str, interval: float, output_csv: str,
                       f"({len(batch_timestamps)} frames)...")
             
             # Extract frames for this batch
-            extracted_frames = extract_frames_batch(video_path, batch_timestamps, temp_dir, verbose=verbose)
+            extracted_frames = extract_frames_batch(video_path, batch_timestamps, temp_dir, 
+                                                   frame_start_number=frame_counter, verbose=verbose)
+            frame_counter += len(batch_timestamps)
             
             # Process each frame in the batch
             for timestamp in batch_timestamps:
@@ -241,7 +315,7 @@ def process_video(video_path: str, interval: float, output_csv: str,
                 
                 if frame_path and os.path.exists(frame_path):
                     # Detect speaker name
-                    name = detect_speaker_name_from_image(frame_path, reader=reader, bbox_json_path=bbox_json_path, verbose=False)
+                    name = detect_speaker_name_from_image(frame_path, reader=reader, verbose=False, debug_dir=debug_dir, no_crop=no_crop)
                     
                     # Format timestamp as HH:MM:SS
                     hours = int(timestamp // 3600)
@@ -278,25 +352,35 @@ def process_video(video_path: str, interval: float, output_csv: str,
             print(f"Processed {len(results)} frames")
             detected_count = sum(1 for name in results if name)
             print(f"Detected speaker names in {detected_count} frames")
+            if debug:
+                mode_desc = "full images" if no_crop else "cropped speaker regions"
+                print(f"Debug {mode_desc} preserved in: {debug_dir}")
             return True
         except Exception as e:
             print(f"Error writing CSV file: {e}")
             return False
+    
+    finally:
+        # Clean up temporary directory (always cleanup since we always use temp dir for full frames)
+        if 'temp_dir_context' in locals():
+            temp_dir_context.cleanup()
 
 
 def detect_speaker_name_from_image(image_path: str, 
                                    reader: easyocr.Reader = None, 
-                                   bbox_json_path: str = None,
-                                   verbose: bool = True) -> str:
+                                   verbose: bool = True,
+                                   debug_dir: str = None,
+                                   no_crop: bool = False) -> str:
     """
     Detects speaker name from an image file.
-    Uses bounding box from JSON file if provided, otherwise processes the entire image.
+    Automatically detects speaker panel bounding box and processes that region.
     
     Args:
         image_path: Path to the image file
         reader: EasyOCR reader instance (if None, will create one)
-        bbox_json_path: Path to JSON file containing speaker panel bounding box coordinates
         verbose: If True, print progress information
+        debug_dir: Directory to save cropped speaker regions for debugging (if provided)
+        no_crop: If True, skip speaker panel detection and process the entire image
         
     Returns:
         Detected speaker name or None if not found
@@ -309,14 +393,30 @@ def detect_speaker_name_from_image(image_path: str,
     width, height = img.size
     
     # Determine which image to process
-    if bbox_json_path:
-        bbox = load_bounding_box_from_json(bbox_json_path)
+    if no_crop:
+        # Skip speaker panel detection and use the entire image
+        target_img = img
+        region_name = "full_image"
+        if verbose:
+            print("Skipping speaker panel detection, using entire image for OCR")
+        
+        # Save full image if debug directory is provided
+        if debug_dir:
+            base_name = os.path.splitext(os.path.basename(image_path))[0]
+            full_image_path = os.path.join(debug_dir, f"{base_name}_full_image.png")
+            target_img.save(full_image_path)
+            if verbose:
+                print(f"Saved full image to: {full_image_path}")
+    else:
+        # Automatically detect speaker panel bounding box
+        bbox = get_speaker_bbox(image_path, method="cv+llm", verbose=verbose)
+        
         if bbox:
-            # Use bounding box from JSON
-            crop_left = bbox['x']
-            crop_top = bbox['y']
-            crop_right = bbox['x'] + bbox['width']
-            crop_bottom = bbox['y'] + bbox['height']
+            # Convert normalized coordinates to pixel coordinates
+            crop_left = int(bbox['x'] * width)
+            crop_top = int(bbox['y'] * height)
+            crop_right = int((bbox['x'] + bbox['width']) * width)
+            crop_bottom = int((bbox['y'] + bbox['height']) * height)
             
             # Ensure coordinates are within image bounds
             crop_left = max(0, min(crop_left, width))
@@ -325,19 +425,31 @@ def detect_speaker_name_from_image(image_path: str,
             crop_bottom = max(crop_top, min(crop_bottom, height))
             
             target_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
-            region_name = "json_bbox"
+            region_name = "detected_bbox"
             if verbose:
-                print(f"Using bounding box from JSON: ({crop_left}, {crop_top}, {crop_right}, {crop_bottom})")
+                print(f"Using detected bounding box: ({crop_left}, {crop_top}, {crop_right}, {crop_bottom})")
+            
+            # Save cropped region if debug directory is provided
+            if debug_dir:
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                cropped_path = os.path.join(debug_dir, f"{base_name}_cropped_speaker_region.png")
+                target_img.save(cropped_path)
+                if verbose:
+                    print(f"Saved cropped speaker region to: {cropped_path}")
         else:
-            # Fall back to full image if JSON loading failed
+            # Fall back to full image if detection failed
             target_img = img
             region_name = "full"
             if verbose:
-                print("Falling back to full image processing")
-    else:
-        # No bbox_json_path provided, use entire image
-        target_img = img
-        region_name = "full"
+                print("Speaker panel detection failed, using full image")
+            
+            # Save full image if debug directory is provided and no bbox was found
+            if debug_dir:
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                fallback_path = os.path.join(debug_dir, f"{base_name}_full_image_fallback.png")
+                target_img.save(fallback_path)
+                if verbose:
+                    print(f"Saved full image fallback to: {fallback_path}")
     
     # Initialize OCR reader if not provided
     if reader is None:
@@ -401,11 +513,14 @@ def main():
     parser.add_argument("--duration", type=float,
                        help="Maximum duration in seconds to process (for video files only). If not specified, processes the entire video.")
     parser.add_argument("-o", "--output", help="Output CSV file path (for video files only). If not provided, will be input filename with .csv extension.")
-    parser.add_argument("--bbox-json", help="Path to JSON file containing speaker panel bounding box coordinates.")
     parser.add_argument("--batch-size", type=int, default=20,
                        help="Number of frames to extract in each batch (default: 20). Higher values may be faster but use more memory.")
     parser.add_argument("-v", "--verbose", action="store_true",
                        help="Print verbose progress information.")
+    parser.add_argument("--debug", action="store_true",
+                       help="Keep temporary frame images after processing for troubleshooting.")
+    parser.add_argument("--no-crop", action="store_true",
+                       help="Skip speaker panel detection and process the entire image with OCR.")
     args = parser.parse_args()
     
     # Check if input is a video file
@@ -421,14 +536,25 @@ def main():
             output_csv = f"{base_name}_speakers.csv"
         
         success = process_video(args.input_file, args.interval, output_csv, 
-                               bbox_json_path=args.bbox_json, 
-                               max_duration=args.duration, batch_size=args.batch_size, verbose=args.verbose)
+                               max_duration=args.duration, batch_size=args.batch_size, 
+                               verbose=args.verbose, debug=args.debug, no_crop=args.no_crop)
         if not success:
             exit(1)
     else:
         # Process image file (original functionality)
-        name = detect_speaker_name_from_image(args.input_file, 
-                                              bbox_json_path=args.bbox_json, verbose=True)
+        debug_dir = None
+        if args.debug:
+            # Create debug directory for single image processing
+            base_name = os.path.splitext(os.path.basename(args.input_file))[0]
+            mode_suffix = "full_image" if args.no_crop else "cropped_region"
+            debug_dir = f"debug_{mode_suffix}_{base_name}"
+            os.makedirs(debug_dir, exist_ok=True)
+            if args.no_crop:
+                print(f"Debug mode: Full image will be saved in '{debug_dir}' directory")
+            else:
+                print(f"Debug mode: Cropped speaker region will be saved in '{debug_dir}' directory")
+        
+        name = detect_speaker_name_from_image(args.input_file, verbose=True, debug_dir=debug_dir, no_crop=args.no_crop)
         
         if name:
             print(f"Detected speaker name: {name}")
