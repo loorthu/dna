@@ -456,11 +456,20 @@ def process_video(video_path: str, interval: float, output_csv: str,
                 if verbose:
                     progress = (batch_start + (timestamp - batch_timestamps[0]) / interval) / len(all_timestamps) * 100
                     print(f"Processing frame at {timestamp:.2f}s ({progress:.1f}%)...")
-                
                 frame_path = extracted_frames.get(timestamp)
-                
                 if frame_path and os.path.exists(frame_path):
-                    # Detect speaker name
+                    # Save the full extracted frame in debug mode
+                    if debug_dir:
+                        base_name = os.path.splitext(os.path.basename(frame_path))[0]
+                        full_image_path = os.path.join(debug_dir, f"{base_name}_full.png")
+                        try:
+                            Image.open(frame_path).save(full_image_path)
+                            if verbose:
+                                print(f"Saved full extracted frame to: {full_image_path}")
+                        except Exception as e:
+                            if verbose:
+                                print(f"Failed to save full extracted frame: {e}")
+                    # Detect speaker name (and save cropped region if applicable)
                     name = detect_speaker_name_from_image(
                         frame_path,
                         reader=reader,
