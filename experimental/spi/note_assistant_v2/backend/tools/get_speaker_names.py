@@ -243,11 +243,43 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame
         return result
 
 
+def get_average_speaker_bbox(video_path, duration, sample_count=4, verbose=False):
+    """
+    Samples frames at evenly spaced intervals and averages the detected speaker panel bounding boxes.
+    Returns the average bbox as a dict with normalized coordinates.
+    """
+    sample_fracs = [0.2, 0.4, 0.6, 0.8][:sample_count]
+    sample_timestamps = [duration * frac for frac in sample_fracs]
+    bboxes = []
+    temp_dir = tempfile.mkdtemp()
+    try:
+        for i, ts in enumerate(sample_timestamps):
+            frame_path = os.path.join(temp_dir, f"sample_{i:02d}.png")
+            if extract_frame_at_time(video_path, ts, frame_path):
+                bbox = get_speaker_bbox(frame_path, method="cv+llm", verbose=verbose)
+                if bbox:
+                    bboxes.append(bbox)
+                if verbose:
+                    print(f"Sampled bbox at {ts:.2f}s: {bbox}")
+        if not bboxes:
+            if verbose:
+                print("No speaker panel detected in any sample frames.")
+            return None
+        avg_bbox = {key: sum(b[key] for b in bboxes) / len(bboxes) for key in ['x', 'y', 'width', 'height']}
+        if verbose:
+            print(f"Using average speaker panel bbox: {avg_bbox}")
+        return avg_bbox
+    finally:
+        import shutil
+        shutil.rmtree(temp_dir)
+
+
 def detect_speaker_name_from_image(image_path: str, 
                                    reader: easyocr.Reader = None, 
                                    verbose: bool = True,
                                    debug_dir: str = None,
-                                   no_crop: bool = False) -> str:
+                                   no_crop: bool = False,
+                                   fixed_bbox: dict = None) -> str:
     """
     Detects speaker name from an image file.
     Automatically detects speaker panel bounding box and processes that region.
@@ -278,7 +310,7 @@ def detect_speaker_name_from_image(image_path: str,
                 print(f"Saved full image to: {full_image_path}")
     else:
         # Automatically detect speaker panel bounding box
-        bbox = get_speaker_bbox(image_path, method="cv+llm", verbose=verbose)
+        bbox = fixed_bbox if fixed_bbox else get_speaker_bbox(image_path, method="cv+llm", verbose=verbose)
         
         if bbox:
             # Convert normalized coordinates to pixel coordinates
@@ -431,6 +463,11 @@ def process_video(video_path: str, interval: float, output_csv: str,
         print(f"Video duration: {duration:.2f} seconds")
         print(f"Extracting frames every {interval} seconds...")
     
+    # Sample and average speaker bbox before frame processing
+    fixed_bbox = None
+    if not no_crop:
+        fixed_bbox = get_average_speaker_bbox(video_path, get_video_duration(video_path), sample_count=4, verbose=verbose)
+    
     # Initialize OCR reader once (reuse for all frames) if using EasyOCR
     import torch
     use_gpu = torch.cuda.is_available()
@@ -528,6 +565,7 @@ def process_video(video_path: str, interval: float, output_csv: str,
                         verbose=verbose,
                         debug_dir=debug_dir,
                         no_crop=no_crop,
+                        fixed_bbox=fixed_bbox,
                     )
                     
                     # Format timestamp as HH:MM:SS
