@@ -271,88 +271,122 @@ def _refine_bounds_with_edges(gray, y_top, y_bottom, x_left, x_right, debug=Fals
 
 def detect_speaker_bbox_cv(image_path, debug=False):
     """
-    Simpler CV detection: Scan columns from right to left, find top/bottom nonzero pixels,
-    detect a big jump to locate the left edge of the speaker panel.
+    Stable speaker panel detection.
+
+    Horizontal detection:
+      - Scan right → left
+      - Choose split where LEFT side suddenly shows
+        large vertical span in TOP and BOTTOM thirds
+        (middle third ignored)
+
+    Vertical crop:
+      - Layout-based middle band of right edge
     """
+
     img = cv2.imread(image_path)
     if img is None:
         raise ValueError(f"Could not read image: {image_path}")
+
     H, W = img.shape[:2]
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Binarize: consider pixels > 25 as nonzero (to ignore dark backgrounds)
+    # --------------------------------------------------
+    # Parameters
+    # --------------------------------------------------
+    min_panel_x = int(0.60 * W)
+    min_panel_width = int(0.12 * W)
+    max_panel_width = int(0.45 * W)
+
+    top_band_end = H // 3
+    bottom_band_start = (2 * H) // 3
+
+    # --------------------------------------------------
+    # Preprocessing
+    # --------------------------------------------------
     mask = (gray > 25).astype(np.uint8)
 
-    min_panel_width = int(0.12 * W)  # minimum width for speaker panel
-    max_panel_width = int(0.45 * W)  # maximum width for speaker panel
-    jump_threshold = int(0.18 * H)   # vertical jump to detect transition
-    min_panel_x = int(0.60 * W)      # panel must start after this x
+    columns = []  # (x, top, bottom)
 
-    top_list = []
-    bottom_list = []
-    col_indices = []
-
-    prev_top = None
-    prev_bottom = None
-    left_edge = W - 1
-    found_transition = False
-
+    # --------------------------------------------------
+    # Phase 1: scan right → left
+    # --------------------------------------------------
     for x in range(W - 1, min_panel_x - 1, -1):
         col = mask[:, x]
         nonzero = np.flatnonzero(col)
         if len(nonzero) == 0:
             continue
-        top = nonzero[0]
-        bottom = nonzero[-1]
-        top_list.append(top)
-        bottom_list.append(bottom)
-        col_indices.append(x)
-        if prev_top is not None and prev_bottom is not None:
-            top_jump = abs(top - prev_top)
-            bottom_jump = abs(bottom - prev_bottom)
-            if top_jump > jump_threshold or bottom_jump > jump_threshold:
-                left_edge = x + 1  # the previous column is the last panel col
-                found_transition = True
-                break
-        prev_top = top
-        prev_bottom = bottom
+        columns.append((x, nonzero[0], nonzero[-1]))
 
-    if not col_indices:
-        # No panel found
+    if not columns:
         return {"found_speaker_panel": False}
 
-    # Use the columns before the transition (i.e., rightmost contiguous block)
-    if found_transition:
-        panel_cols = [i for i in col_indices if i >= left_edge]
-        panel_tops = top_list[:len(panel_cols)]
-        panel_bottoms = bottom_list[:len(panel_cols)]
-    else:
-        panel_cols = col_indices
-        panel_tops = top_list
-        panel_bottoms = bottom_list
+    columns.reverse()  # left → right
 
-    if not panel_cols:
-        return {"found_speaker_panel": False}
+    # --------------------------------------------------
+    # Helper: span in top+bottom bands only
+    # --------------------------------------------------
+    def band_span(cols):
+        tops = []
+        bottoms = []
 
-    x_right = max(panel_cols)
-    x_left = min(panel_cols)
-    y_top = min(panel_tops)
-    y_bottom = max(panel_bottoms)
+        for _, top, bottom in cols:
+            if top < top_band_end:
+                tops.append(top)
+            if bottom > bottom_band_start:
+                bottoms.append(bottom)
 
-    # Expand vertically a bit to include name label if needed
-    y_top = max(0, y_top - int(0.02 * H))
-    y_bottom = min(H, y_bottom + int(0.04 * H))
+        if not tops or not bottoms:
+            return 0
 
-    # Enforce min/max width
-    if (x_right - x_left) < min_panel_width:
+        return max(bottoms) - min(tops)
+
+    # --------------------------------------------------
+    # Phase 2: choose split
+    # --------------------------------------------------
+    best_score = -1
+    best_split = 0
+
+    for i in range(1, len(columns)):
+        left = columns[:i]
+        right = columns[i:]
+        if not left or not right:
+            continue
+
+        left_span = band_span(left)
+        right_span = band_span(right)
+
+        score = (left_span + 1) / (right_span + 1)
+
+        if score > best_score:
+            best_score = score
+            best_split = i
+
+    panel_cols = columns[best_split:]
+
+    x_left = min(c[0] for c in panel_cols)
+    x_right = max(c[0] for c in panel_cols)
+
+    # --------------------------------------------------
+    # Layout-defined vertical crop (middle band)
+    # --------------------------------------------------
+    y_top = int(H * 0.33)
+    y_bottom = int(H * 0.66)
+
+    # --------------------------------------------------
+    # Enforce width constraints
+    # --------------------------------------------------
+    width = x_right - x_left + 1
+
+    if width < min_panel_width:
         x_left = max(min_panel_x, x_right - min_panel_width)
-    if (x_right - x_left) > max_panel_width:
+
+    if width > max_panel_width:
         x_left = x_right - max_panel_width
 
     abs_x = x_left
     abs_y = y_top
     abs_w = x_right - x_left + 1
-    abs_h = y_bottom - y_top + 1
+    abs_h = y_bottom - y_top
 
     bbox_norm = {
         "x": abs_x / W,
@@ -363,18 +397,23 @@ def detect_speaker_bbox_cv(image_path, debug=False):
 
     if debug:
         dbg = img.copy()
-        cv2.rectangle(dbg, (abs_x, abs_y), (abs_x + abs_w, abs_y + abs_h), (0, 255, 0), 3)
+        cv2.rectangle(
+            dbg,
+            (abs_x, abs_y),
+            (abs_x + abs_w, abs_y + abs_h),
+            (0, 255, 0),
+            3,
+        )
         cv2.imwrite("debug_simple_detection.png", dbg)
 
     return {
         "found_speaker_panel": True,
         "bounding_box": bbox_norm,
-        "confidence": 0.95 if found_transition else 0.80,
-        "method": "cv-simple-vertical-scan",
+        "confidence": 0.85,
+        "method": "cv-horizontal-split-topbottom-only",
         "image_width": W,
         "image_height": H,
     }
-
 
 # =========================================================
 # LLM Detection
