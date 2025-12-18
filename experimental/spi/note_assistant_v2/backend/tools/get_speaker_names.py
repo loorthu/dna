@@ -58,6 +58,8 @@ from typing import Optional
 from PIL import Image
 import easyocr
 import logging
+import difflib
+from collections import Counter
 
 # Import speaker bbox detection functions
 from get_speaker_bbox import detect_speaker_bbox_cv, detect_speaker_bbox_llm
@@ -376,6 +378,37 @@ def detect_speaker_name_from_image(image_path: str,
     return None
 
 
+def sanitize_speaker_names(timestamps, names, similarity=0.8):
+    """
+    Post-processes the list of detected speaker names:
+    - Groups similar names (e.g., 'ason Greenblum' and 'Jason Greenblum')
+    - Replaces each with the most frequent (or longest) version in its group
+    """
+    groups = []
+    used = set()
+    for i, name in enumerate(names):
+        if not name or name in used:
+            continue
+        group = [name]
+        used.add(name)
+        for j in range(i+1, len(names)):
+            other = names[j]
+            if other and other not in used:
+                if difflib.SequenceMatcher(None, name.lower(), other.lower()).ratio() >= similarity:
+                    group.append(other)
+                    used.add(other)
+        groups.append(group)
+    canonical = {}
+    for group in groups:
+        count = Counter(group)
+        most_common = count.most_common(1)[0][0]
+        canonical_name = max([most_common] + group, key=len)
+        for n in group:
+            canonical[n] = canonical_name
+    sanitized = [canonical.get(name, name) if name else "" for name in names]
+    return sanitized
+
+
 def process_video(video_path: str, interval: float, output_csv: str, 
                  max_duration: float = None, batch_size: int = 20, verbose: bool = False, debug: bool = False, no_crop: bool = False) -> bool:
     """
@@ -503,15 +536,17 @@ def process_video(video_path: str, interval: float, output_csv: str,
         
         # Write results to CSV
         try:
+            # Sanitize names before saving
+            sanitized_results = sanitize_speaker_names(timestamps, results)
             with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(['timestamp', 'speaker_name'])
-                for ts, name in zip(timestamps, results):
+                for ts, name in zip(timestamps, sanitized_results):
                     writer.writerow([ts, name])
             
             print(f"\nResults saved to: {output_csv}")
             print(f"Processed {len(results)} frames")
-            detected_count = sum(1 for name in results if name)
+            detected_count = sum(1 for name in sanitized_results if name)
             print(f"Detected speaker names in {detected_count} frames")
             if debug:
                 mode_desc = "full images" if no_crop else "cropped speaker regions"
