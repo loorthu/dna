@@ -178,44 +178,58 @@ def extract_frame_at_time(video_path: str, timestamp: float, output_path: str) -
 def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame_start_number: int = 0, verbose: bool = False) -> dict:
     """
     Extract multiple frames from a video at specified timestamps using FFmpeg.
-    
-    Args:
-        video_path: Path to the video file
-        timestamps: List of timestamps in seconds
-        temp_dir: Directory to save extracted frames
-        frame_start_number: Starting frame number for naming (for sequential numbering)
-        verbose: If True, print progress information
-        
-    Returns:
-        Dictionary mapping timestamp to frame path for successfully extracted frames
+    Uses single-pass extraction with -vf fps=... if timestamps are regularly spaced.
     """
     result = {}
-    
     if not timestamps:
         return result
-    
-    if verbose:
-        print(f"Extracting {len(timestamps)} frames in batch...")
-    
-    try:
-        # Build FFmpeg command for batch extraction
+
+    # Check if timestamps are regularly spaced
+    if len(timestamps) > 1:
+        interval = timestamps[1] - timestamps[0]
+        is_regular = all(abs((timestamps[i] - timestamps[i-1]) - interval) < 1e-3 for i in range(2, len(timestamps)))
+    else:
+        is_regular = True
+
+    if is_regular:
+        # Use single-pass extraction
+        fps = 1.0 / (timestamps[1] - timestamps[0]) if len(timestamps) > 1 else 1.0
+        if verbose:
+            print(f"Using single-pass FFmpeg extraction with fps={fps:.4f}")
+        output_pattern = os.path.join(temp_dir, "frame_%04d.png")
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", f"fps={fps}",
+            output_pattern
+        ]
+        subprocess.run(cmd, capture_output=True, check=True)
+        # Map output frames to timestamps
+        for i, timestamp in enumerate(timestamps):
+            frame_path = os.path.join(temp_dir, f"frame_{i+1:04d}.png")
+            if os.path.exists(frame_path):
+                result[timestamp] = frame_path
+            else:
+                if verbose:
+                    print(f"Warning: Frame for timestamp {timestamp:.2f}s was not created")
+        if verbose:
+            print(f"Successfully extracted {len(result)}/{len(timestamps)} frames (single-pass)")
+        return result
+    else:
+        # Fallback to old method for irregular timestamps
+        if verbose:
+            print("Timestamps are not regular, using multi-seek extraction.")
+        # ...existing code for multi-seek extraction...
         cmd = ["ffmpeg", "-y", "-i", video_path]
-        
-        # Add each timestamp as a separate output
         for i, timestamp in enumerate(timestamps):
             frame_number = frame_start_number + i
             frame_path = os.path.join(temp_dir, f"frame_{frame_number:04d}_{timestamp:.2f}s.png")
             cmd.extend([
                 "-ss", str(timestamp),
-                "-t", "0.04",  # Very short duration to get just one frame
+                "-t", "0.04",
                 "-vframes", "1",
                 frame_path
             ])
-        
-        # Execute FFmpeg command
         subprocess.run(cmd, capture_output=True, check=True)
-        
-        # Check which frames were successfully created
         for i, timestamp in enumerate(timestamps):
             frame_number = frame_start_number + i
             frame_path = os.path.join(temp_dir, f"frame_{frame_number:04d}_{timestamp:.2f}s.png")
@@ -224,25 +238,8 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame
             else:
                 if verbose:
                     print(f"Warning: Frame at {timestamp:.2f}s was not created")
-        
         if verbose:
-            print(f"Successfully extracted {len(result)}/{len(timestamps)} frames")
-        
-        return result
-        
-    except subprocess.CalledProcessError as e:
-        if verbose:
-            print(f"Batch extraction failed: {e}")
-        # Fallback to individual frame extraction
-        if verbose:
-            print("Falling back to individual frame extraction...")
-        
-        for i, timestamp in enumerate(timestamps):
-            frame_number = frame_start_number + i
-            frame_path = os.path.join(temp_dir, f"frame_{frame_number:04d}_{timestamp:.2f}s.png")
-            if extract_frame_at_time(video_path, timestamp, frame_path):
-                result[timestamp] = frame_path
-        
+            print(f"Successfully extracted {len(result)}/{len(timestamps)} frames (multi-seek)")
         return result
 
 
@@ -435,7 +432,15 @@ def process_video(video_path: str, interval: float, output_csv: str,
         print(f"Extracting frames every {interval} seconds...")
     
     # Initialize OCR reader once (reuse for all frames) if using EasyOCR
-    reader = easyocr.Reader(['en'])
+    import torch
+    use_gpu = torch.cuda.is_available()
+    reader = easyocr.Reader(['en'], gpu=use_gpu)
+    if verbose:
+        print("CUDA available:", torch.cuda.is_available())
+        print("CUDA device count:", torch.cuda.device_count())
+        if torch.cuda.is_available():
+            print("Current device:", torch.cuda.current_device())
+            print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
     
     # Calculate all timestamps that need to be processed
     all_timestamps = []
@@ -448,8 +453,14 @@ def process_video(video_path: str, interval: float, output_csv: str,
         print(f"Will process {len(all_timestamps)} frames in batches of {batch_size}")
     
     # Create temporary directory for extracted frames
+    shm_base = '/dev/shm'
+    use_shm = os.path.exists(shm_base) and os.access(shm_base, os.W_OK)
+    if verbose:
+        if use_shm:
+            print(f"Using shared memory for temp frames: {shm_base}")
+        else:
+            print("/dev/shm not available or not writable, using disk for temp frames.")
     if debug:
-        # Create a persistent temp directory for debugging (cropped regions only)
         mode_suffix = "full_images" if no_crop else "cropped_regions"
         debug_dir = f"debug_{mode_suffix}_{os.path.basename(video_path).split('.')[0]}"
         os.makedirs(debug_dir, exist_ok=True)
@@ -458,12 +469,20 @@ def process_video(video_path: str, interval: float, output_csv: str,
         else:
             print(f"Debug mode: Cropped speaker regions will be saved in '{debug_dir}' directory")
         # Still need a temp dir for the full frames during processing
-        temp_dir_context = tempfile.TemporaryDirectory()
-        temp_dir = temp_dir_context.name
+        if use_shm:
+            temp_dir = os.path.join(shm_base, f"note_assistant_frames_{os.getpid()}")
+            os.makedirs(temp_dir, exist_ok=True)
+        else:
+            temp_dir_context = tempfile.TemporaryDirectory()
+            temp_dir = temp_dir_context.name
     else:
         debug_dir = None
-        temp_dir_context = tempfile.TemporaryDirectory()
-        temp_dir = temp_dir_context.name
+        if use_shm:
+            temp_dir = os.path.join(shm_base, f"note_assistant_frames_{os.getpid()}")
+            os.makedirs(temp_dir, exist_ok=True)
+        else:
+            temp_dir_context = tempfile.TemporaryDirectory()
+            temp_dir = temp_dir_context.name
     
     try:
         results = []
@@ -560,6 +579,9 @@ def process_video(video_path: str, interval: float, output_csv: str,
         # Clean up temporary directory (always cleanup since we always use temp dir for full frames)
         if 'temp_dir_context' in locals():
             temp_dir_context.cleanup()
+        elif use_shm and os.path.exists(temp_dir):
+            import shutil
+            shutil.rmtree(temp_dir)
 
 
 def main():
