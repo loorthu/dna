@@ -88,6 +88,9 @@ import easyocr
 import logging
 import difflib
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+import threading
 
 # Import speaker bbox detection functions
 from get_speaker_bbox import detect_speaker_bbox_cv, detect_speaker_bbox_llm
@@ -685,9 +688,82 @@ def sanitize_speaker_names(timestamps, names, similarity=0.8):
     return sanitized
 
 
+# Thread-local storage for EasyOCR readers (one per thread)
+_thread_local = threading.local()
+
+def _get_thread_reader():
+    """Get or initialize the EasyOCR reader for this thread."""
+    if not hasattr(_thread_local, 'reader'):
+        import logging
+        logging.getLogger('easyocr').setLevel(logging.WARNING)  # Suppress verbose output
+        # Use GPU if available since we're using threading, not multiprocessing
+        import torch
+        use_gpu = torch.cuda.is_available()
+        _thread_local.reader = easyocr.Reader(['en'], gpu=use_gpu, verbose=False)
+    return _thread_local.reader
+
+
+def process_frame_threaded(args):
+    """
+    Process a single frame in threaded execution.
+    This function is designed to be called by ThreadPoolExecutor.
+    
+    Args:
+        args: Tuple containing (frame_path, timestamp, version_pattern, fixed_bbox, fixed_version_bbox, no_crop, verbose)
+        
+    Returns:
+        Tuple of (timestamp, speaker_name, version_id, timestamp_str)
+    """
+    frame_path, timestamp, version_pattern, fixed_bbox, fixed_version_bbox, no_crop, verbose = args
+    
+    # Get the thread's EasyOCR reader (initialized once per thread)
+    reader = _get_thread_reader()
+    
+    # Format timestamp for results
+    hours = int(timestamp // 3600)
+    minutes = int((timestamp % 3600) // 60)
+    seconds = int(timestamp % 60)
+    timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    if not os.path.exists(frame_path):
+        return timestamp, "", "", timestamp_str
+    
+    try:
+        # Detect speaker name
+        name = detect_speaker_name_from_image(
+            frame_path,
+            reader=reader,
+            verbose=False,  # Disable verbose in parallel to avoid output chaos
+            debug_dir=None,  # No debug in parallel mode
+            no_crop=no_crop,
+            fixed_bbox=fixed_bbox,
+            timestamp_filename=None,
+        )
+        
+        # Detect version ID if pattern is provided
+        version_id = None
+        if version_pattern:
+            version_id = detect_version_id_from_image(
+                frame_path,
+                version_pattern,
+                reader=reader,
+                verbose=False,  # Disable verbose in parallel to avoid output chaos
+                debug_dir=None,  # No debug in parallel mode
+                fixed_bbox=fixed_version_bbox,
+                timestamp_filename=None,
+            )
+        
+        return timestamp, name if name else "", version_id if version_id else "", timestamp_str
+        
+    except Exception as e:
+        if verbose:
+            print(f"Error processing frame at {timestamp:.2f}s: {e}")
+        return timestamp, "", "", timestamp_str
+
+
 def process_video(video_path: str, interval: float, output_csv: str, 
                  max_duration: float = None, batch_size: int = 20, verbose: bool = False, debug: bool = False, no_crop: bool = False,
-                 version_pattern: str = None, start_time: float = 0.0) -> bool:
+                 version_pattern: str = None, start_time: float = 0.0, parallel: bool = False) -> bool:
     """
     Process a video file, extracting frames at intervals and detecting speaker names and optionally version IDs.
     Uses EasyOCR with default settings.
@@ -703,6 +779,7 @@ def process_video(video_path: str, interval: float, output_csv: str,
         no_crop: Skip speaker panel detection and process full images
         version_pattern: Regex pattern for version ID detection (optional)
         start_time: Start processing from this time offset in seconds (default: 0.0)
+        parallel: Use multiprocessing for parallel frame processing (default: False)
         
     Returns:
         True if successful, False otherwise
@@ -731,6 +808,8 @@ def process_video(video_path: str, interval: float, output_csv: str,
         print(f"Processing from {start_time:.2f}s to {start_time + effective_duration:.2f}s")
         print(f"Effective processing duration: {effective_duration:.2f}s")
         print(f"Frame interval: {interval:.2f}s")
+        if parallel:
+            print(f"Parallel processing enabled with {multiprocessing.cpu_count()} CPU cores")
     
     # Sample and average bounding boxes before frame processing
     fixed_bbox = None
@@ -754,16 +833,18 @@ def process_video(video_path: str, interval: float, output_csv: str,
         if version_pattern:
             fixed_version_bbox = avg_version_bbox
     
-    # Initialize OCR reader once (reuse for all frames) if using EasyOCR
-    import torch
-    use_gpu = torch.cuda.is_available()
-    reader = easyocr.Reader(['en'], gpu=use_gpu)
-    if verbose:
-        print("CUDA available:", torch.cuda.is_available())
-        print("CUDA device count:", torch.cuda.device_count())
-        if torch.cuda.is_available():
-            print("Current device:", torch.cuda.current_device())
-            print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
+    # Initialize OCR reader once (reuse for all frames) if not using parallel processing
+    reader = None
+    if not parallel:
+        import torch
+        use_gpu = torch.cuda.is_available()
+        reader = easyocr.Reader(['en'], gpu=use_gpu)
+        if verbose:
+            print("CUDA available:", torch.cuda.is_available())
+            print("CUDA device count:", torch.cuda.device_count())
+            if torch.cuda.is_available():
+                print("Current device:", torch.cuda.current_device())
+                print("Device name:", torch.cuda.get_device_name(torch.cuda.current_device()))
     
     # Calculate all timestamps that need to be processed
     all_timestamps = []
@@ -828,85 +909,143 @@ def process_video(video_path: str, interval: float, output_csv: str,
                                                    frame_start_number=frame_counter, verbose=verbose)
             frame_counter += len(batch_timestamps)
             
-            # Process each frame in the batch
-            for timestamp in batch_timestamps:
+            if parallel and not debug:
+                # Use parallel processing with threading (avoids multiprocessing CUDA issues)
                 if verbose:
-                    progress = (batch_start + (timestamp - batch_timestamps[0]) / interval) / len(all_timestamps) * 100
-                    print(f"Processing frame at {timestamp:.2f}s ({progress:.1f}%)...")
-                frame_path = extracted_frames.get(timestamp)
-                if frame_path and os.path.exists(frame_path):
-                    # Format timestamp for file naming (HH_MM_SS)
-                    hours = int(timestamp // 3600)
-                    minutes = int((timestamp % 3600) // 60)
-                    seconds = int(timestamp % 60)
-                    timestamp_filename = f"{hours:02d}_{minutes:02d}_{seconds:02d}"
+                    print(f"Processing {len(batch_timestamps)} frames in parallel...")
+                
+                # Prepare arguments for parallel processing
+                parallel_args = []
+                for timestamp in batch_timestamps:
+                    frame_path = extracted_frames.get(timestamp)
+                    if frame_path and os.path.exists(frame_path):
+                        parallel_args.append((
+                            frame_path, timestamp, version_pattern,
+                            fixed_bbox, fixed_version_bbox, no_crop, False
+                        ))
+                
+                # Process frames in parallel using threading (not multiprocessing)
+                max_workers = min(8, multiprocessing.cpu_count())  # Can use more threads than processes
+                if verbose:
+                    print(f"Using {max_workers} threaded workers for parallel processing")
+                
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    parallel_results = list(executor.map(process_frame_threaded, parallel_args))
+                
+                # Collect results
+                for timestamp in batch_timestamps:
+                    # Find result for this timestamp
+                    frame_result = None
+                    for result in parallel_results:
+                        if result[0] == timestamp:
+                            frame_result = result
+                            break
                     
+                    if frame_result:
+                        _, name, version_id, timestamp_str = frame_result
+                        results.append(name)
+                        version_results.append(version_id)
+                        timestamps.append(timestamp_str)
+                        
+                        if verbose and (name or version_id):
+                            output_parts = []
+                            if name:
+                                output_parts.append(f"Speaker: {name}")
+                            if version_id:
+                                output_parts.append(f"Version: {version_id}")
+                            print(f"  -> {timestamp_str} Detected: {', '.join(output_parts)}")
+                    else:
+                        # Frame not processed
+                        hours = int(timestamp // 3600)
+                        minutes = int((timestamp % 3600) // 60)
+                        seconds = int(timestamp % 60)
+                        timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        
+                        results.append("")
+                        version_results.append("")
+                        timestamps.append(timestamp_str)
+                        if verbose:
+                            print(f"  -> Failed to process frame at {timestamp:.2f}s")
+            else:
+                # Use sequential processing (existing logic)
+                for timestamp in batch_timestamps:
                     if verbose:
-                        print(f"Processing timestamp: {timestamp:.2f}s -> {hours:02d}:{minutes:02d}:{seconds:02d}")
-                    
-                    # Save the full extracted frame in debug mode
-                    if debug_dir:
-                        full_image_path = os.path.join(debug_dir, f"frame_{timestamp_filename}_full.png")
-                        try:
-                            Image.open(frame_path).save(full_image_path)
-                            if verbose:
-                                print(f"Saved full extracted frame to: {full_image_path}")
-                        except Exception as e:
-                            if verbose:
-                                print(f"Failed to save full extracted frame: {e}")
-                    # Detect speaker name (and save cropped region if applicable)
-                    name = detect_speaker_name_from_image(
-                        frame_path,
-                        reader=reader,
-                        verbose=verbose,
-                        debug_dir=debug_dir,
-                        no_crop=no_crop,
-                        fixed_bbox=fixed_bbox,
-                        timestamp_filename=timestamp_filename if debug_dir else None,
-                    )
-                    
-                    # Detect version ID if pattern is provided
-                    version_id = None
-                    if version_pattern:
-                        version_id = detect_version_id_from_image(
+                        progress = (batch_start + (timestamp - batch_timestamps[0]) / interval) / len(all_timestamps) * 100
+                        print(f"Processing frame at {timestamp:.2f}s ({progress:.1f}%)...")
+                    frame_path = extracted_frames.get(timestamp)
+                    if frame_path and os.path.exists(frame_path):
+                        # Format timestamp for file naming (HH_MM_SS)
+                        hours = int(timestamp // 3600)
+                        minutes = int((timestamp % 3600) // 60)
+                        seconds = int(timestamp % 60)
+                        timestamp_filename = f"{hours:02d}_{minutes:02d}_{seconds:02d}"
+                        
+                        if verbose:
+                            print(f"Processing timestamp: {timestamp:.2f}s -> {hours:02d}:{minutes:02d}:{seconds:02d}")
+                        
+                        # Save the full extracted frame in debug mode
+                        if debug_dir:
+                            full_image_path = os.path.join(debug_dir, f"frame_{timestamp_filename}_full.png")
+                            try:
+                                Image.open(frame_path).save(full_image_path)
+                                if verbose:
+                                    print(f"Saved full extracted frame to: {full_image_path}")
+                            except Exception as e:
+                                if verbose:
+                                    print(f"Failed to save full extracted frame: {e}")
+                        # Detect speaker name (and save cropped region if applicable)
+                        name = detect_speaker_name_from_image(
                             frame_path,
-                            version_pattern,
                             reader=reader,
                             verbose=verbose,
                             debug_dir=debug_dir,
-                            fixed_bbox=fixed_version_bbox,
+                            no_crop=no_crop,
+                            fixed_bbox=fixed_bbox,
                             timestamp_filename=timestamp_filename if debug_dir else None,
                         )
-                    
-                    # Format timestamp as HH:MM:SS
-                    hours = int(timestamp // 3600)
-                    minutes = int((timestamp % 3600) // 60)
-                    seconds = int(timestamp % 60)
-                    timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                    
-                    results.append(name if name else "")
-                    version_results.append(version_id if version_id else "")
-                    timestamps.append(timestamp_str)
-                    
-                    if verbose and (name or version_id):
-                        output_parts = []
-                        if name:
-                            output_parts.append(f"Speaker: {name}")
-                        if version_id:
-                            output_parts.append(f"Version: {version_id}")
-                        print(f"  -> Detected: {', '.join(output_parts)}")
-                else:
-                    # Frame extraction failed for this timestamp
-                    hours = int(timestamp // 3600)
-                    minutes = int((timestamp % 3600) // 60)
-                    seconds = int(timestamp % 60)
-                    timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-                    
-                    results.append("")
-                    version_results.append("")
-                    timestamps.append(timestamp_str)
-                    if verbose:
-                        print(f"  -> Failed to extract frame at {timestamp:.2f}s")
+                        
+                        # Detect version ID if pattern is provided
+                        version_id = None
+                        if version_pattern:
+                            version_id = detect_version_id_from_image(
+                                frame_path,
+                                version_pattern,
+                                reader=reader,
+                                verbose=verbose,
+                                debug_dir=debug_dir,
+                                fixed_bbox=fixed_version_bbox,
+                                timestamp_filename=timestamp_filename if debug_dir else None,
+                            )
+                        
+                        # Format timestamp as HH:MM:SS
+                        hours = int(timestamp // 3600)
+                        minutes = int((timestamp % 3600) // 60)
+                        seconds = int(timestamp % 60)
+                        timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        
+                        results.append(name if name else "")
+                        version_results.append(version_id if version_id else "")
+                        timestamps.append(timestamp_str)
+                        
+                        if verbose and (name or version_id):
+                            output_parts = []
+                            if name:
+                                output_parts.append(f"Speaker: {name}")
+                            if version_id:
+                                output_parts.append(f"Version: {version_id}")
+                            print(f"  -> Detected: {', '.join(output_parts)}")
+                    else:
+                        # Frame extraction failed for this timestamp
+                        hours = int(timestamp // 3600)
+                        minutes = int((timestamp % 3600) // 60)
+                        seconds = int(timestamp % 60)
+                        timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        
+                        results.append("")
+                        version_results.append("")
+                        timestamps.append(timestamp_str)
+                        if verbose:
+                            print(f"  -> Failed to extract frame at {timestamp:.2f}s")
         
         # Write results to CSV
         try:
@@ -974,6 +1113,8 @@ def main():
                        help="Skip speaker panel detection and process the entire image with OCR.")
     parser.add_argument("--version-pattern", type=str,
                        help="Regex pattern to detect version IDs (e.g., 'v\\d+\\.\\d+\\.\\d+' for version numbers, 'goat-\\d+' for build numbers).")
+    parser.add_argument("--parallel", action="store_true",
+                       help="Enable parallel processing using multiple CPU cores (faster but disables debug mode for videos).")
     args = parser.parse_args()
     
     # Check if input is a video file
@@ -999,6 +1140,7 @@ def main():
             no_crop=args.no_crop,
             version_pattern=args.version_pattern,
             start_time=args.start_time,
+            parallel=args.parallel,
         )
         if not success:
             exit(1)
