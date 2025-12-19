@@ -59,20 +59,58 @@ def extract_audio_from_video(video_file_path: str, audio_file_path: str, duratio
         return False
 
 
-def transcribe_audio(audio_file_path: str, model_name: str = "base") -> dict:
+def transcribe_audio(audio_file_path: str, model_name: str = "base", verbose: bool = False) -> dict:
     """
     Transcribes audio using OpenAI's Whisper model.
 
     Args:
         audio_file_path (str): The path to the audio file.
         model_name (str): The Whisper model to use (tiny, base, small, medium, large).
+        verbose (bool): Print detailed progress information.
 
     Returns:
         dict: The transcription result with timestamps.
     """
     try:
+        if verbose:
+            print(f"Loading Whisper model '{model_name}'...")
+            
         model = whisper.load_model(model_name)
-        result = model.transcribe(audio_file_path, word_timestamps=True)
+        
+        if verbose:
+            print(f"Model loaded successfully. Starting transcription...")
+            print("This may take several minutes depending on the audio length and model size...")
+            
+            # Get audio duration for progress estimation
+            try:
+                import librosa
+                audio_duration = librosa.get_duration(filename=audio_file_path)
+                print(f"Audio duration: {audio_duration:.1f} seconds")
+                
+                # Rough time estimates based on model size (these are approximate)
+                model_speed_multipliers = {
+                    'tiny': 32, 'base': 16, 'small': 8, 'medium': 4, 'large': 2
+                }
+                estimated_time = audio_duration / model_speed_multipliers.get(model_name, 8)
+                print(f"Estimated processing time: {estimated_time:.1f} seconds")
+            except ImportError:
+                if verbose:
+                    print("Install librosa for audio duration estimation: pip install librosa")
+            except Exception as e:
+                if verbose:
+                    print(f"Could not estimate audio duration: {e}")
+        
+        # Use verbose parameter to show progress if available
+        if verbose:
+            result = model.transcribe(audio_file_path, word_timestamps=True, verbose=True)
+        else:
+            result = model.transcribe(audio_file_path, word_timestamps=True, verbose=False)
+            
+        if verbose:
+            segments_count = len(result.get('segments', []))
+            print(f"Transcription completed successfully!")
+            print(f"Generated {segments_count} transcript segments")
+            
         return result
     except Exception as e:
         print(f"An error occurred during transcription: {e}")
@@ -112,7 +150,7 @@ def save_transcript_to_csv(transcript_result: dict, output_csv_path: str) -> boo
         return False
 
 
-def process_media_file(input_file_path: str, output_csv_path: str, model_name: str = "base", duration: float = None) -> bool:
+def process_media_file(input_file_path: str, output_csv_path: str, model_name: str = "base", duration: float = None, verbose: bool = False) -> bool:
     """
     Processes a media file (.mp4 or .mp3) to extract transcript.
 
@@ -121,6 +159,7 @@ def process_media_file(input_file_path: str, output_csv_path: str, model_name: s
         output_csv_path (str): Path to save the output CSV file.
         model_name (str): Whisper model to use for transcription.
         duration (float, optional): Duration in seconds to process. If None, processes entire file.
+        verbose (bool): Print detailed progress information.
 
     Returns:
         bool: True if successful, False otherwise.
@@ -129,17 +168,28 @@ def process_media_file(input_file_path: str, output_csv_path: str, model_name: s
         print(f"Error: Input file not found at '{input_file_path}'")
         return False
     
+    if verbose:
+        print(f"Processing media file: {input_file_path}")
+        print(f"Using Whisper model: {model_name}")
+        if duration:
+            print(f"Processing duration: {duration} seconds")
+    
     file_extension = os.path.splitext(input_file_path)[1].lower()
     
     # Determine if we need to extract audio or can use the file directly
     if file_extension == '.mp3':
         audio_file_path = input_file_path
         temp_audio_file = None
+        if verbose:
+            print("Input is MP3, using directly for transcription")
     elif file_extension == '.mp4':
         # Create temporary audio file
         temp_audio_file = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
         audio_file_path = temp_audio_file.name
         temp_audio_file.close()
+        
+        if verbose:
+            print(f"Input is MP4, extracting audio to temporary file: {audio_file_path}")
         
         # Extract audio from video
         if not extract_audio_from_video(input_file_path, audio_file_path, duration):
@@ -152,11 +202,20 @@ def process_media_file(input_file_path: str, output_csv_path: str, model_name: s
     
     try:
         # Transcribe audio
-        print(f"Transcribing audio using Whisper model '{model_name}'...")
-        transcript_result = transcribe_audio(audio_file_path, model_name)
+        if verbose:
+            print(f"Transcribing audio using Whisper model '{model_name}'...")
+            print("This may take several minutes depending on the audio length and model size...")
+        else:
+            print(f"Transcribing audio using Whisper model '{model_name}'...")
+        transcript_result = transcribe_audio(audio_file_path, model_name, verbose)
         
         if transcript_result is None:
             return False
+        
+        if verbose:
+            segments_count = len(transcript_result.get('segments', []))
+            total_duration = transcript_result.get('segments', [{}])[-1].get('end', 0) if segments_count > 0 else 0
+            print(f"Transcription completed! Found {segments_count} segments spanning {total_duration:.1f} seconds")
         
         # Save to CSV
         success = save_transcript_to_csv(transcript_result, output_csv_path)
@@ -183,6 +242,7 @@ def main():
     parser.add_argument("-m", "--model", default="base", choices=["tiny", "base", "small", "medium", "large"], 
                        help="Whisper model to use for transcription (default: base).")
     parser.add_argument("-d", "--duration", type=float, help="Duration in seconds to process from the beginning of the file. If not specified, processes the entire file.")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Print detailed progress information.")
     
     args = parser.parse_args()
 
@@ -194,7 +254,7 @@ def main():
         output_file = f"{base_name}_transcript.csv"
 
     # Process the media file
-    success = process_media_file(args.input_file, output_file, args.model, args.duration)
+    success = process_media_file(args.input_file, output_file, args.model, args.duration, args.verbose)
     
     if success:
         print(f"Transcript successfully saved to '{output_file}'")
