@@ -1,39 +1,48 @@
 #!/usr/bin/env python3
 """
-Speaker Name Detection Tool
+Speaker Name and Version ID Detection Tool
 
-This script detects speaker names from video conference screenshots or video files.
-It automatically detects the speaker panel using computer vision and/or AI models,
-then extracts text from that region using OCR to identify speaker names.
+This script detects speaker names and optionally version IDs from video conference screenshots or video files.
+It automatically detects speaker panels and version ID regions using computer vision and/or AI models,
+then extracts text from those regions using OCR to identify speaker names and version identifiers.
 
 Key Features:
 - Automatic speaker panel detection (no manual bounding box required)
+- Optional version ID detection with regex pattern matching
 - Support for both image files and video files
 - Batch processing for efficient video analysis
-- OCR engine: EasyOCR (default)
+- OCR engine: EasyOCR with GPU acceleration when available
 - Verbose diagnostics and debug crops to troubleshoot OCR behavior
-- Outputs results in CSV format for video processing
+- Time-based processing with start time offset support
+- Outputs results in CSV format with timestamps
 
 Detection Methods:
-- CV (Computer Vision): Fast edge detection method
+- CV (Computer Vision): Fast edge detection method for speaker panels
 - LLM (Large Language Model): AI-powered detection using Google Gemini
 - CV+LLM: Tries CV first, falls back to LLM if needed (default)
+- OCR Pattern Matching: Uses regex patterns to find version IDs in detected regions
 
 Usage Examples:
-    # Process a single image
-    python get_speaker_names.py screenshot.png -v
+    # Process a single image for speaker names only
+    python get_onscreen_text.py screenshot.png -v
 
     # Process a video with default 5-second intervals
-    python get_speaker_names.py meeting.mp4 -v
+    python get_onscreen_text.py meeting.mp4 -v
 
-    # Process video with custom interval and output file
-    python get_speaker_names.py meeting.mp4 --interval 2.0 -o speakers.csv
+    # Process video with version ID detection
+    python get_onscreen_text.py meeting.mp4 --version-pattern "v\\d+\\.\\d+\\.\\d+" -v
 
-    # Process only first 5 minutes with verbose output
-    python get_speaker_names.py meeting.mp4 --duration 300 --verbose
+    # Process with custom interval and output file
+    python get_onscreen_text.py meeting.mp4 --interval 2.0 -o speakers.csv
 
-    # Use EasyOCR and auto bottom-ROI when skipping panel detection
-    python get_speaker_names.py frame.png --no-crop -v
+    # Process only 5 minutes starting from 2 minutes into the video
+    python get_onscreen_text.py meeting.mp4 --start-time 120 --duration 300 --verbose
+
+    # Detect build numbers and speaker names
+    python get_onscreen_text.py meeting.mp4 --version-pattern "goat-\\d+" --interval 1.0
+
+    # Use full image OCR without speaker panel detection
+    python get_onscreen_text.py frame.png --no-crop -v
 
 Requirements:
 - OpenCV (cv2)
@@ -44,7 +53,26 @@ Requirements:
 - Google Generative AI (optional, for LLM fallback)
 - python-dotenv
 
-Note: This script imports detection functions from get_speaker_bbox.py
+Note: This script imports detection functions from get_speaker_bbox.py and get_version_id_bbox.py
+
+Architecture:
+The tool uses a modular approach with separate detection functions:
+- get_speaker_bbox.py: Detects speaker panel regions using CV/LLM methods
+- get_version_id_bbox.py: Detects version ID regions using OCR + regex pattern matching
+- get_onscreen_text.py: Orchestrates the detection pipeline and processes video files
+
+Workflow:
+1. Sample frames from video to calculate average bounding boxes for consistent detection
+2. Extract frames at specified intervals using optimized FFmpeg batch processing
+3. For each frame:
+   - Crop to speaker panel region and run OCR for name detection
+   - Crop to version ID region (if pattern provided) and run OCR + regex matching
+4. Post-process results to sanitize similar names and output to CSV format
+
+Output Format:
+- Single detection: CSV with columns [timestamp, speaker_name]
+- Dual detection: CSV with columns [timestamp, speaker_name, version_id]
+- Debug mode: Saves extracted frames and cropped regions with timestamp-based naming
 """
 
 import argparse
@@ -63,6 +91,9 @@ from collections import Counter
 
 # Import speaker bbox detection functions
 from get_speaker_bbox import detect_speaker_bbox_cv, detect_speaker_bbox_llm
+
+# Import version ID bbox detection function
+from get_version_id_bbox import detect_version_id_bbox_ocr
 
 
 def perform_ocr(target_img: Image.Image, reader: easyocr.Reader = None, verbose: bool = False):
@@ -194,14 +225,18 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame
     if is_regular:
         # Use single-pass extraction
         fps = 1.0 / (timestamps[1] - timestamps[0]) if len(timestamps) > 1 else 1.0
+        start_time = timestamps[0]  # Start from the first timestamp
         if verbose:
-            print(f"Using single-pass FFmpeg extraction with fps={fps:.4f}")
+            print(f"Using single-pass FFmpeg extraction with fps={fps:.4f}, starting at {start_time:.2f}s")
         output_pattern = os.path.join(temp_dir, "frame_%04d.png")
         cmd = [
             "ffmpeg", "-y", "-i", video_path,
+            "-ss", str(start_time),  # Seek to the start time
             "-vf", f"fps={fps}",
             output_pattern
         ]
+        if verbose:
+            print(f"FFmpeg command: {' '.join(cmd)}")
         subprocess.run(cmd, capture_output=True, check=True)
         # Map output frames to timestamps
         for i, timestamp in enumerate(timestamps):
@@ -243,35 +278,220 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame
         return result
 
 
-def get_average_speaker_bbox(video_path, duration, sample_count=4, verbose=False):
+def get_average_bounding_boxes(video_path, duration, version_pattern=None, sample_count=4, verbose=False, start_time=0.0):
     """
-    Samples frames at evenly spaced intervals and averages the detected speaker panel bounding boxes.
-    Returns the average bbox as a dict with normalized coordinates.
+    Samples frames at evenly spaced intervals and averages the detected bounding boxes.
+    Extracts frames only once and runs both speaker and version ID detection on the same frames.
+    
+    Args:
+        video_path: Path to the video file
+        duration: Video duration in seconds
+        version_pattern: Regex pattern for version ID detection (optional)
+        sample_count: Number of sample frames to use
+        verbose: Print progress information
+        start_time: Start time offset in seconds (default: 0.0)
+        
+    Returns:
+        Tuple of (avg_speaker_bbox, avg_version_bbox) where each is a dict with normalized coordinates or None
     """
     sample_fracs = [0.2, 0.4, 0.6, 0.8][:sample_count]
-    sample_timestamps = [duration * frac for frac in sample_fracs]
-    bboxes = []
+    # Apply start_time offset to sampling timestamps
+    effective_duration = duration - start_time
+    sample_timestamps = [start_time + (effective_duration * frac) for frac in sample_fracs]
+    speaker_bboxes = []
+    version_bboxes = []
     temp_dir = tempfile.mkdtemp()
+    
     try:
+        if verbose:
+            print(f"Extracting {len(sample_timestamps)} sample frames for bbox detection...")
+        
         for i, ts in enumerate(sample_timestamps):
             frame_path = os.path.join(temp_dir, f"sample_{i:02d}.png")
             if extract_frame_at_time(video_path, ts, frame_path):
-                bbox = get_speaker_bbox(frame_path, method="cv+llm", verbose=verbose)
-                if bbox:
-                    bboxes.append(bbox)
                 if verbose:
-                    print(f"Sampled bbox at {ts:.2f}s: {bbox}")
-        if not bboxes:
+                    print(f"Processing sample frame at {ts:.2f}s...")
+                
+                # Detect speaker panel bbox
+                speaker_bbox = get_speaker_bbox(frame_path, method="cv+llm", verbose=verbose)
+                if speaker_bbox:
+                    speaker_bboxes.append(speaker_bbox)
+                    if verbose:
+                        print(f"  -> Speaker bbox: {speaker_bbox}")
+                
+                # Detect version ID bbox if pattern provided
+                if version_pattern:
+                    try:
+                        result = detect_version_id_bbox_ocr(frame_path, version_pattern, debug=False)
+                        if result and result.get("found_version_text") and result.get("bounding_box"):
+                            version_bboxes.append(result["bounding_box"])
+                            if verbose:
+                                print(f"  -> Version bbox: {result['bounding_box']}")
+                    except Exception as e:
+                        if verbose:
+                            print(f"  -> Version ID detection failed: {e}")
+            else:
+                if verbose:
+                    print(f"Failed to extract frame at {ts:.2f}s")
+        
+        # Calculate average speaker bbox
+        avg_speaker_bbox = None
+        if speaker_bboxes:
+            avg_speaker_bbox = {key: sum(b[key] for b in speaker_bboxes) / len(speaker_bboxes) for key in ['x', 'y', 'width', 'height']}
+            if verbose:
+                print(f"Average speaker panel bbox: {avg_speaker_bbox}")
+        else:
             if verbose:
                 print("No speaker panel detected in any sample frames.")
-            return None
-        avg_bbox = {key: sum(b[key] for b in bboxes) / len(bboxes) for key in ['x', 'y', 'width', 'height']}
-        if verbose:
-            print(f"Using average speaker panel bbox: {avg_bbox}")
-        return avg_bbox
+        
+        # Calculate average version bbox
+        avg_version_bbox = None
+        if version_pattern:
+            if version_bboxes:
+                avg_version_bbox = {key: sum(b[key] for b in version_bboxes) / len(version_bboxes) for key in ['x', 'y', 'width', 'height']}
+                if verbose:
+                    print(f"Average version ID bbox: {avg_version_bbox}")
+            else:
+                if verbose:
+                    print("No version ID detected in any sample frames.")
+        
+        return avg_speaker_bbox, avg_version_bbox
+        
     finally:
         import shutil
         shutil.rmtree(temp_dir)
+
+
+def get_average_speaker_bbox(video_path, duration, sample_count=4, verbose=False):
+    """
+    Legacy function for backward compatibility.
+    Samples frames at evenly spaced intervals and averages the detected speaker panel bounding boxes.
+    Returns the average bbox as a dict with normalized coordinates.
+    """
+    avg_speaker_bbox, _ = get_average_bounding_boxes(video_path, duration, version_pattern=None, sample_count=sample_count, verbose=verbose)
+    return avg_speaker_bbox
+
+
+def get_average_version_bbox(video_path, duration, version_pattern, sample_count=4, verbose=False):
+    """
+    Legacy function for backward compatibility.
+    Samples frames at evenly spaced intervals and averages the detected version ID bounding boxes.
+    Returns the average bbox as a dict with normalized coordinates.
+    """
+    _, avg_version_bbox = get_average_bounding_boxes(video_path, duration, version_pattern=version_pattern, sample_count=sample_count, verbose=verbose)
+    return avg_version_bbox
+
+
+def detect_version_id_from_image(image_path: str,
+                                pattern: str, 
+                                reader: easyocr.Reader = None,
+                                verbose: bool = True,
+                                debug_dir: str = None,
+                                fixed_bbox: dict = None,
+                                timestamp_filename: str = None) -> str:
+    """
+    Detects version ID from an image file using OCR and regex pattern matching.
+    Uses the version ID bounding box to crop the relevant region first.
+    
+    Args:
+        image_path: Path to the image file
+        pattern: Regex pattern to match against detected text
+        reader: EasyOCR reader instance (will create new one if None)
+        verbose: Print detailed progress information
+        debug_dir: Directory to save debug images (optional)
+        fixed_bbox: Pre-calculated bounding box for version ID region (optional)
+        timestamp_filename: Timestamp string for debug file naming (optional)
+        
+    Returns:
+        Detected version ID string, or None if not found
+    """
+    if not os.path.exists(image_path):
+        return None
+    
+    # Load image
+    img = Image.open(image_path)
+    width, height = img.size
+    
+    # Determine which image to process
+    if fixed_bbox:
+        # Use the provided average version bbox to crop
+        crop_left = int(fixed_bbox['x'] * width)
+        crop_top = int(fixed_bbox['y'] * height) 
+        crop_right = int((fixed_bbox['x'] + fixed_bbox['width']) * width)
+        crop_bottom = int((fixed_bbox['y'] + fixed_bbox['height']) * height)
+        
+        # Ensure coordinates are within image bounds
+        crop_left = max(0, min(crop_left, width))
+        crop_top = max(0, min(crop_top, height))
+        crop_right = max(crop_left, min(crop_right, width))
+        crop_bottom = max(crop_top, min(crop_bottom, height))
+        
+        target_img = img.crop((crop_left, crop_top, crop_right, crop_bottom))
+        region_name = "version_bbox"
+        
+        if verbose:
+            print(f"Using version ID bounding box: ({crop_left}, {crop_top}, {crop_right}, {crop_bottom})")
+            print(f"Crop dimensions: {crop_right - crop_left}x{crop_bottom - crop_top}")
+        
+        # Save cropped region if debug directory is provided
+        if debug_dir:
+            if timestamp_filename:
+                cropped_path = os.path.join(debug_dir, f"frame_{timestamp_filename}_version_region.png")
+            else:
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                cropped_path = os.path.join(debug_dir, f"{base_name}_version_region.png")
+            target_img.save(cropped_path)
+            if verbose:
+                print(f"Saved version region to: {cropped_path}")
+    else:
+        # Fall back to full image if no bbox provided
+        target_img = img
+        region_name = "full_image"
+        if verbose:
+            print("No version bbox provided, using full image for version detection")
+    
+    # Perform OCR on the target region
+    if verbose:
+        print(f"Performing OCR on {region_name} for version detection...")
+        tw, th = target_img.size
+        print(f"Target OCR image size: {tw}x{th}")
+    
+    texts = perform_ocr(target_img, reader=reader, verbose=verbose)
+    
+    # Apply regex pattern matching to find version IDs
+    import re
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error as e:
+        if verbose:
+            print(f"Invalid regex pattern '{pattern}': {e}")
+        return None
+    
+    matches = []
+    if verbose:
+        print(f"Searching for pattern '{pattern}' in {len(texts)} OCR results")
+    
+    for text, confidence in texts:
+        match = regex.search(text)
+        if match:
+            matched_text = match.group()
+            matches.append((matched_text, confidence, text))
+            if verbose:
+                print(f"  -> Pattern match: '{matched_text}' in '{text}' (conf: {confidence:.2f})")
+        elif verbose:
+            print(f"  -> No match in: '{text}' (conf: {confidence:.2f})")
+    
+    if not matches:
+        if verbose:
+            print("No version ID pattern matches found")
+        return None
+    
+    # Return best match (highest confidence)
+    best_match = max(matches, key=lambda x: x[1])
+    if verbose:
+        print(f"Best version match: '{best_match[0]}' (confidence: {best_match[1]:.2f})")
+    
+    return best_match[0]
 
 
 def detect_speaker_name_from_image(image_path: str, 
@@ -279,11 +499,24 @@ def detect_speaker_name_from_image(image_path: str,
                                    verbose: bool = True,
                                    debug_dir: str = None,
                                    no_crop: bool = False,
-                                   fixed_bbox: dict = None) -> str:
+                                   fixed_bbox: dict = None,
+                                   timestamp_filename: str = None) -> str:
     """
-    Detects speaker name from an image file.
+    Detects speaker name from an image file using OCR and text filtering.
     Automatically detects speaker panel bounding box and processes that region.
     Uses EasyOCR with default settings.
+    
+    Args:
+        image_path: Path to the image file
+        reader: EasyOCR reader instance (will create new one if None)
+        verbose: Print detailed progress information
+        debug_dir: Directory to save debug images (optional)
+        no_crop: Skip speaker panel detection and use entire image
+        fixed_bbox: Pre-calculated bounding box for speaker panel (optional)
+        timestamp_filename: Timestamp string for debug file naming (optional)
+        
+    Returns:
+        Detected speaker name string, or None if not found
     """
     if not os.path.exists(image_path):
         return None
@@ -303,8 +536,11 @@ def detect_speaker_name_from_image(image_path: str,
         
         # Save cropped/full image if debug directory is provided
         if debug_dir:
-            base_name = os.path.splitext(os.path.basename(image_path))[0]
-            full_image_path = os.path.join(debug_dir, f"{base_name}_full_image.png")
+            if timestamp_filename:
+                full_image_path = os.path.join(debug_dir, f"frame_{timestamp_filename}_full_image.png")
+            else:
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                full_image_path = os.path.join(debug_dir, f"{base_name}_full_image.png")
             target_img.save(full_image_path)
             if verbose:
                 print(f"Saved full image to: {full_image_path}")
@@ -333,8 +569,11 @@ def detect_speaker_name_from_image(image_path: str,
             
             # Save cropped region if debug directory is provided
             if debug_dir:
-                base_name = os.path.splitext(os.path.basename(image_path))[0]
-                cropped_path = os.path.join(debug_dir, f"{base_name}_cropped_speaker_region.png")
+                if timestamp_filename:
+                    cropped_path = os.path.join(debug_dir, f"frame_{timestamp_filename}_speaker_region.png")
+                else:
+                    base_name = os.path.splitext(os.path.basename(image_path))[0]
+                    cropped_path = os.path.join(debug_dir, f"{base_name}_cropped_speaker_region.png")
                 target_img.save(cropped_path)
                 if verbose:
                     print(f"Saved cropped speaker region to: {cropped_path}")
@@ -409,9 +648,17 @@ def detect_speaker_name_from_image(image_path: str,
 
 def sanitize_speaker_names(timestamps, names, similarity=0.8):
     """
-    Post-processes the list of detected speaker names:
-    - Groups similar names (e.g., 'ason Greenblum' and 'Jason Greenblum')
-    - Replaces each with the most frequent (or longest) version in its group
+    Post-processes the list of detected speaker names to group similar variations.
+    Groups similar names (e.g., 'ason Greenblum' and 'Jason Greenblum') and
+    replaces each with the most frequent (or longest) version in its group.
+    
+    Args:
+        timestamps: List of timestamp strings (used for grouping context)
+        names: List of detected speaker names to sanitize
+        similarity: Similarity threshold for grouping names (0.0-1.0, default: 0.8)
+        
+    Returns:
+        List of sanitized speaker names with consistent spellings
     """
     groups = []
     used = set()
@@ -439,10 +686,26 @@ def sanitize_speaker_names(timestamps, names, similarity=0.8):
 
 
 def process_video(video_path: str, interval: float, output_csv: str, 
-                 max_duration: float = None, batch_size: int = 20, verbose: bool = False, debug: bool = False, no_crop: bool = False) -> bool:
+                 max_duration: float = None, batch_size: int = 20, verbose: bool = False, debug: bool = False, no_crop: bool = False,
+                 version_pattern: str = None, start_time: float = 0.0) -> bool:
     """
-    Process a video file, extracting frames at intervals and detecting speaker names.
+    Process a video file, extracting frames at intervals and detecting speaker names and optionally version IDs.
     Uses EasyOCR with default settings.
+    
+    Args:
+        video_path: Path to the video file
+        interval: Time interval between frame extractions (seconds)
+        output_csv: Path to output CSV file
+        max_duration: Maximum duration to process (seconds, optional)
+        batch_size: Number of frames to process in each batch
+        verbose: Print detailed progress information
+        debug: Save debug images for troubleshooting
+        no_crop: Skip speaker panel detection and process full images
+        version_pattern: Regex pattern for version ID detection (optional)
+        start_time: Start processing from this time offset in seconds (default: 0.0)
+        
+    Returns:
+        True if successful, False otherwise
     """
     if not os.path.exists(video_path):
         print(f"Error: Video file not found at '{video_path}'")
@@ -452,21 +715,44 @@ def process_video(video_path: str, interval: float, output_csv: str,
     duration = get_video_duration(video_path)
     if duration is None:
         return False
+
+    # Apply start time offset
+    effective_duration = duration - start_time
+    if effective_duration <= 0:
+        print(f"Start time {start_time}s is beyond video duration {duration}s")
+        return False
     
-    # Use max_duration if specified and smaller than actual duration
+    # Apply max duration limit to effective duration
     if max_duration is not None:
-        duration = min(duration, max_duration)
-        if verbose:
-            print(f"Processing limited to {duration:.2f} seconds (--duration option)")
+        effective_duration = min(effective_duration, max_duration)
     
     if verbose:
-        print(f"Video duration: {duration:.2f} seconds")
-        print(f"Extracting frames every {interval} seconds...")
+        print(f"Video duration: {duration:.2f}s")
+        print(f"Processing from {start_time:.2f}s to {start_time + effective_duration:.2f}s")
+        print(f"Effective processing duration: {effective_duration:.2f}s")
+        print(f"Frame interval: {interval:.2f}s")
     
-    # Sample and average speaker bbox before frame processing
+    # Sample and average bounding boxes before frame processing
     fixed_bbox = None
-    if not no_crop:
-        fixed_bbox = get_average_speaker_bbox(video_path, get_video_duration(video_path), sample_count=4, verbose=verbose)
+    fixed_version_bbox = None
+    if not no_crop or version_pattern:
+        # Only extract sample frames if we need either speaker bbox detection or version bbox detection
+        # Note: We sample from the entire video duration, not just the processing range
+        video_duration = get_video_duration(video_path)
+        avg_speaker_bbox, avg_version_bbox = get_average_bounding_boxes(
+            video_path, 
+            video_duration, 
+            version_pattern=version_pattern if version_pattern else None, 
+            sample_count=4, 
+            verbose=verbose
+            # Note: Intentionally not passing start_time here - we want to sample the entire video
+        )
+        
+        if not no_crop:
+            fixed_bbox = avg_speaker_bbox
+        
+        if version_pattern:
+            fixed_version_bbox = avg_version_bbox
     
     # Initialize OCR reader once (reuse for all frames) if using EasyOCR
     import torch
@@ -481,8 +767,9 @@ def process_video(video_path: str, interval: float, output_csv: str,
     
     # Calculate all timestamps that need to be processed
     all_timestamps = []
-    current_time = 0.0
-    while current_time < duration:
+    current_time = start_time  # Start from the specified offset
+    max_time = start_time + effective_duration
+    while current_time < max_time:
         all_timestamps.append(current_time)
         current_time += interval
     
@@ -523,6 +810,7 @@ def process_video(video_path: str, interval: float, output_csv: str,
     
     try:
         results = []
+        version_results = []
         timestamps = []
         frame_counter = 0
         
@@ -547,10 +835,18 @@ def process_video(video_path: str, interval: float, output_csv: str,
                     print(f"Processing frame at {timestamp:.2f}s ({progress:.1f}%)...")
                 frame_path = extracted_frames.get(timestamp)
                 if frame_path and os.path.exists(frame_path):
+                    # Format timestamp for file naming (HH_MM_SS)
+                    hours = int(timestamp // 3600)
+                    minutes = int((timestamp % 3600) // 60)
+                    seconds = int(timestamp % 60)
+                    timestamp_filename = f"{hours:02d}_{minutes:02d}_{seconds:02d}"
+                    
+                    if verbose:
+                        print(f"Processing timestamp: {timestamp:.2f}s -> {hours:02d}:{minutes:02d}:{seconds:02d}")
+                    
                     # Save the full extracted frame in debug mode
                     if debug_dir:
-                        base_name = os.path.splitext(os.path.basename(frame_path))[0]
-                        full_image_path = os.path.join(debug_dir, f"{base_name}_full.png")
+                        full_image_path = os.path.join(debug_dir, f"frame_{timestamp_filename}_full.png")
                         try:
                             Image.open(frame_path).save(full_image_path)
                             if verbose:
@@ -566,7 +862,21 @@ def process_video(video_path: str, interval: float, output_csv: str,
                         debug_dir=debug_dir,
                         no_crop=no_crop,
                         fixed_bbox=fixed_bbox,
+                        timestamp_filename=timestamp_filename if debug_dir else None,
                     )
+                    
+                    # Detect version ID if pattern is provided
+                    version_id = None
+                    if version_pattern:
+                        version_id = detect_version_id_from_image(
+                            frame_path,
+                            version_pattern,
+                            reader=reader,
+                            verbose=verbose,
+                            debug_dir=debug_dir,
+                            fixed_bbox=fixed_version_bbox,
+                            timestamp_filename=timestamp_filename if debug_dir else None,
+                        )
                     
                     # Format timestamp as HH:MM:SS
                     hours = int(timestamp // 3600)
@@ -575,10 +885,16 @@ def process_video(video_path: str, interval: float, output_csv: str,
                     timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
                     
                     results.append(name if name else "")
+                    version_results.append(version_id if version_id else "")
                     timestamps.append(timestamp_str)
                     
-                    if verbose and name:
-                        print(f"  -> Detected: {name}")
+                    if verbose and (name or version_id):
+                        output_parts = []
+                        if name:
+                            output_parts.append(f"Speaker: {name}")
+                        if version_id:
+                            output_parts.append(f"Version: {version_id}")
+                        print(f"  -> Detected: {', '.join(output_parts)}")
                 else:
                     # Frame extraction failed for this timestamp
                     hours = int(timestamp // 3600)
@@ -587,6 +903,7 @@ def process_video(video_path: str, interval: float, output_csv: str,
                     timestamp_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
                     
                     results.append("")
+                    version_results.append("")
                     timestamps.append(timestamp_str)
                     if verbose:
                         print(f"  -> Failed to extract frame at {timestamp:.2f}s")
@@ -597,14 +914,23 @@ def process_video(video_path: str, interval: float, output_csv: str,
             sanitized_results = sanitize_speaker_names(timestamps, results)
             with open(output_csv, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow(['timestamp', 'speaker_name'])
-                for ts, name in zip(timestamps, sanitized_results):
-                    writer.writerow([ts, name])
+                # Include version_id column if version detection was enabled
+                if version_pattern:
+                    writer.writerow(['timestamp', 'speaker_name', 'version_id'])
+                    for ts, name, version in zip(timestamps, sanitized_results, version_results):
+                        writer.writerow([ts, name, version])
+                else:
+                    writer.writerow(['timestamp', 'speaker_name'])
+                    for ts, name in zip(timestamps, sanitized_results):
+                        writer.writerow([ts, name])
             
             print(f"\nResults saved to: {output_csv}")
             print(f"Processed {len(results)} frames")
             detected_count = sum(1 for name in sanitized_results if name)
             print(f"Detected speaker names in {detected_count} frames")
+            if version_pattern:
+                version_detected_count = sum(1 for version in version_results if version)
+                print(f"Detected version IDs in {version_detected_count} frames")
             if debug:
                 mode_desc = "full images" if no_crop else "cropped speaker regions"
                 print(f"Debug {mode_desc} preserved in: {debug_dir}")
@@ -624,17 +950,19 @@ def process_video(video_path: str, interval: float, output_csv: str,
 
 def main():
     """
-    Main function to handle command-line arguments for speaker name detection.
-    Supports both image files and video files.
+    Main function to handle command-line arguments for speaker name and version ID detection.
+    Supports both image files and video files with comprehensive detection options.
     """
     parser = argparse.ArgumentParser(
-        description="Detect speaker name from a Google Meet frame or video recording."
+        description="Detect speaker names and optionally version IDs from Google Meet frames or video recordings."
     )
     parser.add_argument("input_file", help="Path to the input file (image: .png, .jpg) or video (.mp4).")
     parser.add_argument("--interval", type=float, default=5.0,
                        help="Time interval in seconds between frame extractions (for video files only, default: 5.0).")
     parser.add_argument("--duration", type=float,
                        help="Maximum duration in seconds to process (for video files only). If not specified, processes the entire video.")
+    parser.add_argument("--start-time", type=float, default=0.0,
+                       help="Start processing from this time offset in seconds (for video files only, default: 0.0).")
     parser.add_argument("-o", "--output", help="Output CSV file path (for video files only). If not provided, will be input filename with .csv extension.")
     parser.add_argument("--batch-size", type=int, default=20,
                        help="Number of frames to extract in each batch (default: 20). Higher values may be faster but use more memory.")
@@ -644,6 +972,8 @@ def main():
                        help="Keep temporary frame images after processing for troubleshooting.")
     parser.add_argument("--no-crop", action="store_true",
                        help="Skip speaker panel detection and process the entire image with OCR.")
+    parser.add_argument("--version-pattern", type=str,
+                       help="Regex pattern to detect version IDs (e.g., 'v\\d+\\.\\d+\\.\\d+' for version numbers, 'goat-\\d+' for build numbers).")
     args = parser.parse_args()
     
     # Check if input is a video file
@@ -667,6 +997,8 @@ def main():
             verbose=args.verbose,
             debug=args.debug,
             no_crop=args.no_crop,
+            version_pattern=args.version_pattern,
+            start_time=args.start_time,
         )
         if not success:
             exit(1)
@@ -684,17 +1016,42 @@ def main():
             else:
                 print(f"Debug mode: Cropped speaker region will be saved in '{debug_dir}' directory")
         
+        # Initialize EasyOCR reader for single image processing
+        import torch
+        use_gpu = torch.cuda.is_available()
+        reader = easyocr.Reader(['en'], gpu=use_gpu)
+        
         name = detect_speaker_name_from_image(
             args.input_file,
+            reader=reader,
             verbose=True,
             debug_dir=debug_dir,
             no_crop=args.no_crop,
         )
         
+        # Detect version ID if pattern is provided
+        version_id = None
+        if args.version_pattern:
+            version_id = detect_version_id_from_image(
+                args.input_file,
+                args.version_pattern,
+                reader=reader,
+                verbose=True,
+                debug_dir=debug_dir,
+                fixed_bbox=None,  # No averaging for single image, will fall back to full image
+            )
+        
+        # Display results
+        results_found = []
         if name:
-            print(f"Detected speaker name: {name}")
+            results_found.append(f"Speaker name: {name}")
+        if version_id:
+            results_found.append(f"Version ID: {version_id}")
+        
+        if results_found:
+            print(f"Detected: {', '.join(results_found)}")
         else:
-            print("No speaker name detected.")
+            print("No speaker name or version ID detected.")
 
 
 if __name__ == "__main__":
