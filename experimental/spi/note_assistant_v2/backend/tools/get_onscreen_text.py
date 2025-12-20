@@ -99,6 +99,47 @@ from get_speaker_bbox import detect_speaker_bbox_cv, detect_speaker_bbox_llm
 from get_version_id_bbox import detect_version_id_bbox_ocr
 
 
+def _process_bbox_sample_worker(args):
+    """
+    Worker function for parallel bounding box detection from sample frames.
+    This function is designed to be called by ThreadPoolExecutor for bbox averaging.
+    
+    Args:
+        args: Tuple containing (frame_path, timestamp, version_pattern, verbose)
+        
+    Returns:
+        Tuple of (timestamp, speaker_bbox, version_bbox, success)
+    """
+    frame_path, timestamp, version_pattern, verbose = args
+    
+    speaker_bbox = None
+    version_bbox = None
+    success = False
+    
+    if os.path.exists(frame_path):
+        try:
+            # Detect speaker panel bbox
+            speaker_bbox = get_speaker_bbox(frame_path, method="cv+llm", verbose=False)  # Disable verbose in parallel
+            
+            # Detect version ID bbox if pattern provided
+            if version_pattern:
+                try:
+                    result = detect_version_id_bbox_ocr(frame_path, version_pattern, debug=False)
+                    if result and result.get("found_version_text") and result.get("bounding_box"):
+                        version_bbox = result["bounding_box"]
+                except Exception as e:
+                    if verbose:
+                        print(f"  -> Version ID detection failed for frame at {timestamp:.2f}s: {e}")
+            
+            success = True
+            
+        except Exception as e:
+            if verbose:
+                print(f"  -> Error processing sample frame at {timestamp:.2f}s: {e}")
+    
+    return timestamp, speaker_bbox, version_bbox, success
+
+
 def perform_ocr(target_img: Image.Image, reader: easyocr.Reader = None, verbose: bool = False):
     """
     Perform OCR using EasyOCR only, with default settings.
@@ -281,7 +322,7 @@ def extract_frames_batch(video_path: str, timestamps: list, temp_dir: str, frame
         return result
 
 
-def get_average_bounding_boxes(video_path, duration, version_pattern=None, sample_count=4, verbose=False, start_time=0.0):
+def get_average_bounding_boxes(video_path, duration, version_pattern=None, sample_count=4, verbose=False, start_time=0.0, parallel=False):
     """
     Samples frames at evenly spaced intervals and averages the detected bounding boxes.
     Extracts frames only once and runs both speaker and version ID detection on the same frames.
@@ -293,6 +334,7 @@ def get_average_bounding_boxes(video_path, duration, version_pattern=None, sampl
         sample_count: Number of sample frames to use
         verbose: Print progress information
         start_time: Start time offset in seconds (default: 0.0)
+        parallel: Use parallel processing for bounding box detection (default: False)
         
     Returns:
         Tuple of (avg_speaker_bbox, avg_version_bbox) where each is a dict with normalized coordinates or None
@@ -308,34 +350,86 @@ def get_average_bounding_boxes(video_path, duration, version_pattern=None, sampl
     try:
         if verbose:
             print(f"Extracting {len(sample_timestamps)} sample frames for bbox detection...")
+            if parallel:
+                print("Using parallel processing for sample frame bbox detection...")
         
+        # First, extract all sample frames
+        extracted_frames = {}
         for i, ts in enumerate(sample_timestamps):
             frame_path = os.path.join(temp_dir, f"sample_{i:02d}.png")
             if extract_frame_at_time(video_path, ts, frame_path):
-                if verbose:
-                    print(f"Processing sample frame at {ts:.2f}s...")
-                
-                # Detect speaker panel bbox
-                speaker_bbox = get_speaker_bbox(frame_path, method="cv+llm", verbose=verbose)
-                if speaker_bbox:
-                    speaker_bboxes.append(speaker_bbox)
-                    if verbose:
-                        print(f"  -> Speaker bbox: {speaker_bbox}")
-                
-                # Detect version ID bbox if pattern provided
-                if version_pattern:
-                    try:
-                        result = detect_version_id_bbox_ocr(frame_path, version_pattern, debug=False)
-                        if result and result.get("found_version_text") and result.get("bounding_box"):
-                            version_bboxes.append(result["bounding_box"])
-                            if verbose:
-                                print(f"  -> Version bbox: {result['bounding_box']}")
-                    except Exception as e:
-                        if verbose:
-                            print(f"  -> Version ID detection failed: {e}")
+                extracted_frames[ts] = frame_path
             else:
                 if verbose:
                     print(f"Failed to extract frame at {ts:.2f}s")
+        
+        if not extracted_frames:
+            if verbose:
+                print("No sample frames could be extracted")
+            return None, None
+        
+        if parallel and len(extracted_frames) > 1:
+            # Use parallel processing for bounding box detection
+            if verbose:
+                print(f"Processing {len(extracted_frames)} sample frames in parallel...")
+            
+            # Prepare arguments for parallel processing
+            parallel_args = []
+            for timestamp in sample_timestamps:
+                frame_path = extracted_frames.get(timestamp)
+                if frame_path and os.path.exists(frame_path):
+                    parallel_args.append((frame_path, timestamp, version_pattern, verbose))
+            
+            # Process frames in parallel using threading
+            max_workers = min(4, len(parallel_args))  # Limit workers for bbox detection
+            if verbose:
+                print(f"Using {max_workers} threaded workers for bbox detection")
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                parallel_results = list(executor.map(_process_bbox_sample_worker, parallel_args))
+            
+            # Collect results
+            for timestamp, speaker_bbox, version_bbox, success in parallel_results:
+                if success:
+                    if speaker_bbox:
+                        speaker_bboxes.append(speaker_bbox)
+                        if verbose:
+                            print(f"  -> Speaker bbox at {timestamp:.2f}s: {speaker_bbox}")
+                    
+                    if version_bbox:
+                        version_bboxes.append(version_bbox)
+                        if verbose:
+                            print(f"  -> Version bbox at {timestamp:.2f}s: {version_bbox}")
+                else:
+                    if verbose:
+                        print(f"  -> Failed to process frame at {timestamp:.2f}s")
+        
+        else:
+            # Use sequential processing (original logic)
+            for i, ts in enumerate(sample_timestamps):
+                frame_path = extracted_frames.get(ts)
+                if frame_path and os.path.exists(frame_path):
+                    if verbose:
+                        print(f"Processing sample frame at {ts:.2f}s...")
+                    
+                    # Detect speaker panel bbox
+                    speaker_bbox = get_speaker_bbox(frame_path, method="cv+llm", verbose=verbose)
+                    if speaker_bbox:
+                        speaker_bboxes.append(speaker_bbox)
+                        if verbose:
+                            print(f"  -> Speaker bbox: {speaker_bbox}")
+                    
+                    # Detect version ID bbox if pattern provided
+                    if version_pattern:
+                        try:
+                            result = detect_version_id_bbox_ocr(frame_path, version_pattern, debug=False)
+                            if result and result.get("found_version_text") and result.get("bounding_box"):
+                                version_bboxes.append(result["bounding_box"])
+                                if verbose:
+                                    print(f"  -> Version bbox: {result['bounding_box']}")
+                        except Exception as e:
+                            if verbose:
+                                print(f"  -> Version ID detection failed: {e}")
         
         # Calculate average speaker bbox
         avg_speaker_bbox = None
@@ -365,23 +459,23 @@ def get_average_bounding_boxes(video_path, duration, version_pattern=None, sampl
         shutil.rmtree(temp_dir)
 
 
-def get_average_speaker_bbox(video_path, duration, sample_count=4, verbose=False):
+def get_average_speaker_bbox(video_path, duration, sample_count=4, verbose=False, parallel=False):
     """
     Legacy function for backward compatibility.
     Samples frames at evenly spaced intervals and averages the detected speaker panel bounding boxes.
     Returns the average bbox as a dict with normalized coordinates.
     """
-    avg_speaker_bbox, _ = get_average_bounding_boxes(video_path, duration, version_pattern=None, sample_count=sample_count, verbose=verbose)
+    avg_speaker_bbox, _ = get_average_bounding_boxes(video_path, duration, version_pattern=None, sample_count=sample_count, verbose=verbose, parallel=parallel)
     return avg_speaker_bbox
 
 
-def get_average_version_bbox(video_path, duration, version_pattern, sample_count=4, verbose=False):
+def get_average_version_bbox(video_path, duration, version_pattern, sample_count=4, verbose=False, parallel=False):
     """
     Legacy function for backward compatibility.
     Samples frames at evenly spaced intervals and averages the detected version ID bounding boxes.
     Returns the average bbox as a dict with normalized coordinates.
     """
-    _, avg_version_bbox = get_average_bounding_boxes(video_path, duration, version_pattern=version_pattern, sample_count=sample_count, verbose=verbose)
+    _, avg_version_bbox = get_average_bounding_boxes(video_path, duration, version_pattern=version_pattern, sample_count=sample_count, verbose=verbose, parallel=parallel)
     return avg_version_bbox
 
 
@@ -823,7 +917,8 @@ def process_video(video_path: str, interval: float, output_csv: str,
             video_duration, 
             version_pattern=version_pattern if version_pattern else None, 
             sample_count=4, 
-            verbose=verbose
+            verbose=verbose,
+            parallel=parallel  # Pass through parallel processing flag for bbox detection
             # Note: Intentionally not passing start_time here - we want to sample the entire video
         )
         
