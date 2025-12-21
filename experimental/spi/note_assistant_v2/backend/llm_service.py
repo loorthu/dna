@@ -2,6 +2,8 @@
 import os
 import random
 import requests
+import pandas as pd
+import sys
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -24,6 +26,9 @@ from dotenv import load_dotenv
 import json
 import types
 from datetime import datetime
+
+# Load environment variables at module level
+load_dotenv()
 
 # === Gemini Response Debugging ===
 
@@ -667,23 +672,180 @@ async def llm_summary(request: dict):
         # Return error in summary field instead of raising exception
         return {"summary": f"Error: {str(e)}", "provider": provider, "model": model, "prompt_type": prompt_type, "routed": False, "error": True}
 
+# --- CSV PROCESSING FUNCTIONS ---
+
+def process_csv_with_llm_summaries(csv_path, output_path, provider=None, model=None, prompt_type="short"):
+    """
+    Process a CSV file by adding LLM summaries for conversation data.
+    
+    Args:
+        csv_path: Path to input CSV file
+        output_path: Path to output CSV file with summaries
+        provider: LLM provider to use (optional)
+        model: Specific model to use (optional)
+        prompt_type: Type of prompt to use for summaries
+    """
+    print(f"Loading CSV from: {csv_path}")
+    
+    # Read the CSV file
+    try:
+        df = pd.read_csv(csv_path)
+        print(f"Loaded {len(df)} rows from CSV")
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        return False
+    
+    # Check if conversation column exists
+    if 'conversation' not in df.columns:
+        print("Error: 'conversation' column not found in CSV")
+        print(f"Available columns: {list(df.columns)}")
+        return False
+    
+    # Initialize new columns for LLM results
+    df['llm_summary'] = ''
+    df['llm_provider'] = ''
+    df['llm_model'] = ''
+    df['llm_prompt_type'] = ''
+    df['llm_error'] = ''
+    
+    # Choose the LLM client to use
+    selected_client_key = None
+    
+    if model:
+        # Try to find specific model
+        if model in llm_clients:
+            selected_client_key = model
+        else:
+            # Try to find model by matching the model name part
+            for key, client_info in llm_clients.items():
+                if client_info['model'] == model:
+                    selected_client_key = key
+                    break
+    
+    if not selected_client_key and provider:
+        # Find first model for this provider
+        for key in llm_clients.keys():
+            if llm_clients[key]['provider'] == provider:
+                selected_client_key = key
+                break
+    
+    if not selected_client_key and llm_clients:
+        # Use first available
+        selected_client_key = list(llm_clients.keys())[0]
+    
+    if not selected_client_key:
+        print("No LLM clients available for processing")
+        return False
+    
+    client_info = llm_clients[selected_client_key]
+    client = client_info['client']
+    model_name = client_info['model']
+    provider_name = client_info['provider']
+    
+    print(f"Using LLM: {provider_name} with model: {model_name}")
+    
+    # Process each row with conversation data
+    processed_count = 0
+    for index, row in df.iterrows():
+        conversation = str(row['conversation']).strip()
+        
+        # Skip empty conversations
+        if not conversation or conversation.lower() in ['nan', 'null', '']:
+            continue
+        
+        print(f"Processing row {index + 1}/{len(df)}: version_id={row.get('version_id', 'N/A')}")
+        
+        try:
+            # Get model configuration
+            config = get_model_config(provider_name, model_name, prompt_type=prompt_type)
+            
+            # Generate summary based on provider
+            if provider_name == 'openai':
+                summary = summarize_openai(conversation, model_name, client, config)
+            elif provider_name == 'anthropic':
+                summary = summarize_claude(conversation, model_name, client, config)
+            elif provider_name == 'ollama':
+                summary = summarize_ollama(conversation, model_name, client, config)
+            elif provider_name == 'google':
+                summary = summarize_gemini(conversation, model_name, client, config)
+            else:
+                raise ValueError(f"Unsupported provider: {provider_name}")
+            
+            # Store results
+            df.at[index, 'llm_summary'] = summary
+            df.at[index, 'llm_provider'] = provider_name
+            df.at[index, 'llm_model'] = model_name
+            df.at[index, 'llm_prompt_type'] = prompt_type
+            df.at[index, 'llm_error'] = ''
+            
+            processed_count += 1
+            print(f"  ✓ Generated summary: {summary[:100]}...")
+            
+        except Exception as e:
+            error_msg = str(e)
+            print(f"  ✗ Error generating summary: {error_msg}")
+            df.at[index, 'llm_summary'] = f"Error: {error_msg}"
+            df.at[index, 'llm_provider'] = provider_name
+            df.at[index, 'llm_model'] = model_name
+            df.at[index, 'llm_prompt_type'] = prompt_type
+            df.at[index, 'llm_error'] = error_msg
+    
+    # Save the results to output CSV
+    try:
+        df.to_csv(output_path, index=False)
+        print(f"\nResults saved to: {output_path}")
+        print(f"Processed {processed_count} conversations successfully")
+        return True
+    except Exception as e:
+        print(f"Error saving output CSV: {e}")
+        return False
+
 if __name__ == "__main__":
     import sys
     import argparse
     load_dotenv()
-    parser = argparse.ArgumentParser(description="Test LLM summary functions.")
+    
+    parser = argparse.ArgumentParser(description="Test LLM summary functions or process CSV files.")
     parser.add_argument('--provider', choices=['openai', 'claude', 'gemini', 'ollama'], default='gemini', help='LLM provider to test')
     parser.add_argument('--text', type=str, default='Artist submitted new lighting pass for shot 101. Lead: Looks good, but highlights are too strong. Artist: Will reduce highlight gain and resubmit.', help='Conversation text to summarize')
+    parser.add_argument('--csv-input', type=str, help='Input CSV file path for batch processing')
+    parser.add_argument('--csv-output', type=str, help='Output CSV file path for batch processing results')
+    parser.add_argument('--model', type=str, help='Specific model to use (e.g., gemini-1.5-pro)')
+    parser.add_argument('--prompt-type', type=str, default='short', help='Prompt type to use for summaries')
+    
     args = parser.parse_args()
 
+    # CSV processing mode
+    if args.csv_input:
+        if not args.csv_output:
+            print("Error: --csv-output is required when using --csv-input")
+            sys.exit(1)
+        
+        print(f"Processing CSV file: {args.csv_input}")
+        success = process_csv_with_llm_summaries(
+            csv_path=args.csv_input,
+            output_path=args.csv_output,
+            provider=args.provider,
+            model=args.model,
+            prompt_type=args.prompt_type
+        )
+        
+        if success:
+            print("CSV processing completed successfully!")
+            sys.exit(0)
+        else:
+            print("CSV processing failed!")
+            sys.exit(1)
+    
+    # Single text processing mode (original functionality)
     provider = args.provider
     text = args.text
-    model = get_model_for_provider(provider)
+    model = args.model or get_model_for_provider(provider)
     api_key = os.getenv(f'{provider.upper()}_API_KEY')
     print(f"Testing {provider} summary with model {model}...")
     try:
         client = create_llm_client(provider, api_key=api_key, model=model)
-        config = get_model_config(provider, model)
+        config = get_model_config(provider, model, prompt_type=args.prompt_type)
         print(f"Using config: temperature={config['temperature']}, max_tokens={config['max_tokens']}")
         if provider == 'openai':
             summary = summarize_openai(text, model, client, config)
