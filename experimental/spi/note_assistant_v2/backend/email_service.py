@@ -3,6 +3,8 @@ from pydantic import BaseModel, EmailStr
 import os
 import sys
 import base64
+import html
+import csv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from google.oauth2.credentials import Credentials
@@ -139,36 +141,120 @@ async def email_notes(data: EmailNotesRequest):
 
 def main():
     """
-    Standalone test for sending an email using Gmail API or SMTP, depending on EMAIL_PROVIDER.
-    If token.json does not exist, run OAuth flow to create it for Gmail.
+    Send email with CSV data including version number, LLM summary, SG notes, and first 500 characters from conversation.
+    Usage: python email_service.py <recipient_email> <csv_file_path>
     """
-    TO_EMAIL = sys.argv[1] if len(sys.argv) > 1 else EMAIL_SENDER
+    
+    if len(sys.argv) < 3:
+        print("Usage: python email_service.py <recipient_email> <csv_file_path>")
+        return
+    
+    TO_EMAIL = sys.argv[1]
+    CSV_FILE = sys.argv[2]
+    
+    # Check if CSV file exists
+    if not os.path.exists(CSV_FILE):
+        print(f"CSV file not found: {CSV_FILE}")
+        return
+    
     FROM_EMAIL = EMAIL_SENDER
-    SUBJECT = 'Test Email from DNA'
-    HTML_CONTENT = '''
-    <h2>Hello from DNA!</h2>
-    <p>This is a test email sent using the configured email provider.</p>
+    SUBJECT = 'Dailies Review Data - Version Notes and Summaries'
+    
+    # Read CSV data
+    rows = []
+    try:
+        with open(CSV_FILE, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # Skip rows without version_id
+                if row.get('version_id') and row['version_id'].strip():
+                    rows.append(row)
+    except Exception as e:
+        print(f"Error reading CSV file: {e}")
+        return
+    
+    if not rows:
+        print("No valid data found in CSV file")
+        return
+    
+    # Generate HTML content
+    html_content = '''
+    <h2>Dailies Review Data</h2>
+    <p>Review notes and summaries from the dailies session.</p>
+    <table border='1' cellpadding='8' cellspacing='0' style='border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;'>
+      <thead>
+        <tr style='background:#f1f5f9;font-weight:bold;'>
+          <th style='min-width:80px;'>Version ID</th>
+          <th style='min-width:200px;'>LLM Summary</th>
+          <th style='min-width:150px;'>SG Notes</th>
+          <th style='min-width:250px;'>Conversation (First 500 chars)</th>
+        </tr>
+      </thead>
+      <tbody>
     '''
+    
+    for row in rows:
+        version_id = html.escape(row.get('version_id', ''))
+        llm_summary = html.escape(row.get('llm_summary', ''))
+        sg_summary = html.escape(row.get('sg_summary', ''))
+        conversation = row.get('conversation', '')
+        
+        # Get first 500 characters of conversation
+        conversation_preview = conversation[:500]
+        if len(conversation) > 500:
+            conversation_preview += "..."
+        conversation_preview = html.escape(conversation_preview)
+        
+        # Replace newlines with <br> tags for proper HTML display
+        llm_summary = llm_summary.replace('\n', '<br>')
+        sg_summary = sg_summary.replace('\n', '<br>')
+        conversation_preview = conversation_preview.replace('\n', '<br>')
+        
+        html_content += f'''
+        <tr style='vertical-align:top;'>
+          <td style='font-weight:bold;'>{version_id}</td>
+          <td>{llm_summary}</td>
+          <td>{sg_summary}</td>
+          <td style='font-family:monospace;font-size:11px;'>{conversation_preview}</td>
+        </tr>
+        '''
+    
+    html_content += '''
+      </tbody>
+    </table>
+    <p style='margin-top:20px;font-size:11px;color:#666;'>
+      Generated from combined_review_data_with_summaries.csv
+    </p>
+    '''
+    
+    # Send email based on provider
     if EMAIL_PROVIDER == 'smtp':
-        print("Sending test email using SMTP...")
+        print("Sending email using SMTP...")
         try:
-            send_smtp_email(TO_EMAIL, SUBJECT, HTML_CONTENT)
-            print("SMTP test email sent successfully.")
+            send_smtp_email(TO_EMAIL, SUBJECT, html_content)
+            print(f"Email sent successfully to {TO_EMAIL} with {len(rows)} records.")
         except Exception as e:
-            print(f"SMTP test email failed: {e}")
+            print(f"SMTP email failed: {e}")
     else:
-        creds = None
-        if not os.path.exists(TOKEN_FILE):
-            print("token.json not found. Running OAuth flow to create it...")
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
-            creds = flow.run_local_server(port=0)
-            with open(TOKEN_FILE, 'w') as token:
-                token.write(creds.to_json())
-            print("token.json created.")
-        service = get_gmail_service()
-        message = create_gmail_message(FROM_EMAIL, TO_EMAIL, SUBJECT, HTML_CONTENT)
-        sent = service.users().messages().send(userId="me", body=message).execute()
-        print(f"Gmail API test email sent! Message ID: {sent['id']}")
+        print("Sending email using Gmail API...")
+        try:
+            # Handle Gmail OAuth if needed
+            creds = None
+            if not os.path.exists(TOKEN_FILE):
+                print("token.json not found. Running OAuth flow to create it...")
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open(TOKEN_FILE, 'w') as token:
+                    token.write(creds.to_json())
+                print("token.json created.")
+            
+            service = get_gmail_service()
+            message = create_gmail_message(FROM_EMAIL, TO_EMAIL, SUBJECT, html_content)
+            sent = service.users().messages().send(userId="me", body=message).execute()
+            print(f"Gmail API email sent successfully to {TO_EMAIL}! Message ID: {sent['id']}")
+            print(f"Sent {len(rows)} records from CSV file.")
+        except Exception as e:
+            print(f"Gmail API email failed: {e}")
 
 if __name__ == '__main__':
     main()
