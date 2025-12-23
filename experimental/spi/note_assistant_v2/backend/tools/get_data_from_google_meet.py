@@ -21,8 +21,14 @@ CSV with columns: timestamp, transcript_text, speaker_name, version_id
 - Segments are split when speaker changes or version ID changes
 
 Usage Examples:
-    # Basic processing with version pattern
+    # Basic processing with local file
     python get_data_from_google_meet.py meeting.mp4 --version-pattern "v\\d+\\.\\d+\\.\\d+"
+
+    # Google Drive URL
+    python get_data_from_google_meet.py "https://drive.google.com/file/d/1a2b3c4d/view" --version-pattern "v\\d+\\.\\d+\\.\\d+" --drive-credentials /path/to/service_account.json
+
+    # Google Drive file ID (OAuth2 - will prompt for login on first run)
+    python get_data_from_google_meet.py 1a2b3c4d5e6f7g8h9i --version-pattern "goat-\\d+" --parallel
 
     # Custom audio model and frame interval
     python get_data_from_google_meet.py meeting.mp4 --version-pattern "goat-\\d+" --audio-model small --frame-interval 3.0
@@ -299,12 +305,16 @@ def format_timestamp(seconds: float) -> str:
 def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: str,
                            audio_model: str = "base", frame_interval: float = 5.0,
                            start_time: float = 0.0, duration: Optional[float] = None,
-                           batch_size: int = 20, verbose: bool = False, parallel: bool = False) -> bool:
+                           batch_size: int = 20, verbose: bool = False, parallel: bool = False,
+                           drive_credentials: Optional[str] = None) -> bool:
     """
     Extract data from a Google Meet recording: synchronized transcripts, speaker names, and version IDs
-    
+
+    Supports both local video files and Google Drive URLs/file IDs. When a Drive URL is detected,
+    the file is automatically downloaded to a temporary location before processing.
+
     Args:
-        video_path: Path to the input video file
+        video_path: Path to local video file OR Google Drive URL/file ID
         version_pattern: Regex pattern for version ID detection
         output_csv: Path to the output CSV file
         audio_model: Whisper model to use for transcription
@@ -313,10 +323,56 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
         duration: Maximum duration to process
         verbose: Print detailed progress information
         parallel: Enable parallel processing (audio + visual simultaneously using multiprocessing)
-        
+        drive_credentials: Path to Google Drive OAuth2 credentials JSON (default: ../client_secret.json)
+
     Returns:
         True if successful, False otherwise
     """
+    # Import Google Drive utilities
+    from google_drive_utils import parse_drive_url, download_drive_file
+
+    # Detect if input is a Google Drive URL/ID
+    file_id = parse_drive_url(video_path)
+    temp_video_path = None
+    temp_video_dir = None
+
+    if file_id:
+        # Download from Google Drive
+        if verbose:
+            print(f"Detected Google Drive file ID: {file_id}")
+
+        # Set default credentials path if not provided (OAuth2 in parent directory)
+        if drive_credentials is None:
+            drive_credentials = os.path.join(os.path.dirname(__file__), '..', 'client_secret.json')
+
+        # Create temp directory for download
+        temp_video_dir = tempfile.mkdtemp(prefix="google_drive_download_")
+        temp_video_path = os.path.join(temp_video_dir, "video.mp4")
+
+        try:
+            if verbose:
+                print(f"Downloading from Google Drive to: {temp_video_path}")
+
+            success = download_drive_file(file_id, temp_video_path, drive_credentials, verbose)
+
+            if not success:
+                print("Failed to download file from Google Drive")
+                if os.path.exists(temp_video_dir):
+                    import shutil
+                    shutil.rmtree(temp_video_dir)
+                return False
+
+            # Update video_path to point to downloaded file
+            video_path = temp_video_path
+
+        except Exception as e:
+            print(f"Error downloading from Google Drive: {e}")
+            if os.path.exists(temp_video_dir):
+                import shutil
+                shutil.rmtree(temp_video_dir)
+            return False
+
+    # Check if video file exists (works for both local and downloaded files)
     if not os.path.exists(video_path):
         print(f"Error: Video file not found at '{video_path}'")
         return False
@@ -512,7 +568,7 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
         return False
     
     finally:
-        # Clean up temporary directory
+        # Clean up temporary directory for intermediate files
         import shutil
         if os.path.exists(temp_dir):
             try:
@@ -521,6 +577,15 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
                     print(f"Cleaned up temporary directory: {temp_dir}")
             except Exception as e:
                 print(f"Warning: Failed to clean up temporary directory: {e}")
+
+        # Clean up downloaded Google Drive file
+        if temp_video_dir and os.path.exists(temp_video_dir):
+            try:
+                shutil.rmtree(temp_video_dir)
+                if verbose:
+                    print(f"Cleaned up downloaded file: {temp_video_path}")
+            except Exception as e:
+                print(f"Warning: Failed to clean up downloaded file: {e}")
 
 
 def main():
@@ -532,7 +597,9 @@ def main():
     )
     
     # Required arguments
-    parser.add_argument("input_video", help="Path to the input video file (.mp4, .avi, .mov, etc.).")
+    parser.add_argument("input_video",
+                       help="Path to the input video file (.mp4, .avi, .mov, etc.) OR Google Drive URL/file ID. "
+                            "Supported Drive formats: https://drive.google.com/file/d/FILE_ID/view OR FILE_ID")
     parser.add_argument("--version-pattern", required=True, type=str,
                        help="Regex pattern to detect version IDs (e.g., 'v\\d+\\.\\d+\\.\\d+' for version numbers, 'goat-\\d+' for build numbers).")
     
@@ -553,7 +620,9 @@ def main():
                        help="Print detailed progress information.")
     parser.add_argument("--parallel", action="store_true",
                        help="Enable parallel processing: run audio transcription and visual detection simultaneously using multiprocessing (faster but uses more CPU/memory resources). Bypasses Python GIL for better performance on multi-core systems.")
-    
+    parser.add_argument("--drive-credentials", type=str, default=None,
+                       help="Path to Google Drive OAuth2 credentials JSON. Required for Drive URLs. Defaults to ../client_secret.json if not specified.")
+
     args = parser.parse_args()
     
     # Determine output file path
@@ -574,7 +643,8 @@ def main():
         duration=args.duration,
         batch_size=args.batch_size,
         verbose=args.verbose,
-        parallel=args.parallel
+        parallel=args.parallel,
+        drive_credentials=args.drive_credentials
     )
     
     if not success:
