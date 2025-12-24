@@ -53,8 +53,8 @@ def load_sg_data(filepath: str, version_column: str, pattern: str) -> Dict[str, 
             
             if version_num:
                 sg_data[version_num] = {
-                    'notes': row.get('Notes', ''),
-                    'shot': row.get('Shot', ''),
+                    'notes': row.get('notes', row.get('Notes', '')),
+                    'shot': row.get('shot', row.get('Shot', '')),
                     'jts': version_raw,
                     'row': row
                 }
@@ -209,9 +209,10 @@ def analyze_version_discussions(chronological_order: List[Dict], sg_data: Dict[s
                 # Merge current discussion as reference to the previous main discussion
                 prev_main = discussions[-1]
                 # Only add to reference_versions if it's not the same version as the previous main
-                if (current_discussion['version_id'] not in prev_main['reference_versions'] and 
+                existing_ref_ids = [v_id for v_id, _ in prev_main['reference_versions']]
+                if (current_discussion['version_id'] not in existing_ref_ids and
                     current_discussion['version_id'] != prev_main['version_id']):
-                    prev_main['reference_versions'].append(current_discussion['version_id'])
+                    prev_main['reference_versions'].append((current_discussion['version_id'], current_discussion['start_time']))
                 prev_main['conversations'].extend(current_discussion['conversations'])
                 # Update end time if current discussion was later
                 if current_discussion['end_time'] > prev_main['end_time']:
@@ -234,9 +235,10 @@ def analyze_version_discussions(chronological_order: List[Dict], sg_data: Dict[s
             # This is a reference version, add to previous main discussion if exists
             if discussions:
                 # Only add to reference_versions if it's not the same version as the main discussion
-                if (version_num not in discussions[-1]['reference_versions'] and 
+                existing_ref_ids = [v_id for v_id, _ in discussions[-1]['reference_versions']]
+                if (version_num not in existing_ref_ids and
                     version_num != discussions[-1]['version_id']):
-                    discussions[-1]['reference_versions'].append(version_num)
+                    discussions[-1]['reference_versions'].append((version_num, timestamp))
                 discussions[-1]['conversations'].append(entry)
                 discussions[-1]['end_time'] = timestamp
                 current_discussion = discussions[-1]
@@ -262,9 +264,10 @@ def analyze_version_discussions(chronological_order: List[Dict], sg_data: Dict[s
             # Final discussion was brief, merge it as reference to previous
             prev_main = discussions[-1]
             # Only add to reference_versions if it's not the same version as the previous main
-            if (current_discussion['version_id'] not in prev_main['reference_versions'] and 
+            existing_ref_ids = [v_id for v_id, _ in prev_main['reference_versions']]
+            if (current_discussion['version_id'] not in existing_ref_ids and
                 current_discussion['version_id'] != prev_main['version_id']):
-                prev_main['reference_versions'].append(current_discussion['version_id'])
+                prev_main['reference_versions'].append((current_discussion['version_id'], current_discussion['start_time']))
             prev_main['conversations'].extend(current_discussion['conversations'])
             if current_discussion['end_time'] > prev_main['end_time']:
                 prev_main['end_time'] = current_discussion['end_time']
@@ -321,7 +324,8 @@ def process_transcript_versions_with_time_analysis(transcript_data: Dict[str, Li
             timestamp = get_earliest_timestamp(all_conversations)
             conversation_text = format_conversation(all_conversations)
             sg_summary = sg_data[version_num]['notes']
-            ref_versions_str = ','.join(discussion['reference_versions']) if discussion['reference_versions'] else ''
+            # Format reference versions with timestamps: "version_id:timestamp,..."
+            ref_versions_str = ','.join([f"{v_id}:{ts}" for v_id, ts in discussion['reference_versions']]) if discussion['reference_versions'] else ''
             
             output_rows.append({
                 'timestamp': timestamp,

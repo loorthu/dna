@@ -232,6 +232,7 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
     for row in rows:
         version_id = row.get('version_id', '')
         timestamp = row.get('timestamp', '')
+        reference_versions = row.get('reference_versions', '')
         llm_summary = html.escape(row.get('llm_summary', ''))
         sg_summary = html.escape(row.get('sg_summary', ''))
         conversation = row.get('conversation', '')
@@ -250,10 +251,36 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         # Generate clickable version ID link if Drive URL available
         timestamped_url = create_timestamped_drive_url(drive_url, timestamp)
         if timestamped_url:
-            version_id_html = f'<a href="{html.escape(timestamped_url)}" target="_blank" style="color:#0066cc;text-decoration:none;font-weight:bold;">{html.escape(version_id)}</a>'
+            version_id_html = f'<a href="{html.escape(timestamped_url)}" target="_blank" style="color:#0066cc;text-decoration:underline;font-weight:bold;">{html.escape(version_id)}</a>'
         else:
             # Fallback to plain text if no Drive URL or timestamp
             version_id_html = f'<span style="font-weight:bold;">{html.escape(version_id)}</span>'
+
+        # Parse and generate reference version links
+        if reference_versions and reference_versions.strip():
+            # Parse new format: "9495:00:12:25,9493:00:14:30"
+            ref_entries = []
+            for ref_entry in reference_versions.split(','):
+                ref_entry = ref_entry.strip()
+                if ':' in ref_entry:
+                    parts = ref_entry.split(':', 1)
+                    if len(parts) == 2:
+                        ref_v, ref_ts = parts
+                        ref_entries.append((ref_v.strip(), ref_ts.strip()))
+
+            if ref_entries:
+                ref_links = []
+                for ref_v, ref_ts in ref_entries:
+                    # Create link with reference version's own timestamp
+                    ref_url = create_timestamped_drive_url(drive_url, ref_ts)
+                    if ref_url:
+                        ref_link = f'<a href="{html.escape(ref_url)}" target="_blank" style="color:#0066cc;text-decoration:underline;">{html.escape(ref_v)}</a>'
+                    else:
+                        ref_link = f'<span style="text-decoration:underline;">{html.escape(ref_v)}</span>'
+                    ref_links.append(ref_link)
+
+                # Add reference versions with (ref: ...) format on new line
+                version_id_html += f'<br/><span style="font-size:0.9em;color:#666;">(ref: {", ".join(ref_links)})</span>'
 
         html_content += f'''
         <tr style='vertical-align:top;'>
