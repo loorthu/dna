@@ -18,6 +18,7 @@ httpx
 websockets
 PyYAML>=6.0
 openai-whisper
+librosa
 
 # CSV utilities
 pandas>=2.0.0
