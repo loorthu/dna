@@ -234,9 +234,9 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         version_id = row.get('version_id', '')
         timestamp = row.get('timestamp', '')
         reference_versions = row.get('reference_versions', '')
-        llm_summary = html.escape(row.get('llm_summary', ''))
-        sg_summary = html.escape(row.get('sg_summary', ''))
-        # conversation = row.get('conversation', '')
+        summary = html.escape(row.get('summary', ''))  # Renamed from llm_summary
+        notes = html.escape(row.get('notes', ''))      # Renamed from sg_summary
+        # transcription = row.get('transcription', '')  # Renamed from conversation
 
         # Get first 500 characters of conversation
         # conversation_preview = conversation[:500]
@@ -245,9 +245,9 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         # conversation_preview = html.escape(conversation_preview)
 
         # Replace newlines with <br> tags for proper HTML display
-        llm_summary = llm_summary.replace('\n', '<br>')
-        sg_summary = sg_summary.replace('\n', '<br>')
-        # conversation_preview = conversation_preview.replace('\n', '<br>')
+        summary = summary.replace('\n', '<br>')
+        notes = notes.replace('\n', '<br>')
+        # transcription_preview = transcription_preview.replace('\n', '<br>')
 
         # Generate clickable version ID link if Drive URL available
         timestamped_url = create_timestamped_drive_url(drive_url, timestamp)
@@ -291,8 +291,8 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         html_content += f'''
         <tr style='vertical-align:top;'>
           <td>{version_id_html}</td>
-          <td>{sg_summary}</td>
-          <td>{llm_summary}</td>
+          <td>{notes}</td>
+          <td>{summary}</td>
           <!-- <td style='font-family:monospace;font-size:11px;'>conversation_preview</td> -->
         </tr>
         '''

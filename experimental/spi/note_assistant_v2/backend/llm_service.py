@@ -790,6 +790,14 @@ def process_csv_with_llm_summaries(csv_path, output_path, provider=None, model=N
             df.at[index, 'llm_prompt_type'] = prompt_type
             df.at[index, 'llm_error'] = error_msg
     
+    # Rename columns for final output
+    df = df.rename(columns={
+        'conversation': 'transcription',
+        'llm_summary': 'summary'
+        # 'notes' already renamed in combine stage
+        # 'shot' and version column already present
+    })
+
     # Save the results to output CSV
     try:
         df.to_csv(output_path, index=False)
