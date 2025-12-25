@@ -173,17 +173,18 @@ def send_email(to, subject, html_content):
     else:
         send_gmail_email(to, subject, html_content)
 
-def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None) -> bool:
+def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None) -> bool:
     """
     Send email with CSV data including version number, LLM summary, SG notes, and first 500 characters from conversation.
 
     Version IDs are rendered as clickable links that jump to specific timestamps in the Google Drive recording
-    (if drive_url is provided).
+    (if drive_url is provided). Optional thumbnails can be displayed for each version.
 
     Args:
         recipient_email: Email address to send to
         csv_file_path: Path to CSV file with results
         drive_url: Optional Google Drive URL for creating timestamp links
+        thumbnail_url: Optional base URL for thumbnails. Version ID will be appended.
 
     Returns:
         True if email was sent successfully, False otherwise
@@ -221,9 +222,9 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
       <thead>
         <tr style='background:#f1f5f9;font-weight:bold;'>
           <th style='min-width:80px;'>Version ID</th>
-          <th style='min-width:200px;'>LLM Summary</th>
           <th style='min-width:150px;'>SG Notes</th>
-          <th style='min-width:250px;'>Conversation (First 500 chars)</th>
+          <th style='min-width:200px;'>AI Notes</th>
+          <!-- <th style='min-width:250px;'>Conversation (First 500 chars)</th> -->
         </tr>
       </thead>
       <tbody>
@@ -235,18 +236,18 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         reference_versions = row.get('reference_versions', '')
         llm_summary = html.escape(row.get('llm_summary', ''))
         sg_summary = html.escape(row.get('sg_summary', ''))
-        conversation = row.get('conversation', '')
+        # conversation = row.get('conversation', '')
 
         # Get first 500 characters of conversation
-        conversation_preview = conversation[:500]
-        if len(conversation) > 500:
-            conversation_preview += "..."
-        conversation_preview = html.escape(conversation_preview)
+        # conversation_preview = conversation[:500]
+        # if len(conversation) > 500:
+        #     conversation_preview += "..."
+        # conversation_preview = html.escape(conversation_preview)
 
         # Replace newlines with <br> tags for proper HTML display
         llm_summary = llm_summary.replace('\n', '<br>')
         sg_summary = sg_summary.replace('\n', '<br>')
-        conversation_preview = conversation_preview.replace('\n', '<br>')
+        # conversation_preview = conversation_preview.replace('\n', '<br>')
 
         # Generate clickable version ID link if Drive URL available
         timestamped_url = create_timestamped_drive_url(drive_url, timestamp)
@@ -255,6 +256,11 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         else:
             # Fallback to plain text if no Drive URL or timestamp
             version_id_html = f'<span style="font-weight:bold;">{html.escape(version_id)}</span>'
+
+        # Add thumbnail if URL provided
+        if thumbnail_url and version_id:
+            thumbnail_src = f"{thumbnail_url}{version_id}"
+            version_id_html += f'<br/><img src="{html.escape(thumbnail_src)}" alt="Thumbnail for {html.escape(version_id)}" style="max-width:150px;margin-top:8px;display:block;"/>'
 
         # Parse and generate reference version links
         if reference_versions and reference_versions.strip():
@@ -285,9 +291,9 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         html_content += f'''
         <tr style='vertical-align:top;'>
           <td>{version_id_html}</td>
-          <td>{llm_summary}</td>
           <td>{sg_summary}</td>
-          <td style='font-family:monospace;font-size:11px;'>{conversation_preview}</td>
+          <td>{llm_summary}</td>
+          <!-- <td style='font-family:monospace;font-size:11px;'>conversation_preview</td> -->
         </tr>
         '''
 
@@ -372,17 +378,64 @@ async def email_notes(data: EmailNotesRequest):
 def main():
     """
     Send email with CSV data including version number, LLM summary, SG notes, and first 500 characters from conversation.
-    Usage: python email_service.py <recipient_email> <csv_file_path>
+
+    Usage:
+        python email_service.py <recipient_email> <csv_file_path> [--drive-url URL] [--thumbnail-url URL]
+
+    Examples:
+        # Basic usage
+        python email_service.py user@example.com results.csv
+
+        # With Drive URL for clickable timestamps
+        python email_service.py user@example.com results.csv --drive-url "https://drive.google.com/file/d/ABC123/view"
+
+        # With thumbnails
+        python email_service.py user@example.com results.csv --thumbnail-url "http://thumbs05.spimageworks.com/images/attributes/jts/goat-"
+
+        # With both
+        python email_service.py user@example.com results.csv \
+            --drive-url "https://drive.google.com/file/d/ABC123/view" \
+            --thumbnail-url "http://thumbs05.spimageworks.com/images/attributes/jts/goat-"
     """
+    import argparse
 
-    if len(sys.argv) < 3:
-        print("Usage: python email_service.py <recipient_email> <csv_file_path>")
-        return
+    parser = argparse.ArgumentParser(
+        description='Send email with CSV data including version notes, summaries, and clickable links.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Basic usage
+  python email_service.py user@example.com results.csv
 
-    TO_EMAIL = sys.argv[1]
-    CSV_FILE = sys.argv[2]
+  # With Drive URL for clickable timestamps
+  python email_service.py user@example.com results.csv --drive-url "https://drive.google.com/file/d/ABC123/view"
 
-    send_csv_email(TO_EMAIL, CSV_FILE)
+  # With thumbnails
+  python email_service.py user@example.com results.csv --thumbnail-url "http://thumbs05.spimageworks.com/images/attributes/jts/goat-"
+
+  # With both Drive URL and thumbnails
+  python email_service.py user@example.com results.csv \\
+      --drive-url "https://drive.google.com/file/d/ABC123/view" \\
+      --thumbnail-url "http://thumbs05.spimageworks.com/images/attributes/jts/goat-"
+        '''
+    )
+
+    parser.add_argument('recipient_email', help='Email address to send to')
+    parser.add_argument('csv_file_path', help='Path to CSV file with results')
+    parser.add_argument('--drive-url', default=None,
+                       help='Google Drive URL for video (optional - enables clickable timestamp links)')
+    parser.add_argument('--thumbnail-url', default=None,
+                       help='Base URL for version thumbnails (optional). Version ID will be appended. Example: "http://thumbs05.spimageworks.com/images/attributes/jts/goat-"')
+
+    args = parser.parse_args()
+
+    success = send_csv_email(args.recipient_email, args.csv_file_path, drive_url=args.drive_url, thumbnail_url=args.thumbnail_url)
+
+    if success:
+        print(f"\nEmail sent successfully to {args.recipient_email}")
+    else:
+        print(f"\nFailed to send email to {args.recipient_email}")
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()

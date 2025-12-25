@@ -90,6 +90,8 @@ def main():
                        help="Enable parallel audio+visual processing")
     parser.add_argument("--drive-url", default=None,
                        help="Google Drive URL for video (optional - enables clickable timestamp links in email)")
+    parser.add_argument("--thumbnail-url", default=None,
+                       help="Base URL for version thumbnails (optional). Version ID will be appended. Example: 'http://thumbs05.spimageworks.com/images/attributes/jts/goat-'")
     parser.add_argument("--email-subject", default="Dailies Review Data - Version Notes and Summaries",
                        help="Custom email subject")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
@@ -244,7 +246,7 @@ def main():
             print("=== Stage 4: Sending Email ===")
 
             try:
-                success = send_csv_email(args.recipient_email, args.output, drive_url=args.drive_url)
+                success = send_csv_email(args.recipient_email, args.output, drive_url=args.drive_url, thumbnail_url=args.thumbnail_url)
                 if success:
                     print(f"Email sent successfully to {args.recipient_email}")
                     if args.verbose:
