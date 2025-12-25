@@ -92,6 +92,8 @@ def main():
                        help="Google Drive URL for video (optional - enables clickable timestamp links in email)")
     parser.add_argument("--thumbnail-url", default=None,
                        help="Base URL for version thumbnails (optional). Version ID will be appended. Example: 'http://thumbs05.spimageworks.com/images/attributes/jts/goat-'")
+    parser.add_argument("--timeline-csv", default=None,
+                       help="Output CSV path for chronological version timeline (optional). Shows when each version appears in the video.")
     parser.add_argument("--email-subject", default="Dailies Review Data - Version Notes and Summaries",
                        help="Custom email subject")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
@@ -150,7 +152,9 @@ def main():
             batch_size=args.batch_size,
             verbose=args.verbose,
             parallel=args.parallel,
-            drive_credentials=None  # Will use default from .env
+            drive_credentials=None,  # Will use default from .env
+            timeline_csv_path=args.timeline_csv,
+            version_column_name=args.version_column
         )
 
         if not success:
@@ -188,23 +192,26 @@ def main():
             transcript_data,
             chronological_order,
             sg_data,
-            args.reference_threshold
+            args.reference_threshold,
+            version_column=args.version_column
         )
 
         # Add remaining SG versions not in transcript
         remaining_sg_versions = set(sg_data.keys()) - processed_sg_versions
         for version_num in sorted(remaining_sg_versions, key=lambda x: int(x) if x.isdigit() else 0):
             output_rows.append({
-                'timestamp': '',
-                'version_id': version_num,
+                'shot': sg_data[version_num].get('shot', ''),
+                args.version_column: sg_data[version_num].get('jts', ''),
+                'notes': sg_data[version_num]['notes'],
                 'conversation': '',
-                'sg_summary': sg_data[version_num]['notes'],
-                'reference_versions': ''
+                'timestamp': '',
+                'reference_versions': '',
+                'version_id': version_num
             })
 
         # Write combined CSV
         with open(combined_csv, 'w', newline='', encoding='utf-8') as f:
-            fieldnames = ['timestamp', 'version_id', 'conversation', 'sg_summary', 'reference_versions']
+            fieldnames = ['shot', args.version_column, 'notes', 'conversation', 'timestamp', 'reference_versions', 'version_id']
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(output_rows)

@@ -277,10 +277,11 @@ def analyze_version_discussions(chronological_order: List[Dict], sg_data: Dict[s
     return discussions
 
 
-def process_transcript_versions_with_time_analysis(transcript_data: Dict[str, List], 
+def process_transcript_versions_with_time_analysis(transcript_data: Dict[str, List],
                                                  chronological_order: List,
                                                  sg_data: Dict[str, Dict],
-                                                 reference_threshold: int) -> Tuple[List[Dict], Set[str]]:
+                                                 reference_threshold: int,
+                                                 version_column: str = 'jts') -> Tuple[List[Dict], Set[str]]:
     """Process transcript versions using time-based analysis for references."""
     
     # Analyze discussions with time-based logic
@@ -323,16 +324,20 @@ def process_transcript_versions_with_time_analysis(transcript_data: Dict[str, Li
             
             timestamp = get_earliest_timestamp(all_conversations)
             conversation_text = format_conversation(all_conversations)
-            sg_summary = sg_data[version_num]['notes']
+            notes = sg_data[version_num]['notes']  # Renamed from sg_summary
+            shot = sg_data[version_num].get('shot', '')  # NEW
+            version_col_value = sg_data[version_num].get('jts', '')  # NEW - original version column value
             # Format reference versions with timestamps: "version_id:timestamp,..."
             ref_versions_str = ','.join([f"{v_id}:{ts}" for v_id, ts in discussion['reference_versions']]) if discussion['reference_versions'] else ''
-            
+
             output_rows.append({
+                'shot': shot,                              # NEW
+                version_column: version_col_value,         # NEW - uses dynamic column name
+                'notes': notes,                            # Renamed from sg_summary
+                'conversation': conversation_text,         # Will be renamed to transcription in llm_service
                 'timestamp': timestamp,
-                'version_id': version_num,
-                'conversation': conversation_text,
-                'sg_summary': sg_summary,
-                'reference_versions': ref_versions_str
+                'reference_versions': ref_versions_str,
+                'version_id': version_num                  # Keep for internal processing
             })
     
     return output_rows, processed_sg_versions
@@ -385,7 +390,7 @@ def main():
     # Process transcript versions with time-based analysis
     print(f"Processing transcript with time-based reference detection (threshold: {args.reference_threshold}s)...")
     output_rows, processed_sg_versions = process_transcript_versions_with_time_analysis(
-        transcript_data, chronological_order, sg_data, args.reference_threshold
+        transcript_data, chronological_order, sg_data, args.reference_threshold, version_column=args.version_column
     )
     
     # Add remaining SG versions that weren't discussed in transcript
@@ -395,17 +400,19 @@ def main():
     for version_num in sorted(remaining_sg_versions, key=lambda x: int(x) if x.isdigit() else 0):
         sg_info = sg_data[version_num]
         output_rows.append({
-            'timestamp': '',
-            'version_id': version_num,
+            'shot': sg_info.get('shot', ''),
+            args.version_column: sg_info.get('jts', ''),
+            'notes': sg_info['notes'],
             'conversation': '',
-            'sg_summary': sg_info['notes'],
-            'reference_versions': ''
+            'timestamp': '',
+            'reference_versions': '',
+            'version_id': version_num
         })
     
     # Write output CSV
     print(f"Writing combined data to {args.output}...")
     with open(args.output, 'w', newline='', encoding='utf-8') as f:
-        fieldnames = ['timestamp', 'version_id', 'conversation', 'sg_summary', 'reference_versions']
+        fieldnames = ['shot', args.version_column, 'notes', 'conversation', 'timestamp', 'reference_versions', 'version_id']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         
         writer.writeheader()

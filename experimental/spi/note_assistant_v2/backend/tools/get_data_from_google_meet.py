@@ -164,8 +164,83 @@ def parse_visual_csv(visual_csv_path: str) -> List[Dict]:
                 })
     except Exception as e:
         print(f"Error reading visual CSV: {e}")
-    
+
     return visual_detections
+
+
+def extract_version_timeline(visual_csv_path: str, output_csv_path: str, version_column_name: str = 'version_id', verbose: bool = False) -> bool:
+    """
+    Extract chronological version timeline from visual.csv showing when each version appears in the video.
+    Creates a new CSV with one row for every time the version number changes.
+
+    Args:
+        visual_csv_path: Path to the visual.csv file (with timestamp, speaker_name, version_id columns)
+        output_csv_path: Path to save the timeline CSV
+        version_column_name: Column name to use for version in output CSV (default: 'version_id')
+        verbose: Whether to print verbose output
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not os.path.exists(visual_csv_path):
+        if verbose:
+            print(f"Visual CSV not found: {visual_csv_path}")
+        return False
+
+    try:
+        timeline_entries = []
+        prev_version = None
+        current_entry = None
+
+        with open(visual_csv_path, 'r', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                timestamp = row['timestamp']
+                speaker_name = row.get('speaker_name', '').strip()
+                version_id = row.get('version_id', '').strip()
+
+                # Skip rows without version ID
+                if not version_id:
+                    continue
+
+                # Detect version change
+                if version_id != prev_version:
+                    # Save previous entry if exists
+                    if current_entry:
+                        timeline_entries.append(current_entry)
+
+                    # Start new entry - use custom column name for version
+                    current_entry = {
+                        'timestamp': timestamp,
+                        version_column_name: version_id,
+                        'speaker_name': speaker_name
+                    }
+                    prev_version = version_id
+
+        # Don't forget the last entry
+        if current_entry:
+            timeline_entries.append(current_entry)
+
+        # Write timeline CSV
+        if timeline_entries:
+            with open(output_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['timestamp', version_column_name, 'speaker_name']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(timeline_entries)
+
+            if verbose:
+                print(f"Version timeline saved to: {output_csv_path}")
+                print(f"Found {len(timeline_entries)} version changes")
+            return True
+        else:
+            if verbose:
+                print("No version changes detected")
+            return False
+
+    except Exception as e:
+        print(f"Error extracting version timeline: {e}")
+        return False
 
 
 def find_nearest_visual_detection(transcript_time: float, visual_detections: List[Dict]) -> Dict:
@@ -306,7 +381,8 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
                            audio_model: str = "base", frame_interval: float = 5.0,
                            start_time: float = 0.0, duration: Optional[float] = None,
                            batch_size: int = 20, verbose: bool = False, parallel: bool = False,
-                           drive_credentials: Optional[str] = None) -> bool:
+                           drive_credentials: Optional[str] = None, timeline_csv_path: Optional[str] = None,
+                           version_column_name: str = 'version_id') -> bool:
     """
     Extract data from a Google Meet recording: synchronized transcripts, speaker names, and version IDs
 
@@ -324,6 +400,8 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
         verbose: Print detailed progress information
         parallel: Enable parallel processing (audio + visual simultaneously using multiprocessing)
         drive_credentials: Path to Google Drive OAuth2 credentials JSON (default: ../client_secret.json)
+        timeline_csv_path: Optional path to save chronological version timeline CSV
+        version_column_name: Column name to use for version in timeline CSV (default: 'version_id')
 
     Returns:
         True if successful, False otherwise
@@ -560,7 +638,13 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
         
         print(f"Speaking turns with detected speakers: {segments_with_speakers}")
         print(f"Speaking turns with detected versions: {segments_with_versions}")
-        
+
+        # Step 7: Extract version timeline if requested
+        if timeline_csv_path:
+            if verbose:
+                print(f"\n=== Step 7: Extracting Version Timeline ===")
+            extract_version_timeline(visual_csv, timeline_csv_path, version_column_name=version_column_name, verbose=verbose)
+
         return True
         
     except Exception as e:
