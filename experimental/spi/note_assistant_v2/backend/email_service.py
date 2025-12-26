@@ -7,6 +7,8 @@ import html
 import csv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -125,33 +127,74 @@ def get_gmail_service():
             raise RuntimeError("Google credentials are missing or invalid. Please contact your administrator.")
     return build('gmail', 'v1', credentials=creds)
 
-def create_gmail_message(sender, to, subject, html_content):
-    message = MIMEText(html_content, 'html')
+def create_gmail_message(sender, to, subject, html_content, attachments=None):
+    """
+    Create Gmail API message with optional attachments.
+
+    Args:
+        sender: Sender email address
+        to: Recipient email address
+        subject: Email subject
+        html_content: HTML body content
+        attachments: Optional list of tuples [(filename, filepath), ...]
+
+    Returns:
+        Dict with base64-encoded message for Gmail API
+    """
+    message = MIMEMultipart('mixed')
     message['to'] = to
     message['from'] = sender
     message['subject'] = subject
+
+    # Attach HTML body
+    html_part = MIMEText(html_content, 'html')
+    message.attach(html_part)
+
+    # Attach files if provided
+    if attachments:
+        for filename, filepath in attachments:
+            if os.path.exists(filepath):
+                with open(filepath, 'rb') as f:
+                    part = MIMEBase('text', 'csv')
+                    part.set_payload(f.read())
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+                    message.attach(part)
+
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
     return {'raw': raw}
 
-def send_gmail_email(to, subject, html_content):
+def send_gmail_email(to, subject, html_content, attachments=None):
     service = get_gmail_service()
-    message = create_gmail_message(EMAIL_SENDER, to, subject, html_content)
+    message = create_gmail_message(EMAIL_SENDER, to, subject, html_content, attachments=attachments)
     sent = service.users().messages().send(userId="me", body=message).execute()
     return sent
 
-def send_smtp_email(to, subject, html_content, cc=None, bcc=None):
+def send_smtp_email(to, subject, html_content, cc=None, bcc=None, attachments=None):
     recipients = [to]
     if cc:
         recipients += cc
     if bcc:
         recipients += bcc
-    msg = MIMEMultipart('')
+    msg = MIMEMultipart('mixed')
     msg['Subject'] = subject
     msg['From'] = EMAIL_SENDER
     msg['To'] = ','.join([to])
     if cc:
         msg['Cc'] = ','.join(cc)
     msg.attach(MIMEText(html_content, 'html', 'utf-8'))
+
+    # Attach files if provided
+    if attachments:
+        for filename, filepath in attachments:
+            if os.path.exists(filepath):
+                with open(filepath, 'rb') as f:
+                    part = MIMEBase('text', 'csv')
+                    part.set_payload(f.read())
+                    encoders.encode_base64(part)
+                    part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+                    msg.attach(part)
+
     try:
         smtp_msg = smtplib.SMTP()
         if SMTP_PORT is not None:
@@ -167,13 +210,13 @@ def send_smtp_email(to, subject, html_content, cc=None, bcc=None):
     except Exception as e:
         raise RuntimeError(f"SMTP email send failed: {e}")
 
-def send_email(to, subject, html_content):
+def send_email(to, subject, html_content, attachments=None):
     if EMAIL_PROVIDER == 'smtp':
-        send_smtp_email(to, subject, html_content)
+        send_smtp_email(to, subject, html_content, attachments=attachments)
     else:
-        send_gmail_email(to, subject, html_content)
+        send_gmail_email(to, subject, html_content, attachments=attachments)
 
-def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None) -> bool:
+def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None, timeline_csv_path: str = None) -> bool:
     """
     Send email with CSV data including version number, LLM summary, SG notes, and first 500 characters from conversation.
 
@@ -185,6 +228,7 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
         csv_file_path: Path to CSV file with results
         drive_url: Optional Google Drive URL for creating timestamp links
         thumbnail_url: Optional base URL for thumbnails. Version ID will be appended.
+        timeline_csv_path: Optional path to timeline CSV file to attach
 
     Returns:
         True if email was sent successfully, False otherwise
@@ -328,11 +372,21 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
                     token.write(creds.to_json())
                 print("token.json created.")
 
+            # Prepare attachments
+            attachments = []
+            main_csv_filename = os.path.basename(csv_file_path)
+            attachments.append((main_csv_filename, csv_file_path))
+
+            # Add timeline CSV if provided
+            if timeline_csv_path and os.path.exists(timeline_csv_path):
+                timeline_filename = os.path.basename(timeline_csv_path)
+                attachments.append((timeline_filename, timeline_csv_path))
+
             service = get_gmail_service()
-            message = create_gmail_message(FROM_EMAIL, recipient_email, SUBJECT, html_content)
+            message = create_gmail_message(FROM_EMAIL, recipient_email, SUBJECT, html_content, attachments=attachments)
             sent = service.users().messages().send(userId="me", body=message).execute()
             print(f"Gmail API email sent successfully to {recipient_email}! Message ID: {sent['id']}")
-            print(f"Sent {len(rows)} records from CSV file.")
+            print(f"Sent {len(rows)} records from CSV file with {len(attachments)} attachment(s).")
             return True
         except Exception as e:
             print(f"Gmail API email failed: {e}")

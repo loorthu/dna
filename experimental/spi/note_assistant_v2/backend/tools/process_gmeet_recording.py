@@ -253,7 +253,13 @@ def main():
             print("=== Stage 4: Sending Email ===")
 
             try:
-                success = send_csv_email(args.recipient_email, args.output, drive_url=args.drive_url, thumbnail_url=args.thumbnail_url)
+                success = send_csv_email(
+                    args.recipient_email,
+                    args.output,
+                    drive_url=args.drive_url,
+                    thumbnail_url=args.thumbnail_url,
+                    timeline_csv_path=args.timeline_csv
+                )
                 if success:
                     print(f"Email sent successfully to {args.recipient_email}")
                     if args.verbose:
