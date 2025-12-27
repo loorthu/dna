@@ -4,13 +4,25 @@ import random
 import requests
 import pandas as pd
 import sys
-from fastapi import APIRouter, HTTPException
+import tempfile
+import shutil
+import subprocess
+import csv
+from datetime import datetime
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 router = APIRouter()
 
 class LLMSummaryRequest(BaseModel):
     text: str
+
+class ProcessRecordingRequest(BaseModel):
+    recording_url: str
+    recipient_email: str
+    shotgrid_data: list  # Array of {shot, notes, transcription, ...}
+    selected_project_name: str = ""  # Optional selected project name from UI
+    playlist_name: str = ""  # Optional playlist name for email subject
 
 # --- LLM IMPLEMENTATION CODE ---
 
@@ -671,6 +683,287 @@ async def llm_summary(request: dict):
         print(f"Error in /llm-summary with {provider}: {e}")
         # Return error in summary field instead of raising exception
         return {"summary": f"Error: {str(e)}", "provider": provider, "model": model, "prompt_type": prompt_type, "routed": False, "error": True}
+
+# --- GOOGLE MEET RECORDING PROCESSING ---
+
+def process_recording_task(recording_url: str, recipient_email: str, shotgrid_data: list, selected_project_name: str = "", playlist_name: str = ""):
+    """
+    Background task: Process Google Meet recording and email results.
+    This function runs asynchronously in the background.
+
+    Strategy: Call the existing process_gmeet_recording.py script as a subprocess.
+    All logic (downloading, extracting, LLM processing, emailing) is already there.
+    """
+    temp_dir = None
+    log_file_path = None
+
+    try:
+        # Create temporary directory for ShotGrid CSV and logs
+        temp_dir = tempfile.mkdtemp(prefix="past_recording_")
+        sg_csv_path = os.path.join(temp_dir, "shotgrid_playlist.csv")
+
+        # Create timestamped log file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        logs_dir = os.path.join(os.path.dirname(__file__), 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        log_file_path = os.path.join(logs_dir, f"past_recording_{timestamp}.log")
+
+        print(f"Log file: {log_file_path}")
+
+        # Extract project name from uploaded ShotGrid data
+        # Look for version field in the first row (e.g., "project-123" -> "project")
+        project_name = ''
+        if shotgrid_data and len(shotgrid_data) > 0:
+            first_row = shotgrid_data[0]
+            shot_field = first_row.get('shot', '')
+
+            # Try to extract from shot field (format: "shot_name/version_name")
+            if '/' in shot_field:
+                version_name = shot_field.split('/', 1)[1]
+                # Extract project prefix from version name (e.g., "project-123" -> "project")
+                if '-' in version_name:
+                    project_name = version_name.split('-')[0]
+
+        # Fallback to selected project from UI parameter
+        if not project_name and selected_project_name:
+            project_name = selected_project_name
+
+        print(f"Extracted project name: {project_name or '(none)'}")
+
+        # Build command to run process_gmeet_recording.py
+        tools_dir = os.path.join(os.path.dirname(__file__), 'tools')
+        script_path = os.path.join(tools_dir, 'process_gmeet_recording.py')
+
+        # Determine which LLM model to use (first available)
+        if not llm_clients:
+            raise Exception("No LLM clients available")
+
+        client_key = list(llm_clients.keys())[0]
+        client_info = llm_clients[client_key]
+        model_name = client_info['model']
+
+        # Read configuration from environment variables
+        version_pattern = os.getenv('GMEET_VERSION_PATTERN', r'(\d+)')
+
+        # Replace {project} or $project placeholder with actual project name
+        if project_name:
+            version_pattern = version_pattern.replace('{project}', project_name)
+            version_pattern = version_pattern.replace('$project', project_name)
+
+        version_column = os.getenv('SG_CSV_VERSION_FIELD', 'jts').split(',')[0]  # Use first field
+        audio_model = os.getenv('GMEET_AUDIO_MODEL', 'base')
+        frame_interval = os.getenv('GMEET_FRAME_INTERVAL', '5.0')
+        batch_size = os.getenv('GMEET_BATCH_SIZE', '20')
+        reference_threshold = os.getenv('GMEET_REFERENCE_THRESHOLD', '30')
+        parallel = os.getenv('GMEET_PARALLEL', 'false').lower() == 'true'
+        prompt_type = os.getenv('GMEET_PROMPT_TYPE', 'short')
+        thumbnail_url = os.getenv('GMEET_THUMBNAIL_URL', '')
+        # Build email subject from playlist name if available
+        if playlist_name:
+            # Strip .csv extension if present
+            email_subject = playlist_name[:-4] if playlist_name.endswith('.csv') else playlist_name
+        else:
+            email_subject = os.getenv('GMEET_EMAIL_SUBJECT', 'Dailies Review Data - Version Notes and Summaries')
+
+        # Replace {project} or $project placeholder in thumbnail URL
+        if project_name and thumbnail_url:
+            thumbnail_url = thumbnail_url.replace('{project}', project_name)
+            thumbnail_url = thumbnail_url.replace('$project', project_name)
+
+        # Update the CSV to use the correct version column name
+        # Re-create the CSV with the correct column name for version_column
+        print(f"Re-creating ShotGrid CSV with version column '{version_column}'...")
+        with open(sg_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+            # Use the version_column name from config instead of generic 'Version'
+            fieldnames = ['shot', version_column, 'notes']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            # Write each row from shotgrid_data
+            for row in shotgrid_data:
+                # Parse shot field which might contain "shot_name/version_name"
+                shot_field = row.get('shot', '')
+                if '/' in shot_field:
+                    shot_name, version_name = shot_field.split('/', 1)
+                else:
+                    shot_name = shot_field
+                    version_name = ''
+
+                writer.writerow({
+                    'shot': shot_name,
+                    version_column: version_name,  # Use the correct column name
+                    'notes': row.get('notes', '')
+                })
+
+        # Build command arguments
+        cmd = [
+            sys.executable,  # Use current Python interpreter
+            script_path,
+            recording_url,  # Google Drive URL (script handles download)
+            sg_csv_path,  # ShotGrid playlist CSV
+            recipient_email,  # Email address (positional arg - must come before optional flags)
+            '--version-pattern', version_pattern,
+            '--version-column', version_column,
+            '--model', model_name,
+            '--drive-url', recording_url,  # For clickable timestamps
+            '--audio-model', audio_model,
+            '--frame-interval', frame_interval,
+            '--batch-size', batch_size,
+            '--reference-threshold', reference_threshold,
+            '--prompt-type', prompt_type,
+            '--email-subject', email_subject,
+            '--verbose'
+        ]
+
+        # Add optional arguments
+        if parallel:
+            cmd.append('--parallel')
+
+        if thumbnail_url:
+            cmd.extend(['--thumbnail-url', thumbnail_url])
+
+        print(f"Running command: {' '.join(cmd)}")
+
+        print(f"Command: {' '.join(cmd)}")
+        print(f"Log file: {log_file_path}")
+        print(f"Temp ShotGrid CSV: {sg_csv_path}")
+        #return  # TEMPORARY: Remove this return to actually execute the command
+
+        # Run the subprocess and capture output to log file
+        with open(log_file_path, 'w') as log_file:
+            log_file.write(f"=== Google Meet Past Recording Processing ===\n")
+            log_file.write(f"Started: {datetime.now().isoformat()}\n")
+            log_file.write(f"Recording URL: {recording_url}\n")
+            log_file.write(f"Recipient: {recipient_email}\n")
+            log_file.write(f"Shots: {len(shotgrid_data)}\n")
+            log_file.write(f"Command: {' '.join(cmd)}\n")
+            log_file.write(f"\n{'='*60}\n\n")
+            log_file.flush()
+
+            # Run subprocess with output redirected to log file
+            process = subprocess.Popen(
+                cmd,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                text=True,
+                cwd=tools_dir
+            )
+
+            # Wait for completion
+            return_code = process.wait()
+
+            log_file.write(f"\n{'='*60}\n")
+            log_file.write(f"Completed: {datetime.now().isoformat()}\n")
+            log_file.write(f"Return code: {return_code}\n")
+
+        if return_code != 0:
+            raise Exception(f"Processing failed with return code {return_code}. Check log: {log_file_path}")
+
+        print(f"Processing completed successfully! Log: {log_file_path}")
+
+    except Exception as e:
+        error_msg = f"Error processing Google Meet recording: {str(e)}"
+        print(error_msg)
+
+        # Log the error
+        if log_file_path:
+            try:
+                with open(log_file_path, 'a') as log_file:
+                    log_file.write(f"\n{'='*60}\n")
+                    log_file.write(f"ERROR: {error_msg}\n")
+                    log_file.write(f"{'='*60}\n")
+            except:
+                pass
+
+        # Note: Error email would be sent by the process_gmeet_recording.py script if it fails
+        # We don't need to send error notification here
+
+    finally:
+        # Clean up temporary directory (ShotGrid CSV)
+        # Keep log file for debugging
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                shutil.rmtree(temp_dir)
+                print(f"Cleaned up temporary directory: {temp_dir}")
+            except Exception as e:
+                print(f"Failed to clean up temp directory: {e}")
+
+@router.post("/process-past-recording")
+async def process_past_recording(
+    request: ProcessRecordingRequest,
+    background_tasks: BackgroundTasks
+):
+    """
+    Process a past Google Meet recording asynchronously.
+
+    The recording will be downloaded, processed, and results emailed.
+    This endpoint returns immediately; processing happens in background.
+    """
+    # Validate inputs
+    if not request.recording_url or not request.recording_url.strip():
+        raise HTTPException(status_code=400, detail="recording_url is required")
+
+    if not request.recipient_email or not request.recipient_email.strip():
+        raise HTTPException(status_code=400, detail="recipient_email is required")
+
+    if not request.shotgrid_data or len(request.shotgrid_data) == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="shotgrid_data is required. Please upload a ShotGrid playlist first."
+        )
+
+    # Validate Google Drive URL format
+    if "drive.google.com" not in request.recording_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Google Drive URL. Must be a drive.google.com link"
+        )
+
+    # Pre-validate project name extraction (before background task starts)
+    version_pattern = os.getenv('GMEET_VERSION_PATTERN', r'(\d+)')
+    has_placeholder = '{project}' in version_pattern or '$project' in version_pattern
+
+    if has_placeholder:
+        # Tier 1: Try to extract project name from uploaded CSV data
+        project_name = ''
+        if request.shotgrid_data and len(request.shotgrid_data) > 0:
+            first_row = request.shotgrid_data[0]
+            shot_field = first_row.get('shot', '')
+
+            # Try to extract from shot field (format: "shot_name/version_name")
+            if '/' in shot_field:
+                version_name = shot_field.split('/', 1)[1]
+                # Extract project prefix from version name (e.g., "project-123" -> "project")
+                if '-' in version_name:
+                    project_name = version_name.split('-')[0]
+
+        # Tier 2: Fallback to selected project from UI
+        if not project_name and request.selected_project_name:
+            project_name = request.selected_project_name
+
+        # If pattern requires project name but we couldn't get it from either source, fail early
+        if not project_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not determine project name. Please select a project in the ShotGrid panel (Import tab) before submitting."
+            )
+
+    # Add background task
+    background_tasks.add_task(
+        process_recording_task,
+        request.recording_url,
+        request.recipient_email,
+        request.shotgrid_data,
+        request.selected_project_name,
+        request.playlist_name
+    )
+
+    return {
+        "status": "success",
+        "message": "Processing started. You will receive an email when complete.",
+        "recipient_email": request.recipient_email,
+        "shots_count": len(request.shotgrid_data)
+    }
 
 # --- CSV PROCESSING FUNCTIONS ---
 
