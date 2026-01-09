@@ -23,6 +23,7 @@ import sys
 import subprocess
 import json
 import requests
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -59,7 +60,7 @@ def load_config():
 # API Client
 # =============================================================================
 
-def get_pending_meetings(backend_url: str) -> list:
+def get_pending_meetings(backend_url: str) -> List[Dict]:
     """Fetch pending meetings from API."""
     url = f"{backend_url}/api/meetings"
     params = {'status': 'pending'}
@@ -94,7 +95,7 @@ def update_meeting_status(backend_url: str, event_id: str, status: str, error_me
 # Download Handler
 # =============================================================================
 
-def extract_meet_id(meet_link: str) -> str:
+def extract_meet_id(meet_link: str) -> Optional[str]:
     """Extract Google Meet ID from meet link.
 
     Examples:
@@ -128,7 +129,7 @@ def get_extension_from_mime_type(mime_type: str) -> str:
     return mime_to_ext.get(mime_type, '.mp4')
 
 
-def ensure_filename_extension(filename: str, mime_type: str = None) -> str:
+def ensure_filename_extension(filename: str, mime_type: Optional[str] = None) -> str:
     """Ensure filename has proper extension based on MIME type."""
     if not filename:
         return 'recording.mp4'
@@ -147,7 +148,7 @@ def ensure_filename_extension(filename: str, mime_type: str = None) -> str:
     return filename + ext
 
 
-def download_meeting_recording(meeting: dict, output_dir: str,
+def download_meeting_recording(meeting: Dict, output_dir: str,
                                 script_dir: str, verbose: bool = False) -> bool:
     """Download Google Drive recording for a meeting."""
     # Import here to avoid circular dependency issues
@@ -211,7 +212,7 @@ def download_meeting_recording(meeting: dict, output_dir: str,
 # Process Launcher
 # =============================================================================
 
-def build_process_command(meeting: dict, config: dict, script_dir: str) -> list:
+def build_process_command(meeting: Dict, config: Dict, script_dir: str) -> List[str]:
     """Build command-line arguments for process_gmeet_recording.py."""
     process_script = os.path.join(script_dir, 'process_gmeet_recording.py')
 
@@ -254,7 +255,7 @@ def build_process_command(meeting: dict, config: dict, script_dir: str) -> list:
     return cmd
 
 
-def launch_processing_job(meeting: dict, config: dict, script_dir: str, verbose: bool = False) -> bool:
+def launch_processing_job(meeting: Dict, config: Dict, script_dir: str, verbose: bool = False) -> bool:
     """Launch process_gmeet_recording.py in background for a meeting."""
     cmd = build_process_command(meeting, config, script_dir)
 
@@ -280,7 +281,7 @@ def launch_processing_job(meeting: dict, config: dict, script_dir: str, verbose:
 # Main Logic
 # =============================================================================
 
-def process_pending_meetings(config: dict, verbose: bool = False, dry_run: bool = False,
+def process_pending_meetings(config: Dict, verbose: bool = False, dry_run: bool = False,
                              download_only: bool = False, output_dir: str = './downloads'):
     """Main processing loop."""
     backend_url = config['backend_url']
