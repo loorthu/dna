@@ -11,6 +11,7 @@ from playlist import router as playlist_router
 import random
 from email_service import router as email_router
 from llm_service import router as llm_router
+from meeting_service import router as meeting_router
 
 # Load environment variables from .env file (optional)
 try:
@@ -46,6 +47,7 @@ llm_backend_routing_enabled = bool(LLM_BACKEND_BASE_URL and LLM_BACKEND_BASE_URL
 app.include_router(playlist_router)
 app.include_router(email_router)
 app.include_router(llm_router)
+app.include_router(meeting_router, prefix="/api", tags=["meetings"])
 
 # Only register vexa router if VEXA is configured
 if vexa_routing_enabled:

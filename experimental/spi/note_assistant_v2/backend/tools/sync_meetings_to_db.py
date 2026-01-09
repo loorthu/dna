@@ -14,12 +14,12 @@ Usage:
 """
 
 import argparse
-import json
 import os
 import re
-import sqlite3
 import sys
-from datetime import datetime, timezone
+
+# Add parent directory to path for importing meeting_service
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import calendar functions from get_gcalendar_entries.py
 from get_gcalendar_entries import (
@@ -28,120 +28,16 @@ from get_gcalendar_entries import (
     get_meetings,
 )
 
-# Default database path
-DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'meetings.db')
-
-
-# =============================================================================
-# Database Functions
-# =============================================================================
-
-def init_db(db_path: str) -> sqlite3.Connection:
-    """Initialize database and create tables if not exists."""
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS meetings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT UNIQUE NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT,
-            start_time TEXT NOT NULL,
-            end_time TEXT NOT NULL,
-            duration_minutes INTEGER,
-            organizer_email TEXT,
-            organizer_name TEXT,
-            meet_link TEXT,
-            attendees TEXT,
-            recording_link TEXT,
-            recording_file_id TEXT,
-            recording_filename TEXT,
-            recording_mime_type TEXT,
-            sg_playlist_link TEXT,
-            status TEXT DEFAULT 'pending',
-            error_message TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            processed_at TEXT
-        )
-    ''')
-
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_status ON meetings(status)')
-    conn.execute('CREATE INDEX IF NOT EXISTS idx_start_time ON meetings(start_time)')
-    conn.commit()
-
-    return conn
-
-
-def meeting_exists(conn: sqlite3.Connection, event_id: str) -> bool:
-    """Check if meeting already exists in database."""
-    cursor = conn.execute('SELECT 1 FROM meetings WHERE event_id = ?', (event_id,))
-    return cursor.fetchone() is not None
-
-
-def insert_meeting(conn: sqlite3.Connection, meeting: dict, sg_playlist_link: str) -> bool:
-    """Insert a new meeting into the database. Returns True if inserted."""
-    if meeting_exists(conn, meeting['event_id']):
-        return False
-
-    conn.execute('''
-        INSERT INTO meetings (
-            event_id, title, description, start_time, end_time, duration_minutes,
-            organizer_email, organizer_name, meet_link, attendees,
-            recording_link, recording_file_id, recording_filename, recording_mime_type,
-            sg_playlist_link, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        meeting['event_id'],
-        meeting['title'],
-        meeting.get('description'),
-        meeting['start_time'],
-        meeting['end_time'],
-        meeting.get('duration_minutes'),
-        meeting.get('organizer_email'),
-        meeting.get('organizer_name'),
-        meeting.get('meet_link'),
-        json.dumps(meeting.get('attendees', [])),
-        meeting.get('recording_link'),
-        meeting.get('recording_file_id'),
-        meeting.get('recording_filename'),
-        meeting.get('recording_mime_type'),
-        sg_playlist_link,
-        'pending'
-    ))
-    conn.commit()
-    return True
-
-
-def get_pending_meetings(conn: sqlite3.Connection) -> list:
-    """Get all meetings with pending status."""
-    cursor = conn.execute('''
-        SELECT * FROM meetings WHERE status = 'pending' ORDER BY start_time
-    ''')
-    return [dict(row) for row in cursor.fetchall()]
-
-
-def update_meeting_status(conn: sqlite3.Connection, event_id: str, status: str,
-                          error_message: str = None) -> bool:
-    """Update meeting processing status."""
-    now = datetime.now(timezone.utc).isoformat()
-
-    if status == 'completed':
-        conn.execute('''
-            UPDATE meetings
-            SET status = ?, error_message = ?, updated_at = ?, processed_at = ?
-            WHERE event_id = ?
-        ''', (status, error_message, now, now, event_id))
-    else:
-        conn.execute('''
-            UPDATE meetings
-            SET status = ?, error_message = ?, updated_at = ?
-            WHERE event_id = ?
-        ''', (status, error_message, now, event_id))
-
-    conn.commit()
-    return conn.total_changes > 0
+# Import database functions from meeting_service
+from meeting_service import (
+    init_db,
+    get_connection,
+    meeting_exists,
+    insert_meeting,
+    update_meeting_status,
+    get_pending_meetings,
+    DEFAULT_DB_PATH
+)
 
 
 # =============================================================================
@@ -176,7 +72,7 @@ def extract_sg_playlist_link(text: str) -> str:
 # Main Sync Logic
 # =============================================================================
 
-def sync_meetings_to_db(conn: sqlite3.Connection, calendar_service, drive_service,
+def sync_meetings_to_db(conn, calendar_service, drive_service,
                         days: int = 0, verbose: bool = False) -> dict:
     """
     Sync finished meetings with recordings and SG links to database.
@@ -240,7 +136,7 @@ def sync_meetings_to_db(conn: sqlite3.Connection, calendar_service, drive_servic
 # CLI
 # =============================================================================
 
-def list_pending(conn: sqlite3.Connection):
+def list_pending(conn):
     """Print pending meetings."""
     meetings = get_pending_meetings(conn)
 
