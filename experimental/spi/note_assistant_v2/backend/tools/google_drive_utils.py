@@ -67,7 +67,8 @@ from googleapiclient.errors import HttpError
 SCOPES = [
     'https://www.googleapis.com/auth/drive.readonly',
     'https://www.googleapis.com/auth/drive.metadata.readonly',
-    'https://www.googleapis.com/auth/gmail.send'  # Added for email functionality
+    'https://www.googleapis.com/auth/gmail.send',  # Added for email functionality
+    'https://www.googleapis.com/auth/calendar.readonly'  # Added for calendar/meetings listing
 ]
 
 # Regular expressions for parsing Google Drive URLs
@@ -235,6 +236,65 @@ def get_file_metadata(file_id: str, credentials_path: str, token_path: str = 'to
     except Exception as e:
         print(f"Error getting file metadata: {e}")
         return None
+
+
+# Video mime types for recording detection
+VIDEO_MIME_TYPES = [
+    'video/mp4',
+    'video/webm',
+    'video/quicktime',
+    'video/x-msvideo',
+    'video/mpeg',
+    'video/3gpp',
+    'video/x-matroska',
+]
+
+
+def is_video_file(file_id: str, service=None, credentials_path: str = None, token_path: str = 'token.json') -> tuple:
+    """
+    Check if a Google Drive file is a video file.
+
+    Args:
+        file_id: Google Drive file ID
+        service: Optional Drive API service (if not provided, will create one)
+        credentials_path: Path to OAuth2 credentials (required if service not provided)
+        token_path: Path to OAuth2 token file
+
+    Returns:
+        Tuple of (is_video: bool, metadata: dict or None)
+        metadata contains: name, size, mimeType if successful
+
+    Example:
+        >>> is_video, meta = is_video_file("1a2b3c4d", credentials_path="client_secret.json")
+        >>> if is_video:
+        ...     print(f"Video: {meta['name']}")
+    """
+    try:
+        if service is None:
+            if credentials_path is None:
+                return False, None
+            service = get_drive_service_oauth(credentials_path, token_path)
+
+        metadata = service.files().get(
+            fileId=file_id,
+            fields='name,size,mimeType',
+            supportsAllDrives=True
+        ).execute()
+
+        mime_type = metadata.get('mimeType', '')
+        is_video = mime_type.startswith('video/') or mime_type in VIDEO_MIME_TYPES
+
+        return is_video, metadata
+
+    except HttpError as e:
+        if e.resp.status == 404:
+            print(f"Warning: File not found (ID: {file_id})")
+        elif e.resp.status == 403:
+            print(f"Warning: Permission denied (ID: {file_id})")
+        return False, None
+    except Exception as e:
+        print(f"Warning: Could not check file type: {e}")
+        return False, None
 
 
 def download_drive_file(
