@@ -16,6 +16,8 @@ from typing import Optional
 import sqlite3
 import json
 import os
+import sys
+import argparse
 from datetime import datetime, timezone
 
 # =============================================================================
@@ -322,3 +324,249 @@ async def update_status(event_id: str, request: UpdateStatusRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+# =============================================================================
+# Command Line Interface
+# =============================================================================
+
+def cmd_list(args):
+    """List meetings with optional filtering."""
+    conn = get_connection(args.db)
+
+    meetings, total = get_meetings(
+        conn,
+        status=args.status,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        limit=args.limit,
+        offset=args.offset
+    )
+
+    if not meetings:
+        print("No meetings found.")
+        conn.close()
+        return
+
+    print(f"\nFound {total} meeting(s) (showing {len(meetings)})\n")
+    print("=" * 120)
+
+    for m in meetings:
+        # Parse attendees JSON
+        attendees = []
+        if m.get('attendees'):
+            try:
+                attendees = json.loads(m['attendees'])
+            except json.JSONDecodeError:
+                pass
+
+        print(f"\n{m['title']}")
+        print(f"  Event ID:     {m['event_id']}")
+        print(f"  Start:        {m['start_time']}")
+        print(f"  Duration:     {m.get('duration_minutes', 0)} minutes")
+        print(f"  Status:       {m['status']}")
+        if m.get('error_message'):
+            print(f"  Error:        {m['error_message']}")
+        print(f"  Recording:    {m.get('recording_filename', 'N/A')}")
+        print(f"  SG Playlist:  {m.get('sg_playlist_link', 'N/A')}")
+        print(f"  Attendees:    {len(attendees)}")
+        print(f"  Created:      {m.get('created_at', 'N/A')}")
+        if m.get('processed_at'):
+            print(f"  Processed:    {m['processed_at']}")
+
+    print("=" * 120)
+    print(f"\nTotal: {total} meeting(s)")
+
+    conn.close()
+
+
+def cmd_show(args):
+    """Show details for a specific meeting."""
+    conn = get_connection(args.db)
+    meeting = get_meeting_by_event_id(conn, args.event_id)
+
+    if not meeting:
+        print(f"Meeting not found: {args.event_id}")
+        conn.close()
+        sys.exit(1)
+
+    # Parse attendees JSON
+    attendees = []
+    if meeting.get('attendees'):
+        try:
+            attendees = json.loads(meeting['attendees'])
+        except json.JSONDecodeError:
+            pass
+
+    print("\n" + "=" * 120)
+    print(f"Meeting: {meeting['title']}")
+    print("=" * 120)
+    print(f"Event ID:          {meeting['event_id']}")
+    print(f"Status:            {meeting['status']}")
+    print(f"Start Time:        {meeting['start_time']}")
+    print(f"End Time:          {meeting['end_time']}")
+    print(f"Duration:          {meeting.get('duration_minutes', 0)} minutes")
+    print(f"Organizer:         {meeting.get('organizer_name', 'N/A')} ({meeting.get('organizer_email', 'N/A')})")
+    print(f"Meet Link:         {meeting.get('meet_link', 'N/A')}")
+    print(f"\nRecording:")
+    print(f"  Filename:        {meeting.get('recording_filename', 'N/A')}")
+    print(f"  File ID:         {meeting.get('recording_file_id', 'N/A')}")
+    print(f"  MIME Type:       {meeting.get('recording_mime_type', 'N/A')}")
+    print(f"  Link:            {meeting.get('recording_link', 'N/A')}")
+    print(f"\nShotGrid:")
+    print(f"  Playlist Link:   {meeting.get('sg_playlist_link', 'N/A')}")
+
+    if attendees:
+        print(f"\nAttendees ({len(attendees)}):")
+        for a in attendees:
+            response = a.get('response', 'unknown')
+            print(f"  - {a.get('name', 'N/A')} ({a.get('email', 'N/A')}) - {response}")
+
+    if meeting.get('description'):
+        print(f"\nDescription:")
+        print(f"  {meeting['description'][:200]}{'...' if len(meeting['description']) > 200 else ''}")
+
+    print(f"\nTimestamps:")
+    print(f"  Created:         {meeting.get('created_at', 'N/A')}")
+    print(f"  Updated:         {meeting.get('updated_at', 'N/A')}")
+    print(f"  Processed:       {meeting.get('processed_at', 'N/A')}")
+
+    if meeting.get('error_message'):
+        print(f"\nError Message:")
+        print(f"  {meeting['error_message']}")
+
+    print("=" * 120 + "\n")
+
+    conn.close()
+
+
+def cmd_stats(args):
+    """Show database statistics."""
+    conn = get_connection(args.db)
+
+    # Count by status
+    print("\nMeeting Statistics")
+    print("=" * 60)
+
+    total = 0
+    for status in VALID_STATUSES:
+        cursor = conn.execute('SELECT COUNT(*) FROM meetings WHERE status = ?', (status,))
+        count = cursor.fetchone()[0]
+        print(f"  {status:12s}: {count:5d}")
+        total += count
+
+    print("-" * 60)
+    print(f"  {'Total':12s}: {total:5d}")
+
+    # Recent activity
+    print("\n" + "=" * 60)
+    print("Recent Activity (last 10)")
+    print("=" * 60)
+
+    cursor = conn.execute('''
+        SELECT title, status, start_time, updated_at
+        FROM meetings
+        ORDER BY updated_at DESC
+        LIMIT 10
+    ''')
+
+    for row in cursor.fetchall():
+        title = row[0][:40] + "..." if len(row[0]) > 40 else row[0]
+        print(f"  {row[1]:12s} | {row[2][:10]} | {title}")
+
+    print("=" * 60 + "\n")
+
+    conn.close()
+
+
+def cmd_update_status(args):
+    """Update meeting status."""
+    if args.status not in VALID_STATUSES:
+        print(f"Error: Invalid status. Must be one of: {', '.join(VALID_STATUSES)}")
+        sys.exit(1)
+
+    conn = get_connection(args.db)
+
+    if not meeting_exists(conn, args.event_id):
+        print(f"Meeting not found: {args.event_id}")
+        conn.close()
+        sys.exit(1)
+
+    success = update_meeting_status(conn, args.event_id, args.status, args.error_message)
+
+    if success:
+        print(f"✓ Updated {args.event_id} to status: {args.status}")
+    else:
+        print(f"✗ Failed to update {args.event_id}")
+
+    conn.close()
+
+
+def main():
+    """Command-line interface for querying meetings database."""
+    parser = argparse.ArgumentParser(
+        description='Query and manage meetings database',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # List all pending meetings
+  python meeting_service.py list --status pending
+
+  # Show details for a specific meeting
+  python meeting_service.py show EVENT_ID
+
+  # Show database statistics
+  python meeting_service.py stats
+
+  # Update meeting status
+  python meeting_service.py update-status EVENT_ID completed
+        '''
+    )
+
+    parser.add_argument('--db', default=DEFAULT_DB_PATH,
+                        help=f'Database path (default: {DEFAULT_DB_PATH})')
+
+    subparsers = parser.add_subparsers(dest='command', help='Command to execute')
+    subparsers.required = True
+
+    # List command
+    list_parser = subparsers.add_parser('list', help='List meetings')
+    list_parser.add_argument('--status', choices=list(VALID_STATUSES),
+                             help='Filter by status')
+    list_parser.add_argument('--start-date', help='Filter by start date (ISO format)')
+    list_parser.add_argument('--end-date', help='Filter by end date (ISO format)')
+    list_parser.add_argument('--limit', type=int, default=50,
+                             help='Maximum number of results (default: 50)')
+    list_parser.add_argument('--offset', type=int, default=0,
+                             help='Pagination offset (default: 0)')
+    list_parser.set_defaults(func=cmd_list)
+
+    # Show command
+    show_parser = subparsers.add_parser('show', help='Show meeting details')
+    show_parser.add_argument('event_id', help='Event ID of the meeting')
+    show_parser.set_defaults(func=cmd_show)
+
+    # Stats command
+    stats_parser = subparsers.add_parser('stats', help='Show database statistics')
+    stats_parser.set_defaults(func=cmd_stats)
+
+    # Update status command
+    update_parser = subparsers.add_parser('update-status', help='Update meeting status')
+    update_parser.add_argument('event_id', help='Event ID of the meeting')
+    update_parser.add_argument('status', choices=list(VALID_STATUSES),
+                                help='New status')
+    update_parser.add_argument('--error-message', help='Optional error message')
+    update_parser.set_defaults(func=cmd_update_status)
+
+    args = parser.parse_args()
+
+    # Initialize database if it doesn't exist
+    if not os.path.exists(args.db):
+        print(f"Database not found. Initializing: {args.db}")
+        init_db(args.db)
+
+    # Execute the command
+    args.func(args)
+
+
+if __name__ == '__main__':
+    main()
