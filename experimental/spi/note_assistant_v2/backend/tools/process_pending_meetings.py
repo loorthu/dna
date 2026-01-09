@@ -2,13 +2,19 @@
 """
 Automated Meeting Processing Launcher
 
-Fetches pending meetings from the API and launches process_gmeet_recording.py
-for each meeting in the background. Updates meeting status to "processing".
+Fetches pending meetings from the API and either:
+1. Downloads Google Meet recordings (--download-only mode)
+2. Launches process_gmeet_recording.py for each meeting (default mode)
 
 Usage:
-    python process_pending_meetings.py          # Process all pending meetings
-    python process_pending_meetings.py --verbose # Verbose output
-    python process_pending_meetings.py --dry-run # Show what would be done
+    # Download recordings only
+    python process_pending_meetings.py --download-only
+    python process_pending_meetings.py --download-only --output-dir /path/to/downloads
+
+    # Process all pending meetings
+    python process_pending_meetings.py
+    python process_pending_meetings.py --verbose
+    python process_pending_meetings.py --dry-run
 """
 
 import argparse
@@ -85,6 +91,123 @@ def update_meeting_status(backend_url: str, event_id: str, status: str, error_me
 
 
 # =============================================================================
+# Download Handler
+# =============================================================================
+
+def extract_meet_id(meet_link: str) -> str:
+    """Extract Google Meet ID from meet link.
+
+    Examples:
+        https://meet.google.com/abc-defg-hij -> abc-defg-hij
+        https://meet.google.com/lookup/abc123 -> lookup_abc123
+    """
+    if not meet_link:
+        return None
+
+    # Extract the last part of the URL path
+    parts = meet_link.rstrip('/').split('/')
+    if len(parts) >= 2:
+        meet_id = '-'.join(parts[-2:]) if 'lookup' in parts[-2] else parts[-1]
+        # Sanitize for directory name
+        return meet_id.replace('/', '_')
+
+    return None
+
+
+def get_extension_from_mime_type(mime_type: str) -> str:
+    """Get file extension from MIME type."""
+    mime_to_ext = {
+        'video/mp4': '.mp4',
+        'video/webm': '.webm',
+        'video/quicktime': '.mov',
+        'video/x-msvideo': '.avi',
+        'video/mpeg': '.mpeg',
+        'video/3gpp': '.3gp',
+        'video/x-matroska': '.mkv',
+    }
+    return mime_to_ext.get(mime_type, '.mp4')
+
+
+def ensure_filename_extension(filename: str, mime_type: str = None) -> str:
+    """Ensure filename has proper extension based on MIME type."""
+    if not filename:
+        return 'recording.mp4'
+
+    # Check if filename already has an extension
+    name, ext = os.path.splitext(filename)
+    if ext:
+        return filename
+
+    # No extension - add one based on MIME type
+    if mime_type:
+        ext = get_extension_from_mime_type(mime_type)
+    else:
+        ext = '.mp4'
+
+    return filename + ext
+
+
+def download_meeting_recording(meeting: dict, output_dir: str,
+                                script_dir: str, verbose: bool = False) -> bool:
+    """Download Google Drive recording for a meeting."""
+    # Import here to avoid circular dependency issues
+    sys.path.insert(0, script_dir)
+    from google_drive_utils import download_drive_file, parse_drive_url
+
+    # Extract file ID from recording link
+    file_id = meeting.get('recording_file_id')
+    if not file_id:
+        # Fallback: parse from recording_link
+        file_id = parse_drive_url(meeting.get('recording_link', ''))
+
+    if not file_id:
+        print(f"  ✗ No recording file ID found")
+        return False
+
+    # Extract Google Meet ID for directory name
+    meet_id = extract_meet_id(meeting.get('meet_link'))
+    if not meet_id:
+        # Fallback to event_id if no meet_link
+        meet_id = meeting['event_id']
+
+    # Get filename and ensure it has proper extension
+    filename = meeting.get('recording_filename', meet_id)
+    mime_type = meeting.get('recording_mime_type')
+    filename = ensure_filename_extension(filename, mime_type)
+
+    # Create output path: {output_dir}/{meet_id}/{recording_filename}
+    output_path = os.path.join(output_dir, meet_id, filename)
+
+    if verbose:
+        print(f"  Output file: {filename}")
+        print(f"  Full path: {output_path}")
+
+    # Create directory if needed
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Use default credential paths relative to script directory
+    credentials_path = os.path.join(script_dir, '../client_secret.json')
+    token_path = os.path.join(script_dir, '../token.json')
+
+    # Download file
+    try:
+        success = download_drive_file(
+            file_id,
+            output_path,
+            credentials_path,
+            token_path=token_path,
+            verbose=verbose
+        )
+        if verbose:
+            print(f"  Download result: {'success' if success else 'failed'}")
+        # Ensure we return explicit boolean
+        return bool(success)
+    except Exception as e:
+        print(f"  ✗ Download error: {e}")
+        return False
+
+
+# =============================================================================
 # Process Launcher
 # =============================================================================
 
@@ -157,7 +280,8 @@ def launch_processing_job(meeting: dict, config: dict, script_dir: str, verbose:
 # Main Logic
 # =============================================================================
 
-def process_pending_meetings(config: dict, verbose: bool = False, dry_run: bool = False):
+def process_pending_meetings(config: dict, verbose: bool = False, dry_run: bool = False,
+                             download_only: bool = False, output_dir: str = './downloads'):
     """Main processing loop."""
     backend_url = config['backend_url']
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -173,6 +297,7 @@ def process_pending_meetings(config: dict, verbose: bool = False, dry_run: bool 
     print(f"Found {len(meetings)} pending meeting(s)\n")
 
     launched = 0
+    downloaded = 0
     failed = 0
 
     for meeting in meetings:
@@ -180,39 +305,76 @@ def process_pending_meetings(config: dict, verbose: bool = False, dry_run: bool 
         event_id = meeting['event_id']
         recording = meeting['recording_filename']
         sg_link = meeting['sg_playlist_link']
+        meet_link = meeting.get('meet_link', '')
+
+        # Extract Google Meet ID for display
+        meet_id = extract_meet_id(meet_link)
+        display_id = meet_id if meet_id else event_id
 
         print(f"Processing: {title}")
-        print(f"  Event ID:     {event_id}")
+        print(f"  Meet ID:      {display_id}")
         print(f"  Recording:    {recording}")
         print(f"  SG Playlist:  {sg_link}")
 
         if dry_run:
-            cmd = build_process_command(meeting, config, script_dir)
-            print(f"  [DRY RUN] Would launch: {' '.join(cmd)}")
-            print(f"  [DRY RUN] Would update status to: processing\n")
+            if download_only:
+                print(f"  [DRY RUN] Would download to: {output_dir}/{display_id}/")
+                print(f"  [DRY RUN] Would update status to: downloaded\n")
+            else:
+                cmd = build_process_command(meeting, config, script_dir)
+                print(f"  [DRY RUN] Would launch: {' '.join(cmd)}")
+                print(f"  [DRY RUN] Would update status to: processing\n")
             continue
 
-        # Launch processing job
-        success = launch_processing_job(meeting, config, script_dir, verbose)
+        if download_only:
+            # Download mode
+            success = download_meeting_recording(meeting, output_dir, script_dir, verbose)
 
-        if success:
-            # Update status to "processing"
-            if update_meeting_status(backend_url, event_id, 'processing'):
-                print(f"  ✓ Launched and marked as processing\n")
-                launched += 1
+            if success is True:
+                # Update status to "downloaded"
+                if update_meeting_status(backend_url, event_id, 'downloaded'):
+                    print(f"  ✓ Downloaded and marked as downloaded\n")
+                    downloaded += 1
+                else:
+                    print(f"  ✗ Downloaded but failed to update status to 'downloaded'\n")
+                    failed += 1
             else:
-                print(f"  ✗ Launched but failed to update status\n")
+                # Download failed - update status to "failed"
+                if verbose:
+                    print(f"  Download returned failure, updating status to 'failed'")
+                if update_meeting_status(backend_url, event_id, 'failed',
+                                        error_message='Download failed'):
+                    print(f"  ✗ Download failed, marked as failed\n")
+                else:
+                    print(f"  ✗ Download failed and status update also failed\n")
                 failed += 1
         else:
-            print(f"  ✗ Failed to launch processing job\n")
-            failed += 1
+            # Processing mode (existing functionality)
+            success = launch_processing_job(meeting, config, script_dir, verbose)
+
+            if success:
+                # Update status to "processing"
+                if update_meeting_status(backend_url, event_id, 'processing'):
+                    print(f"  ✓ Launched and marked as processing\n")
+                    launched += 1
+                else:
+                    print(f"  ✗ Launched but failed to update status\n")
+                    failed += 1
+            else:
+                print(f"  ✗ Failed to launch processing job\n")
+                failed += 1
 
     # Summary
     print("=" * 80)
     print(f"Summary:")
-    print(f"  Launched:  {launched}")
-    print(f"  Failed:    {failed}")
-    print(f"  Total:     {len(meetings)}")
+    if download_only:
+        print(f"  Downloaded: {downloaded}")
+        print(f"  Failed:     {failed}")
+        print(f"  Total:      {len(meetings)}")
+    else:
+        print(f"  Launched:   {launched}")
+        print(f"  Failed:     {failed}")
+        print(f"  Total:      {len(meetings)}")
 
 
 # =============================================================================
@@ -228,6 +390,12 @@ def main():
     parser.add_argument('--dry-run', action='store_true',
                         help='Show what would be done without launching jobs')
 
+    # Download-only mode arguments
+    parser.add_argument('--download-only', action='store_true',
+                        help='Download recordings only (skip processing)')
+    parser.add_argument('--output-dir', default='./downloads',
+                        help='Output directory for downloads (default: ./downloads)')
+
     args = parser.parse_args()
 
     # Load configuration
@@ -240,7 +408,13 @@ def main():
         print()
 
     # Process pending meetings
-    process_pending_meetings(config, verbose=args.verbose, dry_run=args.dry_run)
+    process_pending_meetings(
+        config,
+        verbose=args.verbose,
+        dry_run=args.dry_run,
+        download_only=args.download_only,
+        output_dir=args.output_dir
+    )
 
 
 if __name__ == '__main__':

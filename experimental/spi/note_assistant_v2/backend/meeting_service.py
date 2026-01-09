@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 # =============================================================================
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), 'meetings.db')
-VALID_STATUSES = {'pending', 'processing', 'completed', 'failed', 'skipped'}
+VALID_STATUSES = {'pending', 'processing', 'completed', 'failed', 'skipped', 'downloaded'}
 
 # =============================================================================
 # Pydantic Models
