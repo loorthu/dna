@@ -120,6 +120,72 @@ SMTP_PASSWORD=your_smtp_password          # SMTP password (optional)
 SMTP_TLS=true                             # Enable TLS encryption
 ```
 
+### Google Meet Automation Configuration
+
+These variables configure the automated meeting discovery and processing pipeline (`sync_meetings_to_db.py`, `process_pending_meetings.py`). See [Tools Guide](TOOLS.md#automated-meeting-discovery-and-processing) for full usage.
+
+```bash
+# Version pattern for extracting version IDs from on-screen text
+# Use {project} as a placeholder replaced by the project name from the uploaded CSV
+# Examples:
+#   GMEET_VERSION_PATTERN=(\d{6})              # 6-digit numbers (e.g. 123456)
+#   GMEET_VERSION_PATTERN={project}-?(\d+)     # project prefix + digits
+GMEET_VERSION_PATTERN=(\d{6})
+
+# Whisper audio transcription model (tiny/base/small/medium/large)
+# medium gives good accuracy; use base for speed
+GMEET_AUDIO_MODEL=medium
+
+# How often to sample frames for version ID detection (seconds)
+GMEET_FRAME_INTERVAL=2.0
+
+# Number of frames processed per batch during visual detection
+GMEET_BATCH_SIZE=120
+
+# Seconds of discussion below which a version is treated as a brief reference (not a main topic)
+GMEET_REFERENCE_THRESHOLD=6
+
+# Run audio transcription and visual detection in parallel (true/false)
+GMEET_PARALLEL=true
+
+# LLM prompt style: 'short' for concise notes, 'detailed' for longer summaries
+GMEET_PROMPT_TYPE=short
+
+# Base URL for version thumbnail images in emails (optional)
+# {project} is replaced at runtime with the project name
+GMEET_THUMBNAIL_URL=http://thumbs.yourserver.com/images/{project}-
+
+# Subject line for automated result emails
+GMEET_EMAIL_SUBJECT=Dailies Review Data - Version Notes and Summaries
+
+# Only process the first N seconds of each recording (optional; omit to process the full video)
+# Useful for testing or quick previews
+# GMEET_DURATION=300
+
+# Local directory for caching downloaded Google Drive recordings
+# Relative paths are resolved from the backend directory
+GMEET_CACHE_DIR=./media
+
+# Keep intermediate CSV files for debugging (true/false)
+# When true, saves transcript.csv, visual.csv, gmeet_data.csv, combined_data.csv
+# under {output_dir}/{project}/{recording}/intermediate/
+GMEET_KEEP_INTERMEDIATE=false
+
+# Base URL of the running FastAPI backend (used by process_pending_meetings.py)
+# Defaults to http://localhost:8000 if not set
+LLM_BACKEND_BASE_URL=http://localhost:8000
+```
+
+**Google API authentication:**
+
+The automation tools use OAuth2 via `client_secret.json` in the backend directory. The token is cached in `token.json`. The required OAuth scopes are:
+
+- `https://www.googleapis.com/auth/calendar.readonly` — read Google Calendar events
+- `https://www.googleapis.com/auth/drive.readonly` — read Drive file metadata and download recordings
+- `https://www.googleapis.com/auth/gmail.send` — send result emails (existing scope)
+
+If you previously authenticated for Gmail only, delete `token.json` and re-run to add the Calendar and Drive scopes.
+
 ## LLM Configuration System
 
 The application uses a flexible YAML-based configuration system for LLM models and prompts.

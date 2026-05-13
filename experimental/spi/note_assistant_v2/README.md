@@ -14,6 +14,8 @@ The Dailies Note Assistant v2 is a full-stack application designed to streamline
 - **Email Service**: Gmail API or SMTP server integration for sending notes
 - **ShotGrid Integration**: Optional direct integration with ShotGrid for project and playlist management
 - **Real-time Transcription**: WebSocket-based live transcription
+- **Meeting Service**: SQLite-backed REST API (`/api/meetings`) for tracking Google Meet recording processing state
+- **Automated Pipeline**: Google Calendar discovery, download, and processing of review meeting recordings
 
 ## Features
 
@@ -25,6 +27,7 @@ The Dailies Note Assistant v2 is a full-stack application designed to streamline
 - 📊 **Export Functionality**: Download notes as CSV files or raw transcripts as TXT files
 - 🎯 **Pin/Focus System**: Pin specific shots to capture targeted transcriptions
 - 🎭 **Demo Mode**: Anonymize sensitive data for demonstrations and screenshots
+- 🔄 **Automated Pipeline**: Automatically discover meetings with recordings from Google Calendar, track processing state in SQLite, and launch batch processing jobs
 
 ## Quick Start
 
@@ -33,6 +36,7 @@ The Dailies Note Assistant v2 is a full-stack application designed to streamline
 - Python 3.9 or higher
 - Node.js 18 or higher
 - Google Cloud Project with Gmail API enabled (optional)
+- Google Calendar API and Drive API enabled (required for automated pipeline)
 - ShotGrid access with API credentials (optional)
 - API keys for desired LLM providers (optional)
 - Vexa.ai account or self-hosted instance for Google Meet transcription bot management
@@ -110,8 +114,9 @@ See [Installation Guide](docs/INSTALLATION.md) for detailed authentication steps
 For detailed setup, configuration, and usage instructions, see the [docs](docs/) directory:
 
 - **[Installation Guide](docs/INSTALLATION.md)** - Complete setup instructions
-- **[Configuration](docs/CONFIGURATION.md)** - Environment variables, LLM setup, demo mode
-- **[Integrations](docs/INTEGRATIONS.md)** - Vexa.ai, ShotGrid, LLM backend routing  
+- **[Configuration](docs/CONFIGURATION.md)** - Environment variables, LLM setup, demo mode, GMEET automation vars
+- **[Integrations](docs/INTEGRATIONS.md)** - Vexa.ai, ShotGrid, LLM backend routing
+- **[Tools Guide](docs/TOOLS.md)** - Manual pipeline tools and automated meeting processing pipeline
 - **[Usage Guide](docs/USAGE.md)** - Step-by-step application usage
 - **[Development](docs/DEVELOPMENT.md)** - Development setup and contributing
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions

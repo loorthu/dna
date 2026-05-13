@@ -1525,4 +1525,287 @@ python email_service.py EMAIL CSV [OPTIONS]
 
 ---
 
+## Automated Meeting Discovery and Processing
+
+### Overview
+
+The automated pipeline extends the manual `process_gmeet_recording.py` workflow so that new review meetings are detected and processed without manual intervention. It has three layers:
+
+1. **Discovery** — scan Google Calendar for meetings that have both a video recording and a ShotGrid playlist link
+2. **Tracking** — store discovered meetings in `meetings.db` (SQLite) with a processing status
+3. **Automation** — fetch `pending` meetings from the REST API and launch processing jobs (or just download recordings)
+
+```
+Google Calendar ──→ sync_meetings_to_db.py ──→ meetings.db ←── /api/meetings REST API
+                                                                        │
+                                                                        ↓
+                                                          process_pending_meetings.py
+                                                                        │
+                                                           ┌────────────┴─────────────┐
+                                                           ↓                          ↓
+                                                  --download-only           process_gmeet_recording.py
+                                                  (save recording to disk)  (full processing pipeline)
+```
+
+### Additional Setup
+
+Beyond the standard prerequisites, the automation pipeline requires:
+
+1. **Google Calendar API** and **Drive API** enabled in Google Cloud Console
+2. **`client_secret.json`** in the `backend/` directory with Calendar and Drive scopes (delete `token.json` to re-authenticate if you only had Gmail scopes)
+3. **Backend running** — `process_pending_meetings.py` calls the REST API, so start the FastAPI server first
+
+See [Configuration Guide](CONFIGURATION.md#google-meet-automation-configuration) for all `GMEET_*` environment variables.
+
+---
+
+### 1. Discover Meetings: sync_meetings_to_db.py
+
+Scans Google Calendar for finished meetings that have a video recording attached and a ShotGrid playlist link in the event description, then inserts them into `meetings.db` with status `pending`.
+
+**Usage:**
+```bash
+cd experimental/spi/note_assistant_v2/backend/tools
+
+# Sync meetings from today
+python sync_meetings_to_db.py
+
+# Include yesterday and today
+python sync_meetings_to_db.py --days 1
+
+# Verbose output
+python sync_meetings_to_db.py --verbose
+
+# List all pending meetings in the database
+python sync_meetings_to_db.py --list-pending
+
+# Manually update a meeting's status
+python sync_meetings_to_db.py --update-status EVENT_ID completed
+```
+
+**What qualifies a meeting:**
+- The calendar event has a `meet.google.com` link
+- A Google Drive video file is attached (checked via MIME type)
+- A ShotGrid playlist URL (`#Playlist_XXXXXX` pattern) appears in the event description
+
+**Example verbose output:**
+```
+Scanning calendar for 1 day(s)...
+Found 3 meetings, checking for recordings...
+  ✓ Synced: "Dailies Review - PROJ" (2026-01-09)
+  - Skipped (no recording): "Team Standup"
+  - Skipped (no SG link): "Daily Sync"
+Summary: synced=1 skipped=1 no_sg_link=1 no_recording=0 errors=0
+```
+
+---
+
+### 2. Download Recordings: process_pending_meetings.py --download-only
+
+Downloads Google Drive recordings for all `pending` meetings, organized by Google Meet ID, without running the full processing pipeline.
+
+**Usage:**
+```bash
+# Download to the default cache dir (GMEET_CACHE_DIR from .env)
+python process_pending_meetings.py --download-only
+
+# Download to a specific directory
+python process_pending_meetings.py --download-only --output-dir /path/to/downloads
+
+# Verbose output
+python process_pending_meetings.py --download-only --verbose
+
+# Dry run — show what would be downloaded without making changes
+python process_pending_meetings.py --download-only --dry-run
+```
+
+**Download directory structure:**
+```
+{output_dir}/
+└── {meet_id}/
+    └── {recording_filename}.mp4
+```
+
+**Status transitions:** `pending` → `downloaded` (success) or `failed` (error)
+
+---
+
+### 3. Process Pending Meetings: process_pending_meetings.py
+
+Fetches all `pending` meetings from the API and launches `process_gmeet_recording.py` for each one using the `GMEET_*` env vars from `.env`.
+
+**Usage:**
+```bash
+# Process all pending meetings
+python process_pending_meetings.py
+
+# Verbose output
+python process_pending_meetings.py --verbose
+
+# Dry run — show what would be processed without launching jobs
+python process_pending_meetings.py --dry-run
+```
+
+**For each meeting it:**
+1. Fetches `pending` meetings from `GET /api/meetings?status=pending`
+2. Sets status to `processing` via `PUT /api/meetings/{event_id}/status`
+3. Launches `process_gmeet_recording.py` in the background with all config from `GMEET_*` env vars
+4. Updates status to `completed` or `failed` when the job exits
+
+No additional arguments are needed — all pipeline settings are read from `.env`.
+
+**Status transitions:** `pending` → `processing` → `completed` or `failed`
+
+---
+
+### 4. Inspect the Database: meeting_service.py (CLI)
+
+`meeting_service.py` doubles as a CLI for querying and managing `meetings.db` directly.
+
+**List meetings:**
+```bash
+# All meetings (newest first, up to 50)
+python meeting_service.py list
+
+# Filter by status
+python meeting_service.py list --status pending
+python meeting_service.py list --status failed
+
+# Filter by date range
+python meeting_service.py list --start-date 2026-01-01 --end-date 2026-01-31
+
+# Pagination
+python meeting_service.py list --limit 20 --offset 40
+```
+
+**Show full details for a specific meeting:**
+```bash
+python meeting_service.py show EVENT_ID
+```
+Displays: organizer, attendees with RSVP status, recording filename/file ID/link, ShotGrid playlist link, all timestamps, and any error messages.
+
+**Database statistics:**
+```bash
+python meeting_service.py stats
+```
+Shows counts by status and the 10 most recently updated meetings.
+
+**Manually update status:**
+```bash
+python meeting_service.py update-status EVENT_ID completed
+python meeting_service.py update-status EVENT_ID failed --error-message "No recording found"
+python meeting_service.py update-status EVENT_ID pending   # Reset for reprocessing
+```
+
+Valid statuses: `pending`, `processing`, `downloaded`, `completed`, `failed`, `skipped`
+
+**Use a different database file:**
+```bash
+python meeting_service.py --db /path/to/other.db list
+```
+
+---
+
+### 5. Meeting Service REST API
+
+The `/api/meetings` router is registered in `main.py` and available when the backend is running.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/meetings` | List meetings (filterable, paginated) |
+| `GET` | `/api/meetings/{event_id}` | Get a specific meeting |
+| `PUT` | `/api/meetings/{event_id}/status` | Update processing status |
+
+**Query parameters for `GET /api/meetings`:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `status` | string | Filter by status (e.g. `pending`) |
+| `start_date` | ISO date | Filter meetings starting on or after this date |
+| `end_date` | ISO date | Filter meetings starting on or before this date |
+| `limit` | int | Max results (default: 50) |
+| `offset` | int | Pagination offset (default: 0) |
+
+**Examples:**
+```bash
+# List pending meetings
+curl "http://localhost:8000/api/meetings?status=pending"
+
+# Get details for a meeting
+curl "http://localhost:8000/api/meetings/EVENT_ID"
+
+# Update status
+curl -X PUT "http://localhost:8000/api/meetings/EVENT_ID/status" \
+     -H "Content-Type: application/json" \
+     -d '{"status": "completed"}'
+
+# Mark failed with reason
+curl -X PUT "http://localhost:8000/api/meetings/EVENT_ID/status" \
+     -H "Content-Type: application/json" \
+     -d '{"status": "failed", "error_message": "Recording not accessible"}'
+```
+
+---
+
+### Typical Automated Workflow
+
+**Daily routine (run after each review session):**
+
+```bash
+cd experimental/spi/note_assistant_v2/backend/tools
+
+# Step 1: Discover new meetings from Google Calendar
+python sync_meetings_to_db.py --verbose
+
+# Step 2a: Download recordings only (review before processing)
+python process_pending_meetings.py --download-only --verbose
+
+# Step 2b: OR run the full processing pipeline for all pending meetings
+python process_pending_meetings.py --verbose
+
+# Check results
+python meeting_service.py stats
+python meeting_service.py list --status failed
+```
+
+**Reset and reprocess a failed meeting:**
+```bash
+# Inspect what went wrong
+python meeting_service.py show EVENT_ID
+
+# Reset to pending
+python meeting_service.py update-status EVENT_ID pending
+
+# Reprocess
+python process_pending_meetings.py --verbose
+```
+
+---
+
+### Troubleshooting: Automated Pipeline
+
+**"Error fetching pending meetings: Connection refused"**
+
+The backend API is not running. Start it first:
+```bash
+cd experimental/spi/note_assistant_v2/backend
+python -m uvicorn main:main --reload --port 8000
+```
+
+**"FileNotFoundError: OAuth2 credentials not found at: client_secret.json"**
+
+`client_secret.json` is missing from the backend directory. Download it from Google Cloud Console (APIs & Services → Credentials → OAuth 2.0 Client IDs).
+
+**"google.auth.exceptions.RefreshError" or missing Calendar scope**
+
+Delete `token.json` (in both `backend/` and `backend/tools/` if present) and re-run. The browser will prompt for re-authentication with the updated scopes.
+
+**sync_meetings_to_db.py finds 0 meetings**
+
+- Confirm the Google Calendar API is enabled in Google Cloud Console
+- Check that the meeting event has a Drive video file as an attachment (not just a link in the description)
+- Verify the event description contains a ShotGrid playlist URL (e.g., `https://studio.shotgrid.autodesk.com/page/12345#Playlist_67890`)
+
+---
+
 **End of User Guide**
