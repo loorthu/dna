@@ -19,6 +19,7 @@ SG_API_KEY = os.environ.get("SG_API_KEY")
 # Configurable field names for version and shot
 SG_PLAYLIST_VERSION_FIELD = os.environ.get("SG_PLAYLIST_VERSION_FIELD", "version")
 SG_PLAYLIST_SHOT_FIELD = os.environ.get("SG_PLAYLIST_SHOT_FIELD", "shot")
+SG_PLAYLIST_NOTES_FIELD = os.environ.get("SG_PLAYLIST_NOTES_FIELD", "")
 SG_PLAYLIST_TYPE_FILTER = os.environ.get("SG_PLAYLIST_TYPE_FILTER", "")
 SG_PLAYLIST_TYPE_LIST = [t.strip() for t in SG_PLAYLIST_TYPE_FILTER.split(",") if t.strip()]
 # Demo mode configuration
@@ -232,11 +233,11 @@ def fetch_playlist_to_csv(playlist_id: int, output_path: str) -> str:
     if not version_ids:
         raise ValueError(f"Playlist '{playlist_name}' has no versions")
 
-    versions = sg.find(
-        "Version",
-        [["id", "in", version_ids]],
-        ["id", SG_PLAYLIST_VERSION_FIELD, SG_PLAYLIST_SHOT_FIELD],
-    )
+    version_fields = ["id", SG_PLAYLIST_VERSION_FIELD, SG_PLAYLIST_SHOT_FIELD]
+    if SG_PLAYLIST_NOTES_FIELD:
+        version_fields.append(SG_PLAYLIST_NOTES_FIELD)
+
+    versions = sg.find("Version", [["id", "in", version_ids]], version_fields)
 
     id_to_version = {v["id"]: v for v in versions}
     ordered = [id_to_version[vid] for vid in version_ids if vid in id_to_version]
@@ -245,10 +246,15 @@ def fetch_playlist_to_csv(playlist_id: int, output_path: str) -> str:
         writer = csv.DictWriter(f, fieldnames=["shot", "jts", "notes"])
         writer.writeheader()
         for v in ordered:
+            raw_notes = v.get(SG_PLAYLIST_NOTES_FIELD, "") if SG_PLAYLIST_NOTES_FIELD else ""
+            if isinstance(raw_notes, list):
+                notes = "\n".join(n.get("name", "") for n in raw_notes if n.get("name"))
+            else:
+                notes = raw_notes or ""
             writer.writerow({
                 "shot": v.get(SG_PLAYLIST_SHOT_FIELD) or "",
                 "jts": v.get(SG_PLAYLIST_VERSION_FIELD) or "",
-                "notes": "",
+                "notes": notes,
             })
 
     return playlist_name
