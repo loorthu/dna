@@ -697,3 +697,69 @@ def cache_recording(
     except Exception as e:
         print(f"Error: Unexpected error caching file: {e}")
         return None
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Google Drive utilities — auth, download, and file inspection"
+    )
+    parser.add_argument(
+        "--credentials", default="client_secret.json",
+        help="Path to OAuth2 client credentials JSON (default: client_secret.json)"
+    )
+    parser.add_argument(
+        "--token", default="token.json",
+        help="Path to OAuth2 token file (default: token.json)"
+    )
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    # auth: refresh / create token
+    subparsers.add_parser("auth", help="Authenticate with Google and save/refresh token.json")
+
+    # info: print metadata for a Drive file
+    info_parser = subparsers.add_parser("info", help="Print metadata for a Google Drive file")
+    info_parser.add_argument("url_or_id", help="Google Drive URL or file ID")
+
+    # download: download a Drive file to a local path
+    dl_parser = subparsers.add_parser("download", help="Download a Google Drive file")
+    dl_parser.add_argument("url_or_id", help="Google Drive URL or file ID")
+    dl_parser.add_argument("output", help="Local output path")
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        raise SystemExit(0)
+
+    # Resolve credentials path relative to this script's directory
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    credentials = args.credentials if os.path.isabs(args.credentials) else \
+        os.path.join(script_dir, "..", args.credentials)
+
+    if args.command == "auth":
+        print("Authenticating with Google...")
+        get_drive_service_oauth(credentials, args.token)
+        print(f"Auth complete. Token saved to: {args.token}")
+
+    elif args.command == "info":
+        file_id = parse_drive_url(args.url_or_id)
+        if not file_id:
+            print(f"Error: Could not extract file ID from: {args.url_or_id}")
+            raise SystemExit(1)
+        metadata = get_file_metadata(file_id, credentials, args.token)
+        if metadata:
+            import json
+            print(json.dumps(metadata, indent=2))
+        else:
+            raise SystemExit(1)
+
+    elif args.command == "download":
+        file_id = parse_drive_url(args.url_or_id)
+        if not file_id:
+            print(f"Error: Could not extract file ID from: {args.url_or_id}")
+            raise SystemExit(1)
+        success = download_drive_file(file_id, args.output, credentials, verbose=True)
+        raise SystemExit(0 if success else 1)
