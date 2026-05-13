@@ -492,17 +492,21 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
     recording_dir = None
     intermediate_dir = None
 
+    # Resolve credentials and token paths once, anchored to the backend directory so they
+    # are CWD-independent regardless of where the pipeline script is launched from.
+    if file_id:
+        if drive_credentials is None:
+            drive_credentials = os.path.join(os.path.dirname(__file__), '..', 'client_secret.json')
+        drive_credentials = os.path.abspath(drive_credentials)
+        drive_token = os.path.join(os.path.dirname(drive_credentials), 'token.json')
+
     # Check cache before downloading (if output_dir and project provided)
     if file_id and output_dir:
         if verbose:
             print(f"Detected Google Drive file ID: {file_id}")
 
-        # Set default credentials path if not provided (OAuth2 in parent directory)
-        if drive_credentials is None:
-            drive_credentials = os.path.join(os.path.dirname(__file__), '..', 'client_secret.json')
-
         # Get original filename from Google Drive metadata
-        metadata = get_file_metadata(file_id, drive_credentials)
+        metadata = get_file_metadata(file_id, drive_credentials, drive_token)
         if metadata:
             original_filename = metadata['name']
             file_size = metadata.get('size', 0)
@@ -551,10 +555,6 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
         if verbose:
             print(f"Detected Google Drive file ID: {file_id}")
 
-        # Set default credentials path if not provided (OAuth2 in parent directory)
-        if drive_credentials is None:
-            drive_credentials = os.path.join(os.path.dirname(__file__), '..', 'client_secret.json')
-
         # Create temp directory for download
         temp_video_dir = tempfile.mkdtemp(prefix="google_drive_download_")
         temp_video_path = os.path.join(temp_video_dir, "video.mp4")
@@ -564,7 +564,8 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
                 print(f"Downloading from Google Drive to: {temp_video_path}")
 
             download_start = time.time()
-            success = download_drive_file(file_id, temp_video_path, drive_credentials, verbose)
+            success = download_drive_file(file_id, temp_video_path, drive_credentials, verbose,
+                                          token_path=drive_token)
             timing['download'] = time.time() - download_start
 
             if not success:
