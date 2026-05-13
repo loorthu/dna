@@ -537,6 +537,15 @@ def extract_google_meet_data(video_path: str, version_pattern: str, output_csv: 
                 if verbose:
                     print(f"Force download enabled. Bypassing cache...")
 
+    elif not file_id and output_dir and project:
+        # Local file with organized output — derive recording_dir from the filename
+        from google_drive_utils import sanitize_filename
+        local_name = os.path.splitext(os.path.basename(video_path))[0]
+        recording_dir = os.path.join(output_dir, project, sanitize_filename(local_name))
+        os.makedirs(recording_dir, exist_ok=True)
+        if verbose:
+            print(f"Recording directory: {recording_dir}")
+
     if file_id and not skip_download:
         # Download from Google Drive
         if verbose:
