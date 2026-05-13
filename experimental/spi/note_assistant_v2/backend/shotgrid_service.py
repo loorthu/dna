@@ -183,6 +183,77 @@ def get_playlist_shot_names(playlist_id):
         "playlist_name": playlist_name
     }
 
+def parse_sg_playlist_url(url_or_id: str):
+    """
+    Extract the numeric playlist ID from a ShotGrid URL or a plain integer string.
+
+    Supports:
+        https://studio.shotgrid.autodesk.com/page/12345#Playlist_435694
+        https://studio.shotgunstudio.com/page/12345#Playlist_435694
+        435694  (plain integer string)
+
+    Returns int playlist ID, or None if not parseable.
+    """
+    s = str(url_or_id).strip()
+    if s.isdigit():
+        return int(s)
+    m = re.search(r'#Playlist_(\d+)', s)
+    if m:
+        return int(m.group(1))
+    m = re.search(r'/playlist/(\d+)', s, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def fetch_playlist_to_csv(playlist_id: int, output_path: str) -> str:
+    """
+    Fetch a ShotGrid playlist and write a CSV with shot/jts/notes columns.
+
+    Preserves the playlist's display order. Returns the playlist name.
+    Raises RuntimeError / ValueError on configuration or API failures.
+    """
+    import csv
+
+    if not SG_URL or not SG_SCRIPT_NAME or not SG_API_KEY:
+        raise RuntimeError(
+            "ShotGrid credentials not configured (SG_URL, SG_SCRIPT_NAME, SG_API_KEY)"
+        )
+
+    sg = Shotgun(SG_URL, SG_SCRIPT_NAME, SG_API_KEY)
+    playlist = sg.find_one("Playlist", [["id", "is", playlist_id]], ["versions", "code"])
+
+    if not playlist:
+        raise ValueError(f"Playlist {playlist_id} not found in ShotGrid")
+
+    playlist_name = playlist.get("code") or str(playlist_id)
+    version_ids = [v["id"] for v in (playlist.get("versions") or []) if v.get("id")]
+
+    if not version_ids:
+        raise ValueError(f"Playlist '{playlist_name}' has no versions")
+
+    versions = sg.find(
+        "Version",
+        [["id", "in", version_ids]],
+        ["id", SG_PLAYLIST_VERSION_FIELD, SG_PLAYLIST_SHOT_FIELD],
+    )
+
+    id_to_version = {v["id"]: v for v in versions}
+    ordered = [id_to_version[vid] for vid in version_ids if vid in id_to_version]
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["shot", "jts", "notes"])
+        writer.writeheader()
+        for v in ordered:
+            writer.writerow({
+                "shot": v.get(SG_PLAYLIST_SHOT_FIELD) or "",
+                "jts": v.get(SG_PLAYLIST_VERSION_FIELD) or "",
+                "notes": "",
+            })
+
+    return playlist_name
+
+
 def validate_shot_version_input(input_value, project_id=None):
     """
     Validate shot/version input and return the proper shot/version format.

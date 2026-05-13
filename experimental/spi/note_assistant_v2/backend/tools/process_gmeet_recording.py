@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # Import from existing scripts
 from get_data_from_google_meet import extract_google_meet_data
+from shotgrid_service import parse_sg_playlist_url, fetch_playlist_to_csv
 from combine_data_from_gmeet_and_sg import (
     load_sg_data,
     load_transcript_data,
@@ -223,6 +224,24 @@ def main():
                 parser.error(f"{arg_name}: File not found: {csv_path}")
             if not os.path.isfile(csv_path):
                 parser.error(f"{arg_name}: Path is not a file: {csv_path}")
+
+    # Resolve ShotGrid playlist URL / numeric ID → temp CSV
+    sg_playlist_temp_dir = None
+    playlist_id = parse_sg_playlist_url(args.sg_playlist_csv)
+    if playlist_id is not None:
+        sg_playlist_temp_dir = tempfile.mkdtemp(prefix="sg_playlist_")
+        sg_csv_path = os.path.join(sg_playlist_temp_dir, "sg_playlist.csv")
+        print(f"Fetching ShotGrid playlist {playlist_id}...")
+        try:
+            playlist_name = fetch_playlist_to_csv(playlist_id, sg_csv_path)
+            row_count = sum(1 for _ in open(sg_csv_path)) - 1  # subtract header
+            print(f"Fetched playlist '{playlist_name}' ({row_count} versions) → {sg_csv_path}")
+            args.sg_playlist_csv = sg_csv_path
+        except Exception as e:
+            if sg_playlist_temp_dir and os.path.exists(sg_playlist_temp_dir):
+                shutil.rmtree(sg_playlist_temp_dir)
+            print(f"Error fetching ShotGrid playlist: {e}")
+            sys.exit(1)
 
     # Determine if output is directory or file
     output_is_dir = False
@@ -582,6 +601,9 @@ def main():
         # ===================================================================
         print("=== Cleanup ===")
 
+        if sg_playlist_temp_dir and os.path.exists(sg_playlist_temp_dir):
+            shutil.rmtree(sg_playlist_temp_dir)
+
         if not args.keep_intermediate:
             shutil.rmtree(temp_dir)
             print(f"Removed temporary files: {temp_dir}")
@@ -668,10 +690,14 @@ def main():
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
+        if sg_playlist_temp_dir and os.path.exists(sg_playlist_temp_dir):
+            shutil.rmtree(sg_playlist_temp_dir)
         cleanup_and_exit(temp_dir, "Processing interrupted")
     except Exception as e:
         import traceback
         traceback.print_exc()
+        if sg_playlist_temp_dir and os.path.exists(sg_playlist_temp_dir):
+            shutil.rmtree(sg_playlist_temp_dir)
         cleanup_and_exit(temp_dir, f"Unexpected error: {e}")
 
 
