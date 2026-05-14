@@ -162,20 +162,28 @@ def main():
                             "OR specific CSV file path (legacy mode). "
                             "Directory mode: final CSV → {output}/{project}/{basename}_processed.csv, "
                             "cached recordings → {output}/{project}/recordings/")
-    parser.add_argument("--prompt-type", default="short", help="LLM prompt type (default: short)")
-    parser.add_argument("--reference-threshold", type=int, default=30,
-                       help="Time threshold for reference detection (default: 30)")
-    parser.add_argument("--audio-model", default="base", help="Whisper model (default: base)")
-    parser.add_argument("--frame-interval", type=float, default=5.0,
-                       help="Frame extraction interval (default: 5.0)")
-    parser.add_argument("--batch-size", type=int, default=20,
-                       help="Number of frames to process in each batch for visual detection (default: 20)")
+    parser.add_argument("--prompt-type",
+                       default=os.environ.get("GMEET_PROMPT_TYPE", "short"),
+                       help="LLM prompt type (default: short, env: GMEET_PROMPT_TYPE)")
+    parser.add_argument("--reference-threshold", type=int,
+                       default=int(os.environ.get("GMEET_REFERENCE_THRESHOLD", 30)),
+                       help="Time threshold in seconds for reference detection (default: 30, env: GMEET_REFERENCE_THRESHOLD)")
+    parser.add_argument("--audio-model",
+                       default=os.environ.get("GMEET_AUDIO_MODEL", "base"),
+                       help="Whisper model (default: base, env: GMEET_AUDIO_MODEL)")
+    parser.add_argument("--frame-interval", type=float,
+                       default=float(os.environ.get("GMEET_FRAME_INTERVAL", 5.0)),
+                       help="Frame extraction interval (default: 5.0, env: GMEET_FRAME_INTERVAL)")
+    parser.add_argument("--batch-size", type=int,
+                       default=int(os.environ.get("GMEET_BATCH_SIZE", 20)),
+                       help="Number of frames to process in each batch for visual detection (default: 20, env: GMEET_BATCH_SIZE)")
     parser.add_argument("--start-time", type=float, default=0.0,
                        help="Video start offset in seconds (default: 0.0)")
     parser.add_argument("--duration", type=float, default=None,
                        help="Max video duration to process (default: None)")
     parser.add_argument("--parallel", action="store_true",
-                       help="Enable parallel audio+visual processing")
+                       default=os.environ.get("GMEET_PARALLEL", "").lower() == "true",
+                       help="Enable parallel audio+visual processing (env: GMEET_PARALLEL)")
     parser.add_argument("--drive-url", default=None,
                        help="Google Drive URL for video (optional - enables clickable timestamp links in email)")
     parser.add_argument("--thumbnail-url", default=None,
@@ -186,7 +194,8 @@ def main():
                        help="Custom email subject")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("--keep-intermediate", action="store_true",
-                       help="Keep intermediate CSV files for debugging")
+                       default=os.environ.get("GMEET_KEEP_INTERMEDIATE", "").lower() == "true",
+                       help="Keep intermediate CSV files for debugging (env: GMEET_KEEP_INTERMEDIATE)")
     parser.add_argument("--project", type=str, default=None,
                        help="Project name for organizing outputs (required when --output is a directory)")
     parser.add_argument("--force-download", action="store_true",
