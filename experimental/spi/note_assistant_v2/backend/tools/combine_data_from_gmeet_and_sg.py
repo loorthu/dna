@@ -229,8 +229,8 @@ def analyze_version_discussions(chronological_order: List[Dict], sg_data: Dict[s
                     current_discussion['end_time']
                 )
 
-                # If current discussion was brief (< threshold) and we have previous discussions
-                if current_duration < reference_threshold and len(discussions) > 0:
+                # If current discussion was brief (< threshold) and not in SG playlist and we have previous discussions
+                if current_duration < reference_threshold and len(discussions) > 0 and not current_discussion['is_sg_version']:
                     # Merge current discussion as reference to the previous main discussion
                     prev_main = discussions[-1]
                     # Only add to reference_versions if it's not the same version as the previous main
@@ -315,8 +315,8 @@ def analyze_version_discussions(chronological_order: List[Dict], sg_data: Dict[s
                 current_discussion['end_time']
             )
 
-            if current_duration < reference_threshold and len(discussions) > 0 and current_discussion['is_sg_version']:
-                # Final discussion was brief, merge it as reference to previous
+            if current_duration < reference_threshold and len(discussions) > 0 and not current_discussion['is_sg_version']:
+                # Final discussion was brief and not in SG playlist, merge it as reference to previous
                 prev_main = discussions[-1]
                 # Only add to reference_versions if it's not the same version as the previous main
                 existing_ref_ids = [v_id for v_id, _ in prev_main['reference_versions']]

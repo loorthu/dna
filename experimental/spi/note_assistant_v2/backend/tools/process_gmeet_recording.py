@@ -593,14 +593,15 @@ def main():
 
                 # Extract meeting metadata from gmeet_data.csv
                 meeting_metadata = None
-                if not args.combined_csv:
-                    # Only extract metadata if we have gmeet_csv (not when using --combined-csv)
-                    if args.gmeet_csv:
-                        # Using provided gmeet_csv
-                        meeting_metadata = extract_meeting_metadata(args.gmeet_csv, verbose=args.verbose)
-                    elif gmeet_csv and os.path.exists(gmeet_csv):
-                        # Using generated gmeet_csv
-                        meeting_metadata = extract_meeting_metadata(gmeet_csv, verbose=args.verbose)
+                if args.gmeet_csv:
+                    meeting_metadata = extract_meeting_metadata(args.gmeet_csv, verbose=args.verbose)
+                elif gmeet_csv and os.path.exists(gmeet_csv):
+                    meeting_metadata = extract_meeting_metadata(gmeet_csv, verbose=args.verbose)
+                elif args.combined_csv:
+                    # When skipping stages 1-2, look for gmeet_data.csv alongside the combined CSV
+                    candidate = os.path.join(os.path.dirname(args.combined_csv), 'gmeet_data.csv')
+                    if os.path.exists(candidate):
+                        meeting_metadata = extract_meeting_metadata(candidate, verbose=args.verbose)
 
                 # Prepare meeting info for email
                 participants = meeting_metadata['participants'] if meeting_metadata else None
