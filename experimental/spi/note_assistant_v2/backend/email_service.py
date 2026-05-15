@@ -303,7 +303,7 @@ def _md_to_html(text: str) -> str:
     return '\n'.join(html_parts)
 
 
-def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None, timeline_csv_path: str = None, subject: str = None, execution_time: str = None, timing_breakdown: dict = None, participants: list = None, meeting_duration: str = None, meeting_summary: str = None) -> bool:
+def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None, timeline_csv_path: str = None, subject: str = None, execution_time: str = None, timing_breakdown: dict = None, participants: list = None, meeting_duration: str = None, meeting_summary: str = None, recording_url: str = None, sg_playlist_url: str = None) -> bool:
     """
     Send email with CSV data including version number, LLM summary, SG notes, and first 500 characters from conversation.
 
@@ -390,6 +390,22 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
             <tr>
                 <td style="padding: 4px 12px 4px 0; font-weight: bold; vertical-align: top;">Meeting Duration:</td>
                 <td style="padding: 4px 0;">{html.escape(meeting_duration)}</td>
+            </tr>
+    '''
+
+        if recording_url:
+            html_content += f'''
+            <tr>
+                <td style="padding: 4px 12px 4px 0; font-weight: bold; vertical-align: top;">Recording:</td>
+                <td style="padding: 4px 0;"><a href="{html.escape(recording_url)}" target="_blank" style="color:#0066cc;">View Recording</a></td>
+            </tr>
+    '''
+
+        if sg_playlist_url:
+            html_content += f'''
+            <tr>
+                <td style="padding: 4px 12px 4px 0; font-weight: bold; vertical-align: top;">SG Playlist:</td>
+                <td style="padding: 4px 0;"><a href="{html.escape(sg_playlist_url)}" target="_blank" style="color:#0066cc;">View Playlist</a></td>
             </tr>
     '''
 

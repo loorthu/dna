@@ -235,6 +235,9 @@ def main():
             if not os.path.isfile(csv_path):
                 parser.error(f"{arg_name}: Path is not a file: {csv_path}")
 
+    # Save original inputs for display in email header
+    sg_input_original = args.sg_playlist_csv
+
     # Resolve ShotGrid playlist URL / numeric ID → temp CSV
     sg_playlist_temp_dir = None
     playlist_id = parse_sg_playlist_url(args.sg_playlist_csv)
@@ -623,7 +626,9 @@ def main():
                     timing_breakdown=timing,
                     participants=participants,
                     meeting_duration=meeting_duration,
-                    meeting_summary=meeting_summary_text
+                    meeting_summary=meeting_summary_text,
+                    recording_url=args.drive_url,
+                    sg_playlist_url=sg_input_original if sg_input_original.startswith('http') else None
                 )
                 if success:
                     print(f"Email sent successfully to {args.recipient_email}")
