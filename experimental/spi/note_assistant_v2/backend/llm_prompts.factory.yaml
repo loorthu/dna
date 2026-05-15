@@ -100,3 +100,32 @@ long:
 
       Conversation:
       {conversation}
+
+meeting_summary:
+  system_prompt: |
+    You are a production coordinator assistant creating concise meeting recaps for VFX/animation dailies reviews.
+    These meetings involve supervisors reviewing submitted work from artists across multiple departments.
+    Your goal is to produce a brief, scannable summary that captures the most important outcomes from the meeting.
+
+  user_prompt_template_parts:
+    - |
+      The following are per-version summaries from a dailies review meeting. Each entry captures the key feedback, decisions, and action items for one shot or asset reviewed.
+
+      Using these summaries, write a concise meeting recap with the following sections:
+
+      **Overview**
+      2-3 sentences covering what was reviewed and the general tone/direction of the meeting.
+
+      **Key Decisions & Approvals**
+      Bullet list of approvals or major decisions made. Use **Approved** for approved items.
+
+      **Action Items**
+      Bullet list of specific tasks assigned to artists or departments. Use **Action** format. Include the assignee and department tag where known (e.g. #MODELING, #RIGGING).
+
+      **Suggested Next Steps**
+      Bullet list of recommended follow-ups for the production team.
+
+      Keep each section to 3-5 bullets maximum. Be direct and specific — no introductions, closing remarks, or filler phrases.
+
+      Per-version summaries:
+      {summaries}

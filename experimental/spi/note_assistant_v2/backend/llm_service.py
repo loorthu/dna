@@ -1052,6 +1052,99 @@ async def process_past_recording(
         "shots_count": len(request.shotgrid_data)
     }
 
+# --- MEETING SUMMARY FUNCTION ---
+
+def generate_meeting_summary(summaries_text: str, provider: str = None, model: str = None) -> str:
+    """
+    Generate a meeting-level summary from concatenated per-shot summaries.
+
+    Uses the 'meeting_summary' prompt type which produces an overview, key decisions,
+    action items, and suggested next steps.
+
+    Args:
+        summaries_text: Concatenated per-shot LLM summaries
+        provider: LLM provider to use (optional, falls back to first available)
+        model: Specific model name to use (optional)
+
+    Returns:
+        Meeting summary string (markdown-formatted)
+    """
+    selected_client_key = None
+
+    if model:
+        if model in llm_clients:
+            selected_client_key = model
+        else:
+            for key, client_info in llm_clients.items():
+                if client_info['model'] == model:
+                    selected_client_key = key
+                    break
+
+    if not selected_client_key and provider:
+        for key in llm_clients.keys():
+            if llm_clients[key]['provider'] == provider:
+                selected_client_key = key
+                break
+
+    if not selected_client_key and llm_clients:
+        selected_client_key = list(llm_clients.keys())[0]
+
+    if not selected_client_key:
+        raise ValueError("No LLM clients available for meeting summary")
+
+    client_info = llm_clients[selected_client_key]
+    client = client_info['client']
+    model_name = client_info['model']
+    provider_name = client_info['provider']
+
+    config = get_model_config(provider_name, model_name, prompt_type='meeting_summary')
+    system_prompt = config['system_prompt']
+    user_prompt = config['user_prompt_template'].format(summaries=summaries_text)
+
+    if provider_name == 'openai':
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=config['temperature'],
+        )
+        return response.choices[0].message.content
+    elif provider_name == 'anthropic':
+        response = client.messages.create(
+            model=model_name,
+            max_tokens=config['max_tokens'],
+            temperature=config['temperature'],
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        return response.content[0].text
+    elif provider_name == 'ollama':
+        ollama_base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
+        response = client.post(
+            f"{ollama_base_url}/api/generate",
+            json={"model": model_name, "prompt": f"{system_prompt}\n\n{user_prompt}", "stream": False}
+        )
+        return response.json()["response"]
+    elif provider_name == 'google':
+        full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        response = client.generate_content(
+            full_prompt,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=config['max_tokens'],
+                temperature=config['temperature'],
+            )
+        )
+        if not response.candidates:
+            raise Exception("No response candidates returned from Gemini for meeting summary")
+        return response.candidates[0].content.parts[0].text
+    else:
+        raise ValueError(f"Unsupported provider: {provider_name}")
+
+
 # --- CSV PROCESSING FUNCTIONS ---
 
 def process_csv_with_llm_summaries(csv_path, output_path, provider=None, model=None, prompt_type="short", limit=None):

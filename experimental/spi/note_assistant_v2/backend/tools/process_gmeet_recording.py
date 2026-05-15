@@ -46,6 +46,7 @@ from combine_data_from_gmeet_and_sg import (
 )
 from llm_service import (
     process_csv_with_llm_summaries,
+    generate_meeting_summary,
     get_available_models_for_enabled_providers,
     llm_clients
 )
@@ -549,6 +550,38 @@ def main():
         print()
 
         # ===================================================================
+        # Stage 3b: Generate Meeting-Level Summary
+        # ===================================================================
+        meeting_summary_text = None
+        try:
+            import csv as _csv
+            per_shot_summaries = []
+            with open(args.output, 'r', encoding='utf-8') as f:
+                reader = _csv.DictReader(f)
+                for row in reader:
+                    vid = row.get('version_id', '').strip()
+                    summary = row.get('summary', '').strip()
+                    shot = row.get('shot', '').strip()
+                    if summary and summary.lower() not in ('nan', 'null', ''):
+                        label = f"[{vid}] {shot}" if shot else f"[{vid}]"
+                        per_shot_summaries.append(f"{label}\n{summary}")
+
+            if per_shot_summaries:
+                print("Generating meeting summary...")
+                summaries_block = "\n\n---\n\n".join(per_shot_summaries)
+                meeting_summary_text = generate_meeting_summary(
+                    summaries_block,
+                    provider=provider,
+                    model=args.model
+                )
+                print(f"  ✓ Meeting summary generated ({len(meeting_summary_text)} chars)")
+            else:
+                print("  No per-shot summaries available — skipping meeting summary")
+        except Exception as e:
+            print(f"  Warning: Could not generate meeting summary: {e}")
+        print()
+
+        # ===================================================================
         # Stage 4: Send Email (Optional)
         # ===================================================================
         if args.recipient_email:
@@ -588,7 +621,8 @@ def main():
                     execution_time=format_duration(total_time),
                     timing_breakdown=timing,
                     participants=participants,
-                    meeting_duration=meeting_duration
+                    meeting_duration=meeting_duration,
+                    meeting_summary=meeting_summary_text
                 )
                 if success:
                     print(f"Email sent successfully to {args.recipient_email}")

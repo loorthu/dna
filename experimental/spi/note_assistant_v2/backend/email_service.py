@@ -265,7 +265,45 @@ def send_email(to, subject, html_content, attachments=None):
     else:
         send_gmail_email(to, subject, html_content, attachments=attachments)
 
-def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None, timeline_csv_path: str = None, subject: str = None, execution_time: str = None, timing_breakdown: dict = None, participants: list = None, meeting_duration: str = None) -> bool:
+def _md_to_html(text: str) -> str:
+    """Convert a limited subset of markdown to HTML for email rendering."""
+    import re as _re
+    lines = text.split('\n')
+    html_parts = []
+    in_list = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith('- ') or stripped.startswith('* '):
+            if not in_list:
+                html_parts.append('<ul style="margin:6px 0 6px 18px;padding:0;">')
+                in_list = True
+            item = stripped[2:]
+            item = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', item)
+            item = _re.sub(r'#([A-Z_]+)', r'<span style="color:#1d4ed8;font-weight:bold;">#\1</span>', item)
+            html_parts.append(f'<li style="margin:3px 0;">{item}</li>')
+        else:
+            if in_list:
+                html_parts.append('</ul>')
+                in_list = False
+            if not stripped:
+                html_parts.append('<br>')
+            elif stripped.startswith('**') and stripped.endswith('**'):
+                heading = stripped.strip('*')
+                html_parts.append(f'<p style="margin:10px 0 4px 0;font-weight:bold;color:#1f2937;">{html.escape(heading)}</p>')
+            else:
+                line_html = _re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', stripped)
+                line_html = _re.sub(r'#([A-Z_]+)', r'<span style="color:#1d4ed8;font-weight:bold;">#\1</span>', line_html)
+                html_parts.append(f'<p style="margin:4px 0;">{line_html}</p>')
+
+    if in_list:
+        html_parts.append('</ul>')
+
+    return '\n'.join(html_parts)
+
+
+def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = None, thumbnail_url: str = None, timeline_csv_path: str = None, subject: str = None, execution_time: str = None, timing_breakdown: dict = None, participants: list = None, meeting_duration: str = None, meeting_summary: str = None) -> bool:
     """
     Send email with CSV data including version number, LLM summary, SG notes, and first 500 characters from conversation.
 
@@ -357,6 +395,19 @@ def send_csv_email(recipient_email: str, csv_file_path: str, drive_url: str = No
 
         html_content += '''
         </table>
+    '''
+
+        if meeting_summary:
+            html_content += '''
+        <hr style="margin: 14px 0; border: none; border-top: 1px solid #e5e7eb;">
+        <div style="font-size: 14px; color: #374151; line-height: 1.6;">
+    '''
+            html_content += _md_to_html(meeting_summary)
+            html_content += '''
+        </div>
+    '''
+
+        html_content += '''
     </div>
     '''
 
