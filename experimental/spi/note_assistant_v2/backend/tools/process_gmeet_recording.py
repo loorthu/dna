@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # Import from existing scripts
 from get_data_from_google_meet import extract_google_meet_data
-from shotgrid_service import parse_sg_playlist_url, fetch_playlist_to_csv
+from shotgrid_service import parse_sg_playlist_url, fetch_playlist_to_csv, load_show_mapping
 from combine_data_from_gmeet_and_sg import (
     load_sg_data,
     load_transcript_data,
@@ -51,7 +51,7 @@ from llm_service import (
     llm_clients
 )
 from email_service import send_csv_email
-from google_drive_utils import sanitize_filename
+from google_drive_utils import sanitize_filename, parse_drive_url, parse_drive_folder_id, copy_drive_file_to_folder
 
 
 def format_duration(seconds: float) -> str:
@@ -583,6 +583,38 @@ def main():
         except Exception as e:
             print(f"  Warning: Could not generate meeting summary: {e}")
         print()
+
+        # ===================================================================
+        # Stage 3c: Move Recording to Destination Folder (if configured)
+        # ===================================================================
+        recording_file_id = parse_drive_url(args.video_input) if args.video_input else None
+        if recording_file_id and args.project:
+            show_mapping = load_show_mapping()
+            destinations = show_mapping.get('drive_destinations', {})
+            show_code = args.project.upper()
+            destination_entry = next(
+                (v for k, v in destinations.items() if k.upper() == show_code),
+                None
+            )
+            if destination_entry:
+                folder_id = parse_drive_folder_id(destination_entry)
+                if folder_id:
+                    print("=== Stage 3c: Moving Recording to Destination Folder ===")
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    credentials_path = os.path.join(script_dir, '..', 'client_secret.json')
+                    token_path = os.path.join(script_dir, '..', 'token.json')
+                    ok = copy_drive_file_to_folder(
+                        file_id=recording_file_id,
+                        destination_folder_id=folder_id,
+                        credentials_path=credentials_path,
+                        token_path=token_path,
+                        verbose=args.verbose
+                    )
+                    if ok:
+                        print(f"✓ Recording copied to destination folder for show {show_code}")
+                    else:
+                        print("Warning: Recording copy failed")
+                    print()
 
         # ===================================================================
         # Stage 4: Send Email (Optional)

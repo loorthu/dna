@@ -1,0 +1,45 @@
+# Mapping between Google Calendar meeting titles and ShotGrid playlist name prefixes.
+#
+# Convention (no config entry needed when names already match):
+#   Calendar: "ZORR: Model Dailies [Virtual]"  →  strip suffix  →  "ZORR: Model Dailies"
+#   SG:       "ZORR: Model Dailies 05/19/26"   →  prefix match  →  found
+#
+# Use title_mappings when the calendar title differs from the SG playlist prefix.
+# $SHOW matches the show code (anything before the first colon) and is substituted
+# into the value side, so one entry covers all shows:
+#
+#   Calendar: "ZORR: Dailies [Virtual]"   →  strip  →  "ZORR: Dailies"
+#   key  "$SHOW: Dailies"  matches with $SHOW = "ZORR"
+#   value "$SHOW: Model Dailies"  →  "ZORR: Model Dailies"
+#   SG:       "ZORR: Model Dailies 05/19/26"   →  found
+#
+# The show code used to look up the SG project is always inferred from the first
+# word before the colon in the calendar title (e.g. "ZORR" from "ZORR: Dailies").
+
+default:
+  strip_suffixes:
+    - "[Virtual]"
+    - "(Virtual)"
+    - "- Virtual"
+    - "[Online]"
+    - "(Online)"
+
+# Key   = stripped calendar title pattern  ($SHOW = any show code)
+# Value = SG playlist name prefix pattern  ($SHOW = same captured show code)
+# Only add entries where the calendar title and SG playlist prefix differ.
+title_mappings:
+  "$SHOW: Dailies": "$SHOW: Model Dailies"
+
+# Google Drive folder destinations per show code.
+# After pipeline processing completes, the recording is moved to the specified
+# folder. The timestamp links in the email/CSV will use the recording's Drive URL
+# (the file ID never changes on a move, so existing links remain valid).
+#
+# Keys are show codes as they appear before the first colon in the calendar title
+# (case-insensitive). Values are Drive folder URLs or raw folder IDs.
+#
+# Example:
+#   "ZORR": "https://drive.google.com/drive/folders/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+#   "OTHR": "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+drive_destinations:
+   "ZORR": "https://drive.google.com/drive/folders/1k-SBbrrPJcWN1VaMc9qrR7F1db10_-Mw"

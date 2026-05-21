@@ -65,10 +65,9 @@ from googleapiclient.errors import HttpError
 # Google Drive API configuration
 # Include both regular Drive and Shared Drives (Team Drives) access
 SCOPES = [
-    'https://www.googleapis.com/auth/drive.readonly',
-    'https://www.googleapis.com/auth/drive.metadata.readonly',
-    'https://www.googleapis.com/auth/gmail.send',  # Added for email functionality
-    'https://www.googleapis.com/auth/calendar.readonly'  # Added for calendar/meetings listing
+    'https://www.googleapis.com/auth/drive',  # Full Drive access (includes move/rename)
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/calendar.readonly'
 ]
 
 # Regular expressions for parsing Google Drive URLs
@@ -697,6 +696,87 @@ def cache_recording(
     except Exception as e:
         print(f"Error: Unexpected error caching file: {e}")
         return None
+
+
+def parse_drive_folder_id(input_str: str) -> Optional[str]:
+    """
+    Extract a Google Drive folder ID from a folder URL or raw ID string.
+
+    Args:
+        input_str: Drive folder URL or raw folder ID
+
+    Returns:
+        Folder ID string, or None if input is unrecognizable
+
+    Examples:
+        >>> parse_drive_folder_id("https://drive.google.com/drive/folders/1abc...")
+        '1abc...'
+        >>> parse_drive_folder_id("1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms")
+        '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms'
+    """
+    if not input_str:
+        return None
+    m = re.search(r'/folders/([a-zA-Z0-9_-]+)', input_str)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r'[a-zA-Z0-9_-]{25,}', input_str.strip()):
+        return input_str.strip()
+    return None
+
+
+def copy_drive_file_to_folder(
+    file_id: str,
+    destination_folder_id: str,
+    service=None,
+    credentials_path: str = None,
+    token_path: str = 'token.json',
+    verbose: bool = False
+) -> bool:
+    """
+    Copy a Google Drive file into a destination folder.
+
+    The original file is left untouched. Requires the 'drive' OAuth scope.
+
+    Args:
+        file_id: Google Drive file ID to copy
+        destination_folder_id: Target folder ID
+        service: Optional pre-built Drive API service
+        credentials_path: Path to OAuth2 credentials (required if service is None)
+        token_path: Path to OAuth2 token file
+        verbose: Print progress information
+
+    Returns:
+        True if the copy succeeded, False otherwise
+    """
+    try:
+        if service is None:
+            if credentials_path is None:
+                raise ValueError("Either service or credentials_path must be provided")
+            service = get_drive_service_oauth(credentials_path, token_path)
+
+        file_meta = service.files().get(
+            fileId=file_id,
+            fields='name',
+            supportsAllDrives=True
+        ).execute()
+
+        copy_result = service.files().copy(
+            fileId=file_id,
+            body={'name': file_meta.get('name', ''), 'parents': [destination_folder_id]},
+            supportsAllDrives=True,
+            fields='id'
+        ).execute()
+
+        if verbose:
+            print(f"  Copied to folder: {destination_folder_id} (copy id: {copy_result['id']})")
+        return True
+
+    except HttpError as e:
+        print(f"Warning: Could not copy recording to destination folder: {e}")
+        return False
+    except Exception as e:
+        print(f"Warning: Could not copy recording to destination folder: {e}")
+        return False
 
 
 if __name__ == "__main__":

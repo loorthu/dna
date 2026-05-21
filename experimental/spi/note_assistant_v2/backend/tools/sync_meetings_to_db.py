@@ -17,8 +17,9 @@ import argparse
 import os
 import re
 import sys
+from datetime import datetime
 
-# Add parent directory to path for importing meeting_service
+# Add parent directory to path for importing meeting_service and shotgrid_service
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import calendar functions from get_gcalendar_entries.py
@@ -38,6 +39,8 @@ from meeting_service import (
     get_pending_meetings,
     DEFAULT_DB_PATH
 )
+
+from shotgrid_service import find_playlist_for_meeting, load_show_mapping
 
 
 # =============================================================================
@@ -72,13 +75,31 @@ def extract_sg_playlist_link(text: str) -> str:
 # Main Sync Logic
 # =============================================================================
 
+def _resolve_meeting_date(start_time: str) -> datetime:
+    """Parse meeting start_time ISO string to a datetime object."""
+    return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+
+
+def _pipeline_command(meeting: dict, sg_playlist_link: str) -> str:
+    """Build the run_pipeline.sh command for a synced meeting."""
+    project = meeting['title'].split(':')[0].strip().lower()
+    return (
+        f"./run_pipeline.sh"
+        f" \"{meeting['recording_link']}\""
+        f" \"{sg_playlist_link}\""
+        f" --project {project}"
+    )
+
+
 def sync_meetings_to_db(conn, calendar_service, drive_service,
                         days: int = 0, verbose: bool = False) -> dict:
     """
     Sync finished meetings with recordings and SG links to database.
     Returns dict with counts: {synced, skipped, no_sg_link, no_recording, errors}
+    Also includes 'pipeline_commands': list of run_pipeline.sh commands for newly synced meetings.
     """
-    stats = {'synced': 0, 'skipped': 0, 'no_sg_link': 0, 'no_recording': 0, 'errors': 0}
+    stats = {'synced': 0, 'skipped': 0, 'no_sg_link': 0, 'no_recording': 0, 'errors': 0,
+             'pipeline_commands': []}
 
     # Get finished meetings with Google Meet links
     meetings = get_meetings(
@@ -92,6 +113,8 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
     if verbose:
         print(f"Found {len(meetings)} finished Google Meet meeting(s)")
 
+    show_mapping = load_show_mapping()
+
     for meeting in meetings:
         title = meeting['title']
 
@@ -102,8 +125,27 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
                 print(f"  Skipping (already exists): {title}")
             continue
 
-        # Extract ShotGrid playlist link - REQUIRED
-        sg_playlist_link = extract_sg_playlist_link(meeting.get('description', ''))
+        # Resolve SG playlist link:
+        #   1. Name-convention match (calendar title + meeting date → SG playlist)
+        #   2. Fallback: ShotGrid URL pasted in the calendar event description
+        sg_playlist_link = None
+        source = None
+        start_time = meeting.get('start_time', '')
+        if start_time:
+            try:
+                meeting_date = _resolve_meeting_date(start_time)
+                sg_playlist_link = find_playlist_for_meeting(title, meeting_date, show_mapping)
+                if sg_playlist_link:
+                    source = 'name-convention'
+            except Exception as e:
+                if verbose:
+                    print(f"  Warning: name-convention lookup failed for '{title}': {e}")
+
+        if not sg_playlist_link:
+            sg_playlist_link = extract_sg_playlist_link(meeting.get('description', ''))
+            if sg_playlist_link:
+                source = 'description'
+
         if not sg_playlist_link:
             stats['no_sg_link'] += 1
             if verbose:
@@ -121,10 +163,11 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
         try:
             if insert_meeting(conn, meeting, sg_playlist_link):
                 stats['synced'] += 1
+                stats['pipeline_commands'].append(_pipeline_command(meeting, sg_playlist_link))
                 if verbose:
                     print(f"  Synced: {title}")
-                    print(f"    Recording: {meeting['recording_filename']}")
-                    print(f"    SG Playlist: {sg_playlist_link}")
+                    print(f"    Recording:   {meeting['recording_filename']}")
+                    print(f"    SG Playlist: {sg_playlist_link}  [{source}]")
         except Exception as e:
             stats['errors'] += 1
             print(f"  Error inserting {title}: {e}")
@@ -227,6 +270,13 @@ def main():
     print(f"  No SG link:   {stats['no_sg_link']}")
     print(f"  No recording: {stats['no_recording']}")
     print(f"  Errors:       {stats['errors']}")
+
+    if stats['pipeline_commands']:
+        print(f"\nRun pipeline for synced meetings:")
+        print("=" * 80)
+        for cmd in stats['pipeline_commands']:
+            print(cmd)
+        print("=" * 80)
 
     conn.close()
 

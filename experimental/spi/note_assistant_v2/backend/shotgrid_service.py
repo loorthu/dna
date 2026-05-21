@@ -2,9 +2,11 @@ import os
 import hashlib
 import re
 import sys
+from datetime import datetime
 from dotenv import load_dotenv
 from shotgun_api3 import Shotgun
 import argparse
+import yaml
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -400,6 +402,103 @@ def validate_shot_version_input(input_value, project_id=None):
             "message": f"Shot/asset '{input_value}' not found",
             "type": "shot"
         }
+
+# =============================================================================
+# Calendar → SG Playlist Matching
+# =============================================================================
+
+_DEFAULT_MAPPING = {
+    'default': {
+        'strip_suffixes': ['[Virtual]', '(Virtual)', '- Virtual', '[Online]', '(Online)'],
+    },
+    'title_mappings': {},
+}
+
+_MAPPING_PATH = os.path.join(os.path.dirname(__file__), 'tools', 'show_calendar_mapping.yaml')
+
+
+def load_show_mapping(mapping_path: str = None) -> dict:
+    path = mapping_path or _MAPPING_PATH
+    if not os.path.exists(path):
+        return _DEFAULT_MAPPING
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    data.setdefault('default', _DEFAULT_MAPPING['default'])
+    data.setdefault('title_mappings', {})
+    return data
+
+
+def _strip_calendar_suffix(title: str, mapping: dict) -> str:
+    suffixes = mapping.get('default', {}).get('strip_suffixes', [])
+    result = title
+    for suffix in suffixes:
+        if result.endswith(suffix):
+            result = result[:-len(suffix)].strip()
+    return result
+
+
+def _apply_title_mapping(stripped_title: str, title_mappings: dict) -> str:
+    """
+    Match stripped_title against title_mappings keys where $SHOW is a wildcard
+    for the show code. Returns the mapped SG playlist prefix, or stripped_title
+    if no entry matches.
+    """
+    for pattern_key, pattern_value in title_mappings.items():
+        regex = re.escape(pattern_key).replace(r'\$SHOW', r'(.+?)')
+        m = re.fullmatch(regex, stripped_title)
+        if m:
+            show = m.group(1)
+            return pattern_value.replace('$SHOW', show)
+    return stripped_title
+
+
+def find_playlist_for_meeting(meeting_title: str, meeting_date: datetime,
+                               mapping: dict = None) -> Optional[str]:
+    """
+    Find a ShotGrid playlist URL matching a calendar meeting by naming convention.
+
+    Convention:
+      Calendar: "ZORR: Model Dailies [Virtual]"  →  "ZORR: Model Dailies"
+      SG:       "ZORR: Model Dailies 05/19/26"
+
+    Matches on month/day only (MM/DD) to stay robust across year boundaries.
+
+    Returns the SG playlist URL string, or None if not found.
+    """
+    if not SG_URL or not SG_SCRIPT_NAME or not SG_API_KEY:
+        return None
+
+    if mapping is None:
+        mapping = load_show_mapping()
+
+    stripped = _strip_calendar_suffix(meeting_title, mapping)
+    playlist_prefix = _apply_title_mapping(stripped, mapping.get('title_mappings', {}))
+
+    show_code = stripped.split(':')[0].strip()
+    project = get_project_by_code(show_code)
+    if not project:
+        return None
+
+    sg = Shotgun(SG_URL, SG_SCRIPT_NAME, SG_API_KEY)
+    playlists = sg.find(
+        'Playlist',
+        [
+            ['project', 'is', {'type': 'Project', 'id': project['id']}],
+            ['code', 'starts_with', playlist_prefix],
+        ],
+        ['id', 'code'],
+        order=[{'field_name': 'created_at', 'direction': 'desc'}],
+        limit=50,
+    )
+
+    # Match on MM/DD only — year is intentionally ignored per spec
+    month_day = meeting_date.strftime('%m/%d')
+    for playlist in playlists:
+        if month_day in (playlist.get('code') or ''):
+            return f"{SG_URL}/playlist/{playlist['id']}"
+
+    return None
+
 
 router = APIRouter()
 
