@@ -83,7 +83,7 @@ import subprocess
 import tempfile
 import numpy as np
 from typing import Optional
-from PIL import Image
+from PIL import Image, ImageEnhance
 import easyocr
 import logging
 import difflib
@@ -547,12 +547,21 @@ def detect_version_id_from_image(image_path: str,
         if verbose:
             print("No version bbox provided, using full image for version detection")
     
+    # Preprocess for version detection: upscale + boost contrast so small
+    # watermark text (e.g. ShotGrid/RV slate at bottom of frame) is readable.
+    w, h = target_img.size
+    scale = max(1, 2160 // h)  # target ~4x for typical 1080p crops, less for larger
+    if scale > 1:
+        target_img = target_img.resize((w * scale, h * scale), Image.LANCZOS)
+    target_img = ImageEnhance.Contrast(target_img).enhance(3.0)
+    target_img = ImageEnhance.Brightness(target_img).enhance(2.0)
+
     # Perform OCR on the target region
     if verbose:
         print(f"Performing OCR on {region_name} for version detection...")
         tw, th = target_img.size
         print(f"Target OCR image size: {tw}x{th}")
-    
+
     texts = perform_ocr(target_img, reader=reader, verbose=verbose)
     
     # Apply regex pattern matching to find version IDs
