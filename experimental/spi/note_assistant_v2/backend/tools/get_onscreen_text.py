@@ -541,16 +541,22 @@ def detect_version_id_from_image(image_path: str,
             if verbose:
                 print(f"Saved version region to: {cropped_path}")
     else:
-        # Fall back to full image if no bbox provided
-        target_img = img
-        region_name = "full_image"
+        # No bbox: scan the bottom 20% of the frame. ShotGrid/RV watermark
+        # slates sit at ~80-90% down in typical Google Meet recordings, so
+        # bottom 8% misses them. Scanning 20% keeps the region small.
+        full_w, full_h = img.size
+        strip_top = int(full_h * 0.80)
+        target_img = img.crop((0, strip_top, full_w, full_h))
+        region_name = "bottom_strip"
         if verbose:
-            print("No version bbox provided, using full image for version detection")
-    
-    # Preprocess for version detection: upscale + boost contrast so small
-    # watermark text (e.g. ShotGrid/RV slate at bottom of frame) is readable.
+            print(f"No version bbox provided, scanning bottom strip (y={strip_top}–{full_h})")
+
+    # Preprocess for version detection: upscale + contrast boost so small
+    # watermark text is readable. For the bottom strip (~216px tall) 4x is
+    # needed to resolve tight fonts (e.g. double-r in "zorr"). For a full
+    # bbox crop (already tight) 2x is enough. Cap large images at 1x.
     w, h = target_img.size
-    scale = max(1, 2160 // h)  # target ~4x for typical 1080p crops, less for larger
+    scale = 4 if h < 300 else 2 if h < 800 else 1
     if scale > 1:
         target_img = target_img.resize((w * scale, h * scale), Image.LANCZOS)
     target_img = ImageEnhance.Contrast(target_img).enhance(3.0)
