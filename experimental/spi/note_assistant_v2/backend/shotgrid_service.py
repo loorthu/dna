@@ -474,7 +474,7 @@ def find_playlist_for_meeting(meeting_title: str, meeting_date: datetime,
     stripped = _strip_calendar_suffix(meeting_title, mapping)
     playlist_prefix = _apply_title_mapping(stripped, mapping.get('title_mappings', {}))
 
-    show_code = stripped.split(':')[0].strip()
+    show_code = (stripped.split(':')[0] if ':' in stripped else stripped.split()[0]).strip()
     project = get_project_by_code(show_code)
     if not project:
         return None

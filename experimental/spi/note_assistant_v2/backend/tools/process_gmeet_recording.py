@@ -51,7 +51,7 @@ from llm_service import (
     llm_clients
 )
 from email_service import send_csv_email
-from google_drive_utils import sanitize_filename, parse_drive_url, parse_drive_folder_id, copy_drive_file_to_folder
+from google_drive_utils import sanitize_filename, parse_drive_url, parse_drive_folder_id, copy_drive_file_to_folder, is_drive_url
 
 
 def format_duration(seconds: float) -> str:
@@ -337,11 +337,8 @@ def main():
             # Still process video_input for recording_dir if in output_dir mode
             # This is needed for organizing output files properly
             if output_is_dir and args.video_input:
-                # Import here to avoid circular imports
-                from google_drive_utils import is_google_drive_url, get_file_id_from_url
-
-                if is_google_drive_url(args.video_input):
-                    file_id = get_file_id_from_url(args.video_input)
+                if is_drive_url(args.video_input):
+                    file_id = parse_drive_url(args.video_input)
                     recording_name = file_id
                 else:
                     # Local file - use filename
@@ -362,19 +359,20 @@ def main():
             gmeet_csv = None  # Won't be used
             timing['stage1'] = 0.0
 
-            # Still process video_input for recording_dir if in output_dir mode
-            if output_is_dir and args.video_input:
-                from google_drive_utils import is_google_drive_url, get_file_id_from_url
-
-                if is_google_drive_url(args.video_input):
-                    file_id = get_file_id_from_url(args.video_input)
-                    recording_name = file_id
-                else:
-                    recording_name = os.path.splitext(os.path.basename(args.video_input))[0]
-
-                recording_name = sanitize_filename(recording_name)
-                recording_dir = os.path.join(output_dir, args.project, recording_name)
-                os.makedirs(recording_dir, exist_ok=True)
+            # Derive recording_dir from the combined CSV location:
+            # combined_csv is expected at <recording_dir>/intermediate/<name>.csv
+            if output_is_dir:
+                csv_abs = os.path.abspath(args.combined_csv)
+                inferred_dir = os.path.dirname(os.path.dirname(csv_abs))
+                if os.path.isdir(inferred_dir):
+                    recording_dir = inferred_dir
+                elif args.video_input:
+                    if is_drive_url(args.video_input):
+                        recording_name = sanitize_filename(parse_drive_url(args.video_input))
+                    else:
+                        recording_name = sanitize_filename(os.path.splitext(os.path.basename(args.video_input))[0])
+                    recording_dir = os.path.join(output_dir, args.project, recording_name)
+                    os.makedirs(recording_dir, exist_ok=True)
 
             if args.verbose:
                 print("Stages 1-2 skipped - will proceed directly to Stage 3")

@@ -40,7 +40,7 @@ from meeting_service import (
     DEFAULT_DB_PATH
 )
 
-from shotgrid_service import find_playlist_for_meeting, load_show_mapping
+from shotgrid_service import find_playlist_for_meeting, load_show_mapping, _strip_calendar_suffix
 
 
 # =============================================================================
@@ -80,14 +80,32 @@ def _resolve_meeting_date(start_time: str) -> datetime:
     return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
 
 
-def _pipeline_command(meeting: dict, sg_playlist_link: str) -> str:
+def _pipeline_command(meeting: dict, sg_playlist_link: str, show_mapping: dict = None) -> str:
     """Build the run_pipeline.sh command for a synced meeting."""
-    project = meeting['title'].split(':')[0].strip().lower()
+    title = meeting['title']
+    project = (title.split(':')[0] if ':' in title else title.split()[0]).strip().lower()
+
+    stripped = _strip_calendar_suffix(title, show_mapping or {})
+    if ':' in stripped:
+        meeting_type = stripped.split(':', 1)[1].strip()
+    else:
+        meeting_type = ' '.join(stripped.split()[1:])
+
+    start_time = meeting.get('start_time', '')
+    if start_time:
+        dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        date_str = dt.strftime('%m-%d-%y')
+    else:
+        date_str = datetime.now().strftime('%m-%d-%y')
+
+    subject = f"{project.upper()} {meeting_type} {date_str}"
+
     return (
         f"./run_pipeline.sh"
         f" \"{meeting['recording_link']}\""
         f" \"{sg_playlist_link}\""
         f" --project {project}"
+        f" --subject \"{subject}\""
     )
 
 
@@ -163,7 +181,7 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
         try:
             if insert_meeting(conn, meeting, sg_playlist_link):
                 stats['synced'] += 1
-                stats['pipeline_commands'].append(_pipeline_command(meeting, sg_playlist_link))
+                stats['pipeline_commands'].append(_pipeline_command(meeting, sg_playlist_link, show_mapping))
                 if verbose:
                     print(f"  Synced: {title}")
                     print(f"    Recording:   {meeting['recording_filename']}")

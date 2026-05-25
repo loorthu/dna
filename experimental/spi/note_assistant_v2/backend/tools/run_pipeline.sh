@@ -58,17 +58,19 @@ SUBJECT=""
 RECIPIENT=""
 MODEL="gemini-2.5-pro"
 VERSION_PATTERN=""
+GMEET_AND_SG_CSV=""
 
 # ---------------------------------------------------------------------------
 # Parse optional flags
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --project)        PROJECT="$2";          shift 2 ;;
-        --subject)        SUBJECT="$2";          shift 2 ;;
-        --recipient)      RECIPIENT="$2";        shift 2 ;;
-        --model)          MODEL="$2";            shift 2 ;;
-        --version-pattern) VERSION_PATTERN="$2"; shift 2 ;;
+        --project)          PROJECT="$2";          shift 2 ;;
+        --subject)          SUBJECT="$2";          shift 2 ;;
+        --recipient)        RECIPIENT="$2";        shift 2 ;;
+        --model)            MODEL="$2";            shift 2 ;;
+        --version-pattern)  VERSION_PATTERN="$2";  shift 2 ;;
+        --gmeet-and-sg-csv) GMEET_AND_SG_CSV="$2"; shift 2 ;;
         *)
             echo "Unknown option: $1" >&2
             exit 1
@@ -140,6 +142,10 @@ CMD=(
 
 if [[ -n "$THUMBNAIL_URL" ]]; then
     CMD+=(--thumbnail-url "$THUMBNAIL_URL")
+fi
+
+if [[ -n "$GMEET_AND_SG_CSV" ]]; then
+    CMD+=(--combined-csv "$GMEET_AND_SG_CSV")
 fi
 
 echo "========================================"
