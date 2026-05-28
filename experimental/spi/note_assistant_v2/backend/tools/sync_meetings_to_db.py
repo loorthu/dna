@@ -9,7 +9,8 @@ Usage:
     python sync_meetings_to_db.py                    # Sync today's meetings
     python sync_meetings_to_db.py --days 1           # Include yesterday
     python sync_meetings_to_db.py --verbose          # Verbose output
-    python sync_meetings_to_db.py --list-pending     # List pending meetings
+    python sync_meetings_to_db.py --list              # List all meetings
+    python sync_meetings_to_db.py --list --status pending  # Filter by status
     python sync_meetings_to_db.py --update-status EVENT_ID STATUS
     python sync_meetings_to_db.py --cron             # Cron mode: silent unless new meetings found
 """
@@ -41,7 +42,7 @@ from meeting_service import (
     meeting_exists,
     insert_meeting,
     update_meeting_status,
-    get_pending_meetings,
+    get_meetings as db_get_meetings,
     DEFAULT_DB_PATH
 )
 
@@ -304,26 +305,29 @@ def run_cron_mode(conn, calendar_service, drive_service,
 # CLI
 # =============================================================================
 
-def list_pending(conn):
-    """Print pending meetings."""
-    meetings = get_pending_meetings(conn)
+def list_meetings(conn, status: str = None, days: int = None):
+    """Print meetings from the database, optionally filtered by status and date range."""
+    from datetime import timedelta
 
+    start_date = end_date = None
+    if days is not None:
+        now = datetime.now().astimezone()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = (today_start - timedelta(days=days)).isoformat()
+        end_date = (today_start + timedelta(days=1)).isoformat()
+
+    meetings, _ = db_get_meetings(conn, status=status,
+                                      start_date=start_date, end_date=end_date,
+                                      limit=200)
+
+    label = f"{status} " if status else ""
+    label += "meetings"
     if not meetings:
-        print("No pending meetings.")
+        print(f"No {label} found.")
         return
 
-    print(f"\nPending meetings ({len(meetings)}):")
-    print("=" * 80)
-
     for m in meetings:
-        print(f"\n{m['title']}")
-        print(f"  Event ID:    {m['event_id']}")
-        print(f"  Start:       {m['start_time']}")
-        print(f"  Recording:   {m['recording_filename']}")
-        print(f"  SG Playlist: {m['sg_playlist_link']}")
-        print(f"  Status:      {m['status']}")
-
-    print("=" * 80)
+        print(f"{m['status']} | {m['recording_filename']} | {m['sg_playlist_link']}")
 
 
 def main():
@@ -336,8 +340,10 @@ def main():
                         help='Number of past days to include (0=today, 1=today+yesterday, etc.)')
     parser.add_argument('--db', default=DEFAULT_DB_PATH,
                         help=f'Database path (default: {DEFAULT_DB_PATH})')
-    parser.add_argument('--list-pending', action='store_true',
-                        help='List pending meetings')
+    parser.add_argument('--list', action='store_true',
+                        help='List meetings in the database')
+    parser.add_argument('--status', metavar='STATUS',
+                        help='Filter --list by status (pending/processing/completed/failed/skipped)')
     parser.add_argument('--update-status', nargs=2, metavar=('EVENT_ID', 'STATUS'),
                         help='Update meeting status (pending/processing/completed/failed/skipped)')
     parser.add_argument('--cron', action='store_true',
@@ -358,9 +364,9 @@ def main():
     if args.verbose:
         print(f"Database: {db_path}")
 
-    # Handle --list-pending
-    if args.list_pending:
-        list_pending(conn)
+    # Handle --list
+    if args.list:
+        list_meetings(conn, status=args.status, days=args.days)
         conn.close()
         return
 
