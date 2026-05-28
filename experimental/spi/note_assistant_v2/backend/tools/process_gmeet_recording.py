@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 # Import from existing scripts
 from get_data_from_google_meet import extract_google_meet_data
-from shotgrid_service import parse_sg_playlist_url, fetch_playlist_to_csv, load_show_mapping
+from shotgrid_service import parse_sg_playlist_url, fetch_playlist_to_csv, load_show_mapping, SG_URL
 from combine_data_from_gmeet_and_sg import (
     load_sg_data,
     load_transcript_data,
@@ -658,7 +658,7 @@ def main():
                     meeting_duration=meeting_duration,
                     meeting_summary=meeting_summary_text,
                     recording_url=args.drive_url,
-                    sg_playlist_url=sg_input_original if sg_input_original.startswith('http') else None
+                    sg_playlist_url=f"{SG_URL}/detail/Playlist/{playlist_id}" if playlist_id and SG_URL else (sg_input_original if sg_input_original.startswith('http') else None)
                 )
                 if success:
                     print(f"Email sent successfully to {args.recipient_email}")

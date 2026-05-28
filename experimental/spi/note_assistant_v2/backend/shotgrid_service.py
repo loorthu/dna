@@ -191,6 +191,7 @@ def parse_sg_playlist_url(url_or_id: str):
     Extract the numeric playlist ID from a ShotGrid URL or a plain integer string.
 
     Supports:
+        https://spi.shotgrid.autodesk.com/detail/Playlist/435694
         https://studio.shotgrid.autodesk.com/page/12345#Playlist_435694
         https://studio.shotgunstudio.com/page/12345#Playlist_435694
         435694  (plain integer string)
@@ -495,7 +496,7 @@ def find_playlist_for_meeting(meeting_title: str, meeting_date: datetime,
     month_day = meeting_date.strftime('%m/%d')
     for playlist in playlists:
         if month_day in (playlist.get('code') or ''):
-            return f"{SG_URL}/playlist/{playlist['id']}"
+            return f"{SG_URL}/detail/Playlist/{playlist['id']}"
 
     return None
 
