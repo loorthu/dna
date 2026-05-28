@@ -98,6 +98,47 @@ from get_speaker_bbox import detect_speaker_bbox_cv, detect_speaker_bbox_llm
 # Import version ID bbox detection function
 from get_version_id_bbox import detect_version_id_bbox_ocr
 
+# Minimum EasyOCR confidence to accept a speaker name candidate
+_MIN_OCR_CONFIDENCE = 0.35
+
+# How far to expand the detected bbox leftward (as a fraction of frame width).
+# The CV detector tends to land the left edge just inside the panel border,
+# clipping the first 2-3 chars of the name label.
+_BBOX_LEFT_PAD_FRAC = 0.02
+
+
+def _is_ocr_garbage(text: str) -> bool:
+    """Return True if text matches OCR noise patterns that cannot be a real name.
+
+    Catches: digit-letter adjacency (t4208Hans), all-caps 4+ char tokens
+    (GUTD, ELIVDT), leading digit (1 Vassallo), and intra-word mixed case
+    that signals garbled pixels (CGuD, DeRcT, FlenWm).
+    """
+    # Digit immediately adjacent to a letter (e.g. t4208Hans, JI LoD40)
+    if re.search(r'\d[A-Za-z]|[A-Za-z]\d', text):
+        return True
+    tokens = text.split()
+    if not tokens:
+        return True
+    # Leading standalone digit token (e.g. '1 Vassallo')
+    if tokens[0].isdigit():
+        return True
+    for word in tokens:
+        if len(word) < 3:
+            continue
+        # All-uppercase word of 4+ chars (GUTD, ELIVDT, ELLTLA, TLTL, ARACAT)
+        if word.isupper() and len(word) >= 4:
+            return True
+        # 2+ uppercase chars after the first (DTNvd, KLLFNn) — title-case words
+        # have at most 1 (the first letter), all-lower have 0
+        interior_upper = sum(1 for c in word[1:] if c.isupper())
+        if interior_upper >= 2:
+            return True
+        # lowercase immediately before uppercase within a word (CGuD→uD, FlenWm→nW)
+        if re.search(r'[a-z][A-Z]', word):
+            return True
+    return False
+
 
 def _process_bbox_sample_worker(args):
     """
@@ -661,8 +702,12 @@ def detect_speaker_name_from_image(image_path: str,
         bbox = fixed_bbox if fixed_bbox else get_speaker_bbox(image_path, method="cv+llm", verbose=verbose)
         
         if bbox:
-            # Convert normalized coordinates to pixel coordinates
-            crop_left = int(bbox['x'] * width)
+            # Convert normalized coordinates to pixel coordinates.
+            # Expand left edge by _BBOX_LEFT_PAD_FRAC to recover chars that
+            # get clipped when the detected panel boundary sits inside the
+            # name label's left margin.
+            left_pad = int(width * _BBOX_LEFT_PAD_FRAC)
+            crop_left = max(0, int(bbox['x'] * width) - left_pad)
             crop_top = int(bbox['y'] * height)
             crop_right = int((bbox['x'] + bbox['width']) * width)
             crop_bottom = int((bbox['y'] + bbox['height']) * height)
@@ -720,6 +765,14 @@ def detect_speaker_name_from_image(image_path: str,
     for (text, confidence) in texts:
         cleaned = re.sub(r'[^\w\s]', '', text).strip()
         if len(cleaned) > 2:
+            if confidence < _MIN_OCR_CONFIDENCE:
+                if verbose:
+                    print(f"  -> Rejected (low confidence): '{cleaned}' conf={confidence:.2f}")
+                continue
+            if _is_ocr_garbage(cleaned):
+                if verbose:
+                    print(f"  -> Rejected (OCR garbage): '{cleaned}' conf={confidence:.2f}")
+                continue
             words = cleaned.split()
             is_name_like = (len(words) >= 2) or (len(words) == 1 and any(c.isupper() for c in cleaned))
             if is_name_like:
