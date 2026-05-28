@@ -11,13 +11,19 @@ Usage:
     python sync_meetings_to_db.py --verbose          # Verbose output
     python sync_meetings_to_db.py --list-pending     # List pending meetings
     python sync_meetings_to_db.py --update-status EVENT_ID STATUS
+    python sync_meetings_to_db.py --cron             # Cron mode: silent unless new meetings found
 """
 
 import argparse
+import contextlib
+import io
 import os
 import re
+import smtplib
+import subprocess
 import sys
 from datetime import datetime
+from email.mime.text import MIMEText
 
 # Add parent directory to path for importing meeting_service and shotgrid_service
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -32,7 +38,6 @@ from get_gcalendar_entries import (
 # Import database functions from meeting_service
 from meeting_service import (
     init_db,
-    get_connection,
     meeting_exists,
     insert_meeting,
     update_meeting_status,
@@ -181,7 +186,11 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
         try:
             if insert_meeting(conn, meeting, sg_playlist_link):
                 stats['synced'] += 1
-                stats['pipeline_commands'].append(_pipeline_command(meeting, sg_playlist_link, show_mapping))
+                stats['pipeline_commands'].append({
+                    'event_id': meeting['event_id'],
+                    'title': title,
+                    'command': _pipeline_command(meeting, sg_playlist_link, show_mapping),
+                })
                 if verbose:
                     print(f"  Synced: {title}")
                     print(f"    Recording:   {meeting['recording_filename']}")
@@ -191,6 +200,104 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
             print(f"  Error inserting {title}: {e}")
 
     return stats
+
+
+# =============================================================================
+# Cron helpers
+# =============================================================================
+
+def _load_dotenv_values(env_path: str) -> dict:
+    """Parse key=value pairs from a .env file without sourcing the shell."""
+    values = {}
+    if not os.path.exists(env_path):
+        return values
+    with open(env_path) as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#') and '=' in line:
+                key, _, val = line.partition('=')
+                values[key.strip()] = val.strip()
+    return values
+
+
+def _send_cron_email(subject: str, body: str, recipient: str, sender: str,
+                     smtp_host: str = 'localhost', smtp_port: int = None):
+    """Send a plain-text email via SMTP for cron notifications."""
+    msg = MIMEText(body, 'plain')
+    msg['Subject'] = subject
+    msg['From'] = sender
+    msg['To'] = recipient
+    port = smtp_port or smtplib.SMTP_PORT
+    with smtplib.SMTP(smtp_host, port) as smtp:
+        smtp.sendmail(sender, [recipient], msg.as_string())
+
+
+def run_cron_mode(conn, calendar_service, drive_service,
+                  days: int, recipient: str, env_cfg: dict):
+    """
+    Sync meetings and auto-launch run_pipeline.sh for each new one.
+    Emails the combined output only when at least one meeting was synced.
+    Completely silent otherwise (suitable for cron).
+
+    Duplicate-processing safety: each job is stamped 'processing' in the DB
+    before its subprocess starts, and 'completed'/'failed' when it exits.
+    Combined with the UNIQUE event_id constraint (new meetings are only ever
+    inserted once), subsequent cron ticks will always skip in-progress or
+    finished jobs.  Use `flock -n` in your crontab to prevent two instances
+    from running simultaneously.
+    """
+    # Capture sync output without printing to stdout
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        stats = sync_meetings_to_db(conn, calendar_service, drive_service,
+                                    days=days, verbose=True)
+
+    if stats['synced'] == 0:
+        return  # Nothing new — stay silent
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_parts = [buf.getvalue()]
+
+    for job in stats['pipeline_commands']:
+        event_id = job['event_id']
+        cmd = job['command']
+        sep = '=' * 72
+        output_parts.append(f"\n{sep}\nRunning: {cmd}\n{sep}\n")
+
+        # Claim the job — any subsequent cron tick that somehow sees this
+        # meeting will find status='processing' and won't re-insert it
+        # (meeting_exists returns True), so no duplicate launch is possible.
+        update_meeting_status(conn, event_id, 'processing')
+
+        result = subprocess.run(
+            cmd, shell=True, cwd=script_dir,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True
+        )
+        output_parts.append(result.stdout or '')
+
+        if result.returncode == 0:
+            update_meeting_status(conn, event_id, 'completed')
+        else:
+            update_meeting_status(conn, event_id, 'failed',
+                                  f'Pipeline exited with code {result.returncode}')
+
+    full_output = ''.join(output_parts)
+
+    sender = env_cfg.get('EMAIL_SENDER', recipient)
+    smtp_host = env_cfg.get('SMTP_HOST', 'localhost')
+    smtp_port_str = env_cfg.get('SMTP_PORT')
+    smtp_port = int(smtp_port_str) if smtp_port_str else None
+
+    subject = (
+        f"[GMeet] {stats['synced']} new meeting(s) processed"
+        f" — {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    )
+    try:
+        _send_cron_email(subject, full_output, recipient, sender, smtp_host, smtp_port)
+    except Exception as e:
+        # Fall back to stderr so the cron daemon captures it
+        print(f"[cron] Failed to send email: {e}\n\n{full_output}", file=sys.stderr)
 
 
 # =============================================================================
@@ -233,6 +340,12 @@ def main():
                         help='List pending meetings')
     parser.add_argument('--update-status', nargs=2, metavar=('EVENT_ID', 'STATUS'),
                         help='Update meeting status (pending/processing/completed/failed/skipped)')
+    parser.add_argument('--cron', action='store_true',
+                        help='Cron mode: silent unless new meetings are found; '
+                             'auto-launches run_pipeline.sh and emails combined output')
+    parser.add_argument('--recipient', metavar='EMAIL',
+                        help='Email recipient for --cron notifications '
+                             '(default: EMAIL_SENDER from .env)')
 
     args = parser.parse_args()
 
@@ -266,7 +379,7 @@ def main():
         conn.close()
         return
 
-    # Default: sync meetings
+    # Resolve calendar/drive credentials
     script_dir = os.path.dirname(os.path.abspath(__file__))
     credentials_path = os.path.join(script_dir, '../client_secret.json')
     token_path = os.path.join(script_dir, '../token.json')
@@ -275,9 +388,23 @@ def main():
         calendar_service = get_calendar_service(credentials_path, token_path)
         drive_service = get_drive_service(credentials_path, token_path)
     except FileNotFoundError as e:
-        print(f"Error: {e}")
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # --cron: silent sync + auto-launch + email
+    if args.cron:
+        env_cfg = _load_dotenv_values(os.path.join(script_dir, '../.env'))
+        recipient = args.recipient or env_cfg.get('EMAIL_SENDER', '')
+        if not recipient:
+            print("Error: --cron requires a recipient email. "
+                  "Set EMAIL_SENDER in .env or pass --recipient.", file=sys.stderr)
+            sys.exit(1)
+        run_cron_mode(conn, calendar_service, drive_service,
+                      days=args.days, recipient=recipient, env_cfg=env_cfg)
+        conn.close()
+        return
+
+    # Default: interactive sync
     print(f"Syncing finished meetings (past {args.days} days + today)...")
     stats = sync_meetings_to_db(conn, calendar_service, drive_service,
                                  days=args.days, verbose=args.verbose)
@@ -292,8 +419,8 @@ def main():
     if stats['pipeline_commands']:
         print(f"\nRun pipeline for synced meetings:")
         print("=" * 80)
-        for cmd in stats['pipeline_commands']:
-            print(cmd)
+        for job in stats['pipeline_commands']:
+            print(job['command'])
         print("=" * 80)
 
     conn.close()
