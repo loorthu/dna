@@ -492,9 +492,19 @@ def get_average_bounding_boxes(video_path, duration, version_pattern=None, sampl
         avg_version_bbox = None
         if version_pattern:
             if version_bboxes:
-                avg_version_bbox = {key: sum(b[key] for b in version_bboxes) / len(version_bboxes) for key in ['x', 'y', 'width', 'height']}
-                if verbose:
-                    print(f"Average version ID bbox: {avg_version_bbox}")
+                # Real watermarks are anchored to the bottom of the frame (y+height ≈ 1.0).
+                # Detections whose bottom edge is above 85% are false positives from
+                # on-screen text that happens to match the version pattern.
+                valid_bboxes = [b for b in version_bboxes if b['y'] + b['height'] >= 0.85]
+                if valid_bboxes:
+                    avg_version_bbox = {key: sum(b[key] for b in valid_bboxes) / len(valid_bboxes) for key in ['x', 'y', 'width', 'height']}
+                    if verbose:
+                        print(f"Average version ID bbox: {avg_version_bbox}")
+                        if len(valid_bboxes) < len(version_bboxes):
+                            print(f"  (filtered {len(version_bboxes) - len(valid_bboxes)} false-positive bbox(es))")
+                else:
+                    if verbose:
+                        print(f"No valid version ID bbox after filtering {len(version_bboxes)} false-positive(s) — will use bottom-strip fallback")
             else:
                 if verbose:
                     print("No version ID detected in any sample frames.")
