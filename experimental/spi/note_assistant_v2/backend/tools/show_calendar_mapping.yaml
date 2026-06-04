@@ -29,8 +29,7 @@ default:
 # Only add entries where the calendar title and SG playlist prefix differ.
 title_mappings:
   "$SHOW: Dailies": "$SHOW: Model Dailies"
-  "$SHOW: Director Review": "$SHOW: Director Prep"
-  "$SHOW Director Review": "$SHOW: Director Prep"
+  "$SHOW Director Review": "$SHOW: Director Review"
 
 # Google Drive folder destinations per show code.
 # After pipeline processing completes, the recording is moved to the specified

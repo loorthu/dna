@@ -13,7 +13,7 @@
 #   --subject TEXT        Email subject (default: "<PROJECT> Dailies YYYY-MM-DD")
 #   --recipient EMAIL     Recipient email (default: EMAIL_SENDER from .env)
 #   --model MODEL         LLM model (default: gemini-2.5-pro)
-#   --version-pattern PAT Regex for version detection (default: <project>-(\d+))
+#   --version-pattern PAT Regex for version detection (default: <project>[- ]?(\d+))
 #
 # Examples:
 #   ./run_pipeline.sh \
@@ -106,7 +106,7 @@ if [[ -z "$RECIPIENT" ]]; then
 fi
 
 if [[ -z "$VERSION_PATTERN" ]]; then
-    VERSION_PATTERN="${PROJECT}-(\d+)"
+    VERSION_PATTERN="${PROJECT}[- ]?(\d+)"
 fi
 
 # Expand {project} placeholder in GMEET_THUMBNAIL_URL if set

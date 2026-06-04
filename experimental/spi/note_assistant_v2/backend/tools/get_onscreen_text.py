@@ -83,7 +83,7 @@ import subprocess
 import tempfile
 import numpy as np
 from typing import Optional
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import easyocr
 import logging
 import difflib
@@ -181,17 +181,23 @@ def _process_bbox_sample_worker(args):
     return timestamp, speaker_bbox, version_bbox, success
 
 
-def perform_ocr(target_img: Image.Image, reader: easyocr.Reader = None, verbose: bool = False):
+def perform_ocr(target_img: Image.Image, reader: easyocr.Reader = None, verbose: bool = False,
+                text_threshold: float = 0.7, low_text: float = 0.4):
     """
-    Perform OCR using EasyOCR only, with default settings.
+    Perform OCR using EasyOCR only.
     Returns a list of (text, confidence) tuples.
+
+    text_threshold: EasyOCR character confidence threshold (lower = more sensitive).
+    low_text:       EasyOCR text-area probability threshold (lower = more sensitive).
     """
     results = []
     if reader is None:
         reader = easyocr.Reader(['en'])
     target_array = np.array(target_img)
     try:
-        ocr_results = reader.readtext(target_array)
+        ocr_results = reader.readtext(target_array,
+                                      text_threshold=text_threshold,
+                                      low_text=low_text)
     except Exception as e:
         if verbose:
             print(f"EasyOCR failed: {e}")
@@ -582,34 +588,58 @@ def detect_version_id_from_image(image_path: str,
             if verbose:
                 print(f"Saved version region to: {cropped_path}")
     else:
-        # No bbox: scan the bottom 20% of the frame. ShotGrid/RV watermark
-        # slates sit at ~80-90% down in typical Google Meet recordings, so
-        # bottom 8% misses them. Scanning 20% keeps the region small.
+        # No bbox: find the watermark text band within the bottom 20%.
+        # SG/RV watermarks appear as sparse bright pixels on a near-black row.
+        # Scanning the full 20% strip confuses autocontrast when other bright
+        # content (webcam feed, video edges) is present; instead we locate the
+        # specific row via high max/mean ratio and crop tightly around it.
         full_w, full_h = img.size
-        strip_top = int(full_h * 0.80)
-        target_img = img.crop((0, strip_top, full_w, full_h))
-        region_name = "bottom_strip"
+        search_top = int(full_h * 0.80)
+        search_arr = np.array(img.crop((0, search_top, full_w, full_h)).convert('L'))
+        row_maxes = search_arr.max(axis=1)
+        row_means = search_arr.mean(axis=1)
+        candidate_mask = row_maxes > 80
+        if candidate_mask.any():
+            ratios = row_maxes / np.maximum(row_means, 0.1)
+            best_local = int(np.argmax(np.where(candidate_mask, ratios, 0)))
+            pad = 20
+            ct = max(0, best_local - pad)
+            cb = min(search_arr.shape[0], best_local + pad)
+            target_img = img.crop((0, search_top + ct, full_w, search_top + cb))
+            region_name = f"text_band (y={search_top + ct}–{search_top + cb})"
+        else:
+            target_img = img.crop((0, search_top, full_w, full_h))
+            region_name = f"bottom_strip (y={search_top}–{full_h})"
         if verbose:
-            print(f"No version bbox provided, scanning bottom strip (y={strip_top}–{full_h})")
+            print(f"No version bbox provided, scanning {region_name}")
 
-    # Preprocess for version detection: upscale + contrast boost so small
-    # watermark text is readable. For the bottom strip (~216px tall) 4x is
-    # needed to resolve tight fonts (e.g. double-r in "zorr"). For a full
-    # bbox crop (already tight) 2x is enough. Cap large images at 1x.
+    # Preprocess for version detection: upscale then adaptive contrast.
+    # For the bottom strip (~216px tall) 4x upscale resolves tight fonts
+    # (e.g. double-r in "zorr"); for a known bbox crop 2x is enough.
+    # We use autocontrast instead of fixed multipliers so that faint
+    # watermarks on both dark and light backgrounds are handled correctly —
+    # fixed Brightness(2.0) was clipping bright backgrounds to white and
+    # washing out faint text.
     w, h = target_img.size
     scale = 4 if h < 300 else 2 if h < 800 else 1
     if scale > 1:
         target_img = target_img.resize((w * scale, h * scale), Image.LANCZOS)
-    target_img = ImageEnhance.Contrast(target_img).enhance(3.0)
-    target_img = ImageEnhance.Brightness(target_img).enhance(2.0)
 
-    # Perform OCR on the target region
+    # Grayscale → autocontrast (stretches full tonal range) → sharpen edges
+    target_img = target_img.convert('L')
+    target_img = ImageOps.autocontrast(target_img, cutoff=1)
+    target_img = target_img.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=3))
+    target_img = target_img.convert('RGB')
+
+    # Perform OCR on the target region with lower thresholds so faint text
+    # (semi-transparent watermarks) is not rejected by the default cutoffs.
     if verbose:
         print(f"Performing OCR on {region_name} for version detection...")
         tw, th = target_img.size
         print(f"Target OCR image size: {tw}x{th}")
 
-    texts = perform_ocr(target_img, reader=reader, verbose=verbose)
+    texts = perform_ocr(target_img, reader=reader, verbose=verbose,
+                        text_threshold=0.4, low_text=0.3)
     
     # Apply regex pattern matching to find version IDs
     import re
@@ -619,15 +649,17 @@ def detect_version_id_from_image(image_path: str,
         if verbose:
             print(f"Invalid regex pattern '{pattern}': {e}")
         return None
-    
+
     matches = []
     if verbose:
         print(f"Searching for pattern '{pattern}' in {len(texts)} OCR results")
-    
+
     for text, confidence in texts:
         match = regex.search(text)
         if match:
             matched_text = match.group()
+            # Normalize: restore dash if OCR read it as a space (e.g. "zorr 837" → "zorr-837")
+            matched_text = re.sub(r'([A-Za-z]+) (\d)', r'\1-\2', matched_text)
             matches.append((matched_text, confidence, text))
             if verbose:
                 print(f"  -> Pattern match: '{matched_text}' in '{text}' (conf: {confidence:.2f})")

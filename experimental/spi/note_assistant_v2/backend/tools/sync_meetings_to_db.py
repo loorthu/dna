@@ -7,7 +7,8 @@ playlist links, then stores them in a SQLite database for pipeline processing.
 
 Usage:
     python sync_meetings_to_db.py                    # Sync today's meetings
-    python sync_meetings_to_db.py --days 1           # Include yesterday
+    python sync_meetings_to_db.py --days 1           # Include yesterday + its playlists
+    python sync_meetings_to_db.py --date 2026-06-02  # Sync a specific past date (mutually exclusive with --days)
     python sync_meetings_to_db.py --verbose          # Verbose output
     python sync_meetings_to_db.py --list              # List all meetings
     python sync_meetings_to_db.py --list --status pending  # Filter by status
@@ -23,7 +24,7 @@ import re
 import smtplib
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 # Add parent directory to path for importing meeting_service and shotgrid_service
@@ -46,7 +47,7 @@ from meeting_service import (
     DEFAULT_DB_PATH
 )
 
-from shotgrid_service import find_playlist_for_meeting, load_show_mapping, _strip_calendar_suffix
+from shotgrid_service import find_playlist_for_meeting, find_playlists_by_date, load_show_mapping, _strip_calendar_suffix
 
 
 # =============================================================================
@@ -116,7 +117,10 @@ def _pipeline_command(meeting: dict, sg_playlist_link: str, show_mapping: dict =
 
 
 def sync_meetings_to_db(conn, calendar_service, drive_service,
-                        days: int = 0, verbose: bool = False) -> dict:
+                        days: int = 0, verbose: bool = False,
+                        playlist_start: datetime = None,
+                        playlist_end: datetime = None,
+                        date_filter: datetime = None) -> dict:
     """
     Sync finished meetings with recordings and SG links to database.
     Returns dict with counts: {synced, skipped, no_sg_link, no_recording, errors}
@@ -124,6 +128,14 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
     """
     stats = {'synced': 0, 'skipped': 0, 'no_sg_link': 0, 'no_recording': 0, 'errors': 0,
              'pipeline_commands': []}
+
+    # Default playlist window to today when not provided by caller
+    if playlist_start is None or playlist_end is None:
+        today = datetime.now()
+        playlist_start = (today - timedelta(days=days)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        playlist_end = today.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     # Get finished meetings with Google Meet links
     meetings = get_meetings(
@@ -142,6 +154,17 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
     for meeting in meetings:
         title = meeting['title']
 
+        # When --date was given, skip meetings that aren't on that date
+        if date_filter is not None:
+            start_time_raw = meeting.get('start_time', '')
+            if start_time_raw:
+                try:
+                    mdate = _resolve_meeting_date(start_time_raw)
+                    if mdate.date() != date_filter.date():
+                        continue
+                except Exception:
+                    pass
+
         # Skip if already in database
         if meeting_exists(conn, meeting['event_id']):
             stats['skipped'] += 1
@@ -149,26 +172,21 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
                 print(f"  Skipping (already exists): {title}")
             continue
 
-        # Resolve SG playlist link:
-        #   1. Name-convention match (calendar title + meeting date → SG playlist)
-        #   2. Fallback: ShotGrid URL pasted in the calendar event description
+        # Resolve SG playlist link via date-based selection
         sg_playlist_link = None
         source = None
-        start_time = meeting.get('start_time', '')
-        if start_time:
-            try:
-                meeting_date = _resolve_meeting_date(start_time)
-                sg_playlist_link = find_playlist_for_meeting(title, meeting_date, show_mapping)
-                if sg_playlist_link:
-                    source = 'name-convention'
-            except Exception as e:
-                if verbose:
-                    print(f"  Warning: name-convention lookup failed for '{title}': {e}")
-
-        if not sg_playlist_link:
-            sg_playlist_link = extract_sg_playlist_link(meeting.get('description', ''))
-            if sg_playlist_link:
-                source = 'description'
+        try:
+            show_code = (
+                title.split(':')[0] if ':' in title else title.split()[0]
+            ).strip()
+            playlist_urls = find_playlists_by_date(show_code, playlist_start, playlist_end)
+            if playlist_urls:
+                sg_playlist_link = ','.join(playlist_urls)
+                n = len(playlist_urls)
+                source = f'date-based ({n} playlist{"s" if n > 1 else ""})'
+        except Exception as e:
+            if verbose:
+                print(f"  Warning: playlist lookup failed for '{title}': {e}")
 
         if not sg_playlist_link:
             stats['no_sg_link'] += 1
@@ -195,7 +213,7 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
                 if verbose:
                     print(f"  Synced: {title}")
                     print(f"    Recording:   {meeting['recording_filename']}")
-                    print(f"    SG Playlist: {sg_playlist_link}  [{source}]")
+                    print(f"    SG Playlist(s): {sg_playlist_link}  [{source}]")
         except Exception as e:
             stats['errors'] += 1
             print(f"  Error inserting {title}: {e}")
@@ -234,7 +252,10 @@ def _send_cron_email(subject: str, body: str, recipient: str, sender: str,
 
 
 def run_cron_mode(conn, calendar_service, drive_service,
-                  days: int, recipient: str, env_cfg: dict):
+                  days: int, recipient: str, env_cfg: dict,
+                  playlist_start: datetime = None,
+                  playlist_end: datetime = None,
+                  date_filter: datetime = None):
     """
     Sync meetings and auto-launch run_pipeline.sh for each new one.
     Emails the combined output only when at least one meeting was synced.
@@ -251,7 +272,10 @@ def run_cron_mode(conn, calendar_service, drive_service,
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         stats = sync_meetings_to_db(conn, calendar_service, drive_service,
-                                    days=days, verbose=True)
+                                    days=days, verbose=True,
+                                    playlist_start=playlist_start,
+                                    playlist_end=playlist_end,
+                                    date_filter=date_filter)
 
     if stats['synced'] == 0:
         return  # Nothing new — stay silent
@@ -352,8 +376,14 @@ def main():
     parser.add_argument('--recipient', metavar='EMAIL',
                         help='Email recipient for --cron notifications '
                              '(default: EMAIL_SENDER from .env)')
+    parser.add_argument('--date', default=None, metavar='YYYY-MM-DD',
+                        help='Sync meetings and find SG playlists for a specific date only. '
+                             'Cannot be combined with --days.')
 
     args = parser.parse_args()
+
+    if args.date and args.days != 0:
+        parser.error('--date and --days are mutually exclusive')
 
     # Resolve database path
     db_path = os.path.abspath(args.db)
@@ -385,6 +415,23 @@ def main():
         conn.close()
         return
 
+    # Compute playlist date window
+    date_filter = None
+    if args.date:
+        date_filter = datetime.strptime(args.date, '%Y-%m-%d')
+        playlist_start = date_filter.replace(hour=0, minute=0, second=0, microsecond=0)
+        playlist_end = date_filter.replace(hour=23, minute=59, second=59, microsecond=999999)
+        # Compute days_back so get_meetings() reaches the target date
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        days_back = max(0, (today - date_filter).days)
+    else:
+        today = datetime.now()
+        playlist_end = today.replace(hour=23, minute=59, second=59, microsecond=999999)
+        playlist_start = (today - timedelta(days=args.days)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        days_back = args.days
+
     # Resolve calendar/drive credentials
     script_dir = os.path.dirname(os.path.abspath(__file__))
     credentials_path = os.path.join(script_dir, '../client_secret.json')
@@ -406,14 +453,20 @@ def main():
                   "Set EMAIL_SENDER in .env or pass --recipient.", file=sys.stderr)
             sys.exit(1)
         run_cron_mode(conn, calendar_service, drive_service,
-                      days=args.days, recipient=recipient, env_cfg=env_cfg)
+                      days=days_back, recipient=recipient, env_cfg=env_cfg,
+                      playlist_start=playlist_start, playlist_end=playlist_end,
+                      date_filter=date_filter)
         conn.close()
         return
 
     # Default: interactive sync
-    print(f"Syncing finished meetings (past {args.days} days + today)...")
+    date_label = args.date if args.date else f"past {args.days} days + today"
+    print(f"Syncing finished meetings ({date_label})...")
     stats = sync_meetings_to_db(conn, calendar_service, drive_service,
-                                 days=args.days, verbose=args.verbose)
+                                 days=days_back, verbose=args.verbose,
+                                 playlist_start=playlist_start,
+                                 playlist_end=playlist_end,
+                                 date_filter=date_filter)
 
     print(f"\nSync complete:")
     print(f"  Synced:       {stats['synced']}")

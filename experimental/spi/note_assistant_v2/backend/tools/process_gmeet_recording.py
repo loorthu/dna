@@ -143,6 +143,27 @@ def cleanup_and_exit(temp_dir, error_msg):
     sys.exit(1)
 
 
+def _merge_playlist_csvs(csv_paths: list, output_path: str) -> None:
+    """Concatenate playlist CSVs, keeping first occurrence of each version ID (col 0)."""
+    seen_ids = set()
+    header = None
+    rows = []
+    for path in csv_paths:
+        with open(path, newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            if header is None:
+                header = reader.fieldnames
+            for row in reader:
+                vid = row.get(header[0], '')
+                if vid not in seen_ids:
+                    seen_ids.add(vid)
+                    rows.append(row)
+    with open(output_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Process Google Meet recording with ShotGrid data and generate LLM summaries"
@@ -238,23 +259,39 @@ def main():
     # Save original inputs for display in email header
     sg_input_original = args.sg_playlist_csv
 
-    # Resolve ShotGrid playlist URL / numeric ID → temp CSV
+    # Resolve one or more ShotGrid playlist URLs/IDs (comma-separated) → temp CSV
     sg_playlist_temp_dir = None
-    playlist_id = parse_sg_playlist_url(args.sg_playlist_csv)
-    if playlist_id is not None:
+    playlist_id = None  # set to single ID when only one playlist; None for merged/file
+    raw_entries = [e.strip() for e in args.sg_playlist_csv.split(',') if e.strip()]
+    playlist_ids = [parse_sg_playlist_url(e) for e in raw_entries]
+
+    if all(pid is not None for pid in playlist_ids):
         sg_playlist_temp_dir = tempfile.mkdtemp(prefix="sg_playlist_")
-        sg_csv_path = os.path.join(sg_playlist_temp_dir, "sg_playlist.csv")
-        print(f"Fetching ShotGrid playlist {playlist_id}...")
-        try:
-            playlist_name = fetch_playlist_to_csv(playlist_id, sg_csv_path)
-            row_count = sum(1 for _ in open(sg_csv_path)) - 1  # subtract header
-            print(f"Fetched playlist '{playlist_name}' ({row_count} versions) → {sg_csv_path}")
-            args.sg_playlist_csv = sg_csv_path
-        except Exception as e:
-            if sg_playlist_temp_dir and os.path.exists(sg_playlist_temp_dir):
-                shutil.rmtree(sg_playlist_temp_dir)
-            print(f"Error fetching ShotGrid playlist: {e}")
-            sys.exit(1)
+        individual_csvs = []
+
+        for pid in playlist_ids:
+            sg_csv_path = os.path.join(sg_playlist_temp_dir, f"sg_playlist_{pid}.csv")
+            print(f"Fetching ShotGrid playlist {pid}...")
+            try:
+                playlist_name = fetch_playlist_to_csv(pid, sg_csv_path)
+                row_count = sum(1 for _ in open(sg_csv_path)) - 1
+                print(f"  '{playlist_name}' ({row_count} versions)")
+                individual_csvs.append(sg_csv_path)
+            except Exception as e:
+                if sg_playlist_temp_dir and os.path.exists(sg_playlist_temp_dir):
+                    shutil.rmtree(sg_playlist_temp_dir)
+                print(f"Error fetching ShotGrid playlist {pid}: {e}")
+                sys.exit(1)
+
+        if len(individual_csvs) == 1:
+            args.sg_playlist_csv = individual_csvs[0]
+            playlist_id = playlist_ids[0]
+        else:
+            merged_path = os.path.join(sg_playlist_temp_dir, "sg_playlist_merged.csv")
+            _merge_playlist_csvs(individual_csvs, merged_path)
+            args.sg_playlist_csv = merged_path
+            total = sum(1 for _ in open(merged_path)) - 1
+            print(f"Merged {len(individual_csvs)} playlists → {total} unique versions")
 
     # Determine if output is directory or file
     output_is_dir = False
@@ -658,7 +695,10 @@ def main():
                     meeting_duration=meeting_duration,
                     meeting_summary=meeting_summary_text,
                     recording_url=args.drive_url,
-                    sg_playlist_url=f"{SG_URL}/detail/Playlist/{playlist_id}" if playlist_id and SG_URL else (sg_input_original if sg_input_original.startswith('http') else None)
+                    sg_playlist_url=(
+                        f"{SG_URL}/detail/Playlist/{playlist_id}" if playlist_id and SG_URL
+                        else (raw_entries[0] if raw_entries and raw_entries[0].startswith('http') else None)
+                    )
                 )
                 if success:
                     print(f"Email sent successfully to {args.recipient_email}")

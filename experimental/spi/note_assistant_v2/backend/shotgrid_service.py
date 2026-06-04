@@ -2,7 +2,7 @@ import os
 import hashlib
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from shotgun_api3 import Shotgun
 import argparse
@@ -499,6 +499,37 @@ def find_playlist_for_meeting(meeting_title: str, meeting_date: datetime,
             return f"{SG_URL}/detail/Playlist/{playlist['id']}"
 
     return None
+
+
+def find_playlists_by_date(
+    show_code: str,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> list:
+    """
+    Return URLs of ALL SG playlists for the given show whose created_at falls
+    within [start_dt, end_dt]. No title-prefix matching is performed.
+    """
+    if not SG_URL or not SG_SCRIPT_NAME or not SG_API_KEY:
+        return []
+
+    project = get_project_by_code(show_code)
+    if not project:
+        return []
+
+    sg = Shotgun(SG_URL, SG_SCRIPT_NAME, SG_API_KEY)
+    playlists = sg.find(
+        'Playlist',
+        [
+            ['project', 'is', {'type': 'Project', 'id': project['id']}],
+            ['created_at', 'greater_than', start_dt],
+            ['created_at', 'less_than', end_dt],
+        ],
+        ['id', 'code'],
+        order=[{'field_name': 'created_at', 'direction': 'asc'}],
+    )
+
+    return [f"{SG_URL}/detail/Playlist/{p['id']}" for p in playlists]
 
 
 router = APIRouter()
