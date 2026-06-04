@@ -100,6 +100,13 @@ def meeting_exists(conn: sqlite3.Connection, event_id: str) -> bool:
     return cursor.fetchone() is not None
 
 
+def get_meeting_status(conn: sqlite3.Connection, event_id: str):
+    """Return the status of a meeting, or None if not in database."""
+    cursor = conn.execute('SELECT status FROM meetings WHERE event_id = ?', (event_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
 def insert_meeting(conn: sqlite3.Connection, meeting: dict, sg_playlist_link: str) -> bool:
     """Insert a new meeting into the database. Returns True if inserted."""
     if meeting_exists(conn, meeting['event_id']):

@@ -40,9 +40,9 @@ from get_gcalendar_entries import (
 # Import database functions from meeting_service
 from meeting_service import (
     init_db,
-    meeting_exists,
     insert_meeting,
     update_meeting_status,
+    get_meeting_status,
     get_meetings as db_get_meetings,
     DEFAULT_DB_PATH
 )
@@ -87,10 +87,14 @@ def _resolve_meeting_date(start_time: str) -> datetime:
     return datetime.fromisoformat(start_time.replace('Z', '+00:00'))
 
 
-def _pipeline_command(meeting: dict, sg_playlist_link: str, show_mapping: dict = None) -> str:
+def _pipeline_command(meeting: dict, sg_playlist_link: str, show_mapping: dict = None,
+                      show_code: str = None) -> str:
     """Build the run_pipeline.sh command for a synced meeting."""
     title = meeting['title']
-    project = (title.split(':')[0] if ':' in title else title.split()[0]).strip().lower()
+    if show_code is None:
+        raw_code = (title.split(':')[0] if ':' in title else title.split()[0]).strip()
+        show_code = raw_code.split('/')[0].strip()
+    project = show_code.lower()
 
     stripped = _strip_calendar_suffix(title, show_mapping or {})
     if ':' in stripped:
@@ -126,8 +130,8 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
     Returns dict with counts: {synced, skipped, no_sg_link, no_recording, errors}
     Also includes 'pipeline_commands': list of run_pipeline.sh commands for newly synced meetings.
     """
-    stats = {'synced': 0, 'skipped': 0, 'no_sg_link': 0, 'no_recording': 0, 'errors': 0,
-             'pipeline_commands': []}
+    stats = {'synced': 0, 're_queued': 0, 'skipped': 0, 'no_sg_link': 0, 'no_recording': 0,
+             'errors': 0, 'pipeline_commands': []}
 
     # Default playlist window to today when not provided by caller
     if playlist_start is None or playlist_end is None:
@@ -165,24 +169,31 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
                 except Exception:
                     pass
 
-        # Skip if already in database
-        if meeting_exists(conn, meeting['event_id']):
+        # Skip only if already completed
+        existing_status = get_meeting_status(conn, meeting['event_id'])
+        if existing_status == 'completed':
             stats['skipped'] += 1
             if verbose:
-                print(f"  Skipping (already exists): {title}")
+                print(f"  Skipping (completed): {title}")
             continue
 
-        # Resolve SG playlist link via date-based selection
+        # Resolve SG playlist link via date-based selection (per-show)
         sg_playlist_link = None
+        playlists_by_show = {}
         source = None
         try:
-            show_code = (
+            raw_code = (
                 title.split(':')[0] if ':' in title else title.split()[0]
             ).strip()
-            playlist_urls = find_playlists_by_date(show_code, playlist_start, playlist_end)
-            if playlist_urls:
-                sg_playlist_link = ','.join(playlist_urls)
-                n = len(playlist_urls)
+            show_codes = [c.strip() for c in raw_code.split('/')]
+            for code in show_codes:
+                urls = find_playlists_by_date(code, playlist_start, playlist_end)
+                if urls:
+                    playlists_by_show[code] = urls
+            all_urls = [u for urls in playlists_by_show.values() for u in urls]
+            if all_urls:
+                sg_playlist_link = ','.join(all_urls)
+                n = len(all_urls)
                 source = f'date-based ({n} playlist{"s" if n > 1 else ""})'
         except Exception as e:
             if verbose:
@@ -201,19 +212,26 @@ def sync_meetings_to_db(conn, calendar_service, drive_service,
                 print(f"  Skipping (no video recording): {title}")
             continue
 
-        # Insert into database
+        # Insert into database (no-op if already exists)
         try:
-            if insert_meeting(conn, meeting, sg_playlist_link):
+            is_new = insert_meeting(conn, meeting, sg_playlist_link)
+            if is_new:
                 stats['synced'] += 1
+            else:
+                stats['re_queued'] += 1
+            for show_code, urls in playlists_by_show.items():
                 stats['pipeline_commands'].append({
                     'event_id': meeting['event_id'],
                     'title': title,
-                    'command': _pipeline_command(meeting, sg_playlist_link, show_mapping),
+                    'command': _pipeline_command(
+                        meeting, ','.join(urls), show_mapping, show_code=show_code
+                    ),
                 })
-                if verbose:
-                    print(f"  Synced: {title}")
-                    print(f"    Recording:   {meeting['recording_filename']}")
-                    print(f"    SG Playlist(s): {sg_playlist_link}  [{source}]")
+            if verbose:
+                verb = "Synced" if is_new else "Re-queued"
+                print(f"  {verb}: {title}")
+                print(f"    Recording:   {meeting['recording_filename']}")
+                print(f"    SG Playlist(s): {sg_playlist_link}  [{source}]")
         except Exception as e:
             stats['errors'] += 1
             print(f"  Error inserting {title}: {e}")
@@ -470,7 +488,8 @@ def main():
 
     print(f"\nSync complete:")
     print(f"  Synced:       {stats['synced']}")
-    print(f"  Skipped:      {stats['skipped']} (already in DB)")
+    print(f"  Re-queued:    {stats['re_queued']} (pending/failed, re-generating commands)")
+    print(f"  Skipped:      {stats['skipped']} (completed)")
     print(f"  No SG link:   {stats['no_sg_link']}")
     print(f"  No recording: {stats['no_recording']}")
     print(f"  Errors:       {stats['errors']}")
