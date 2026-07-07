@@ -254,13 +254,17 @@ class ShotgridProvider(ProdtrackProviderBase):
             return [self._create_shallow_entity(item) for item in data if item]
         return None
 
-    def _create_shallow_entity(self, sg_link: dict) -> EntityBase:
+    def _create_shallow_entity(self, sg_link: dict) -> Optional[EntityBase]:
         """Create a shallow DNA entity from a ShotGrid link dict."""
         sg_type = sg_link.get("type")
         entity_id = sg_link.get("id")
         name = sg_link.get("name")
 
-        dna_type = _get_dna_entity_type(sg_type)
+        try:
+            dna_type = _get_dna_entity_type(sg_type)
+        except ValueError:
+            return None
+
         model_class = ENTITY_MODELS[dna_type]
 
         if dna_type == "playlist":
