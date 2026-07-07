@@ -251,7 +251,7 @@ class ShotgridProvider(ProdtrackProviderBase):
         if isinstance(data, dict):
             return self._create_shallow_entity(data)
         elif isinstance(data, list):
-            return [self._create_shallow_entity(item) for item in data if item]
+            return [e for item in data if item for e in [self._create_shallow_entity(item)] if e is not None]
         return None
 
     def _create_shallow_entity(self, sg_link: dict) -> Optional[EntityBase]:
