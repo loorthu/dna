@@ -602,20 +602,11 @@ class ShotgridProvider(ProdtrackProviderBase):
         if not self._sg:
             raise ValueError("Not connected to ShotGrid")
 
-        # First, find the user by their email
-        user = self._sg.find_one(
-            "HumanUser",
-            filters=[["email", "is", user_email]],
-            fields=["id", "email", "name"],
-        )
-
-        if not user:
-            raise ValueError(f"User not found: {user_email}")
-
-        # Find projects where this user is in the users list
+        # Return all active projects regardless of user membership —
+        # in a studio setup users are assigned via tasks/groups, not the users field.
         sg_projects = self._sg.find(
             "Project",
-            filters=[["users", "is", user]],
+            filters=[["sg_status", "is", "Active"]],
             fields=["id", "name"],
         )
 
