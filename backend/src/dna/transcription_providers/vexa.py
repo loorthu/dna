@@ -88,6 +88,7 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
         passcode: Optional[str] = None,
         bot_name: Optional[str] = None,
         language: Optional[str] = None,
+        authenticated: bool = True,
     ) -> BotSession:
         """Dispatch a bot to join a meeting and start transcription."""
         payload = {
@@ -101,6 +102,8 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
             payload["bot_name"] = bot_name
         if language:
             payload["language"] = language
+        if authenticated:
+            payload["authenticated"] = True
 
         response = await self.client.post("/bots", json=payload)
         response.raise_for_status()

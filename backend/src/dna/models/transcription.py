@@ -43,6 +43,7 @@ class DispatchBotRequest(BaseModel):
     )
     bot_name: Optional[str] = Field(default=None, description="Custom name for the bot")
     language: Optional[str] = Field(default=None, description="Transcription language")
+    authenticated: bool = Field(default=True, description="Join as authenticated user via active browser_session")
 
 
 class BotStatus(BaseModel):
