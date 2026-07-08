@@ -481,6 +481,18 @@ export interface PublishTranscriptParams {
   request: PublishTranscriptRequest;
 }
 
+export interface EmailNotesRequest {
+  to: string;
+  cc?: string;
+  subject?: string;
+  sent_by: string;
+}
+
+export interface EmailNotesParams {
+  playlistId: number;
+  request: EmailNotesRequest;
+}
+
 export type NoteQCSeverity = 'warning' | 'error';
 
 export interface NoteQCCheck {

@@ -143,3 +143,12 @@ class PublishTranscriptResponse(BaseModel):
     outcome: str = Field(description="created | updated | skipped")
     skipped_reason: Optional[str] = None
     segments_count: int
+
+
+class EmailNotesRequest(BaseModel):
+    """Request model for emailing notes for a playlist."""
+
+    to: str = Field(description="Recipient email address(es), comma-separated")
+    cc: Optional[str] = Field(default=None, description="CC email address(es), comma-separated")
+    subject: Optional[str] = Field(default=None, description="Email subject (auto-generated if omitted)")
+    sent_by: str = Field(description="Display name or email of the person sending")

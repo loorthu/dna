@@ -48,6 +48,7 @@ from dna.models import (
     PlaylistMetadataUpdate,
     Project,
     PublishedTranscriptUpdate,
+    EmailNotesRequest,
     PublishNotesRequest,
     PublishNotesResponse,
     PublishTranscriptRequest,
@@ -1188,6 +1189,69 @@ async def publish_transcript(
         outcome=outcome,
         segments_count=payload.segments_count,
     )
+
+
+# -----------------------------------------------------------------------------
+# Email notes endpoint
+# -----------------------------------------------------------------------------
+
+
+@app.post(
+    "/playlists/{playlist_id}/email-notes",
+    tags=["Playlists", "Notes"],
+    summary="Email notes for a playlist",
+    description="Send all draft notes and transcripts for a playlist as a formatted HTML email.",
+    status_code=204,
+)
+async def email_notes(
+    playlist_id: int,
+    request: EmailNotesRequest,
+    storage: StorageProviderDep,
+    prodtrack: ProdtrackProviderDep,
+    _: CurrentUserDep,
+) -> None:
+    from dna.email_service import build_notes_html, send_notes_email
+
+    versions = prodtrack.get_versions_for_playlist(playlist_id)
+
+    all_drafts = await storage.get_draft_notes_for_playlist(playlist_id)
+    drafts_by_version: dict[int, list] = {}
+    for d in all_drafts:
+        drafts_by_version.setdefault(d.version_id, []).append(d)
+
+    segments_by_version: dict[int, list] = {}
+    for v in versions:
+        segs = await storage.get_segments_for_version(playlist_id, v.id)
+        if segs:
+            segments_by_version[v.id] = segs
+
+    playlist_name = f"Playlist {playlist_id}"
+    try:
+        playlist = prodtrack.get_entity("playlist", playlist_id, resolve_links=False)
+        if playlist and getattr(playlist, "code", None):
+            playlist_name = playlist.code
+    except Exception:
+        pass
+
+    project_name = ""
+    if versions and versions[0].project:
+        project_name = versions[0].project.get("name", "")
+
+    subject = request.subject or playlist_name
+
+    html_body = build_notes_html(
+        playlist_name=playlist_name,
+        project_name=project_name,
+        sent_by=request.sent_by,
+        versions=versions,
+        drafts_by_version=drafts_by_version,
+        segments_by_version=segments_by_version,
+    )
+
+    try:
+        send_notes_email(to=request.to, subject=subject, html_content=html_body, cc=request.cc)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -----------------------------------------------------------------------------

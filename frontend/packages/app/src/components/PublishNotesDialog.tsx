@@ -21,6 +21,7 @@ import {
 import { Loader2, Info, MoreVertical } from 'lucide-react';
 import { usePublishNotes } from '../hooks/usePublishNotes';
 import { usePublishTranscript } from '../hooks/usePublishTranscript';
+import { EmailNotesDialog } from './EmailNotesDialog';
 import { useSegments } from '../hooks';
 import {
   useDraftNote,
@@ -606,6 +607,7 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
   showTitle = true,
 }) => {
   const { aiEnabled } = useFeatureFlags();
+  const [emailOpen, setEmailOpen] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [transcriptSelected, setTranscriptSelected] = useState<
     Record<number, boolean>
@@ -989,28 +991,43 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
           )}
 
           <FooterBar>
-            <Flex justify="end" gap="3">
-              <Dialog.Close>
-                <Button variant="soft" color="gray" disabled={isPending}>
-                  Cancel
-                </Button>
-              </Dialog.Close>
+            <Flex justify="between" align="center" gap="3">
               <Button
-                disabled={
-                  isPending ||
-                  notes.length === 0 ||
-                  selectedCount === 0 ||
-                  publishBlockedByQc
-                }
-                onClick={() => void handlePublishSelected()}
+                variant="soft"
+                onClick={() => setEmailOpen(true)}
+                disabled={isPending}
               >
-                {isPending && <SpinnerIcon size={14} />}
-                {isPending
-                  ? 'Publishing...'
-                  : `Publish selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
+                Email
               </Button>
+              <Flex gap="3">
+                <Dialog.Close>
+                  <Button variant="soft" color="gray" disabled={isPending}>
+                    Cancel
+                  </Button>
+                </Dialog.Close>
+                <Button
+                  disabled={
+                    isPending ||
+                    notes.length === 0 ||
+                    selectedCount === 0 ||
+                    publishBlockedByQc
+                  }
+                  onClick={() => void handlePublishSelected()}
+                >
+                  {isPending && <SpinnerIcon size={14} />}
+                  {isPending
+                    ? 'Publishing...'
+                    : `Publish selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
+                </Button>
+              </Flex>
             </Flex>
           </FooterBar>
+          <EmailNotesDialog
+            open={emailOpen}
+            onClose={() => setEmailOpen(false)}
+            playlistId={playlistId}
+            userEmail={userEmail}
+          />
         </>
       )}
     </RegisterFlushContext.Provider>

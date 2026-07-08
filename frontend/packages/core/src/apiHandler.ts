@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
 import {
+  EmailNotesParams,
   GetProjectsForUserParams,
   GetPlaylistsForProjectParams,
   GetVersionsForPlaylistParams,
@@ -319,6 +320,10 @@ class ApiHandler {
       `/playlists/${params.playlistId}/publish-transcript`,
       params.request
     );
+  }
+
+  async emailNotes(params: EmailNotesParams): Promise<void> {
+    await this.post<void>(`/playlists/${params.playlistId}/email-notes`, params.request);
   }
 
   async getQCChecks(params: GetQCChecksParams): Promise<NoteQCCheck[]> {
