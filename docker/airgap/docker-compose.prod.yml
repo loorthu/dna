@@ -1,0 +1,98 @@
+# DNA production compose for air-gapped deployment.
+# Self-contained (does NOT inherit the dev bind-mounts in backend/docker-compose.yml).
+# Runs from pre-loaded images; all secrets come from docker/airgap/.env.
+#
+#   docker compose --env-file docker/airgap/.env \
+#     -f docker/airgap/docker-compose.prod.yml up -d --no-build
+name: dna
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: dna-mongo
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=dna
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  api:
+    image: dna-backend:${DNA_TAG:-airgap}
+    pull_policy: never
+    container_name: dna-backend
+    ports:
+      - "${DNA_API_PORT:-8000}:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MONGODB_URL=mongodb://mongo:27017
+      - STORAGE_PROVIDER=mongodb
+      # ShotGrid / prodtrack
+      - PRODTRACK_PROVIDER=${PRODTRACK_PROVIDER:-shotgrid}
+      - SHOTGRID_URL=${SHOTGRID_URL:-}
+      - SHOTGRID_SCRIPT_NAME=${SHOTGRID_SCRIPT_NAME:-}
+      - SHOTGRID_API_KEY=${SHOTGRID_API_KEY:-}
+      # Vexa (reached over the shared vexa_vexa network)
+      - VEXA_API_URL=${VEXA_API_URL:-http://api-gateway:8000}
+      - VEXA_API_KEY=${VEXA_API_KEY:-}
+      # LLM
+      - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - GEMINI_URL=${GEMINI_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
+      # Auth
+      - AUTH_PROVIDER=${AUTH_PROVIDER:-none}
+      # Transcript publishing
+      - DNA_ENABLE_TRANSCRIPT_PUBLISH=${DNA_ENABLE_TRANSCRIPT_PUBLISH:-false}
+      - SHOTGRID_TRANSCRIPT_ENTITY=${SHOTGRID_TRANSCRIPT_ENTITY:-CustomEntity01}
+      # Email
+      - EMAIL_PROVIDER=${EMAIL_PROVIDER:-gmail}
+      - EMAIL_SENDER=${EMAIL_SENDER:-}
+      - GMAIL_CREDENTIALS_DIR=/app/gmail-credentials
+    volumes:
+      # Place client_secret.json + token.json in this host dir on prod.
+      - ${GMAIL_CREDENTIALS_HOST_DIR:-./gmail-credentials}:/app/gmail-credentials:ro
+    depends_on:
+      - mongo
+    networks:
+      - default
+      - vexa_vexa
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  frontend:
+    image: dna-frontend:${DNA_TAG:-airgap}
+    pull_policy: never
+    container_name: dna-frontend
+    ports:
+      - "${DNA_FRONTEND_PORT:-8081}:8080"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+
+networks:
+  default:
+  # Shared with the Vexa stack so the DNA api can reach api-gateway by name.
+  # Created by the Vexa core stack (project "vexa"). Start Vexa first.
+  vexa_vexa:
+    external: true
+    name: vexa_vexa

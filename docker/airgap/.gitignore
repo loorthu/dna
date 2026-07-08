@@ -1,0 +1,4 @@
+# Never commit image bundles or the real secrets file.
+dist/
+.env
+gmail-credentials/
