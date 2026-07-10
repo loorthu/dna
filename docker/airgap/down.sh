@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
-# Stop the DNA stack on prod. Add --volumes to also delete the mongo data.
+# Stop the DNA frontend on prod.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/../.."
 
-EXTRA=""
-[ "${1:-}" = "--volumes" ] && EXTRA="--volumes"
-
-echo "==> Stopping DNA stack..."
+echo "==> Stopping DNA frontend..."
 docker compose --env-file "$SCRIPT_DIR/.env" \
-  -f "$SCRIPT_DIR/docker-compose.prod.yml" down $EXTRA
+  -f "$SCRIPT_DIR/docker-compose.frontend.yml" down
 
 echo "Done."

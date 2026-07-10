@@ -30,8 +30,14 @@ interface EventContextValue {
 
 const EventContext = createContext<EventContextValue | null>(null);
 
+// When VITE_WS_URL is unset, derive it from the page origin so the WebSocket
+// hits the same host that served the app (e.g. an nginx reverse-proxy that
+// forwards /ws to the backend). Falls back to localhost for `vite` dev.
 const WEBSOCKET_URL =
-  import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+  import.meta.env.VITE_WS_URL ||
+  (typeof window !== 'undefined' && window.location.host
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    : 'ws://localhost:8000/ws');
 
 interface EventProviderProps {
   children: ReactNode;

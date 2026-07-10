@@ -1,0 +1,35 @@
+# DNA prod deployment — FRONTEND ONLY.
+# The DNA backend + mongo run on another host (with internet, for Gemini/Gmail).
+# This nginx serves the SPA and reverse-proxies /api + /ws to that backend
+# (BACKEND_URL) — so the browser only ever talks to this host (no CORS).
+#
+#   docker compose --env-file docker/airgap/.env -f docker/airgap/docker-compose.frontend.yml build
+#   docker compose --env-file docker/airgap/.env -f docker/airgap/docker-compose.frontend.yml up -d
+name: dna-frontend
+
+services:
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        # /api is relative — nginx proxies it to BACKEND_URL. VITE_WS_URL empty
+        # => the app derives ws://<this-origin>/ws, which nginx also proxies.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+        VITE_AUTH_PROVIDER: ${VITE_AUTH_PROVIDER:-none}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+    image: dna-frontend:${DNA_TAG:-airgap}
+    container_name: dna-frontend
+    ports:
+      - "${DNA_FRONTEND_PORT:-8081}:8080"
+    environment:
+      # The host running the DNA backend (API + WS). nginx proxies /api + /ws here.
+      - BACKEND_URL=${BACKEND_URL:-http://160.33.19.70:8000}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3

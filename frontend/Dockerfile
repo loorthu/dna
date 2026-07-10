@@ -40,8 +40,11 @@ RUN npx vite build
 # Stage 2: Serve with nginx
 FROM nginx:alpine
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
+# nginx server block as a TEMPLATE — the base image runs envsubst on it at
+# container start, substituting ${BACKEND_URL} (the reverse-proxy target for
+# /api and /ws). Output lands in /etc/nginx/conf.d/default.conf, which the base
+# nginx.conf already includes.
+COPY default.conf.template /etc/nginx/templates/default.conf.template
 
 # Copy built files from builder stage
 COPY --from=builder /app/packages/app/dist /usr/share/nginx/html
