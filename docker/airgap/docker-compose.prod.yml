@@ -1,9 +1,11 @@
-# DNA production compose for air-gapped deployment.
-# Self-contained (does NOT inherit the dev bind-mounts in backend/docker-compose.yml).
-# Runs from pre-loaded images; all secrets come from docker/airgap/.env.
+# DNA production compose (air-gapped).
+# Two independent images (dna-backend = FastAPI, dna-frontend = nginx static) + mongo.
+# Build on prod via the internal Artifactory (build.args come from .env), OR
+# transfer prebuilt images (save.sh/load.sh). DNA reaches Vexa over the NETWORK
+# (VEXA_API_URL) — Vexa runs on a different host.
 #
-#   docker compose --env-file docker/airgap/.env \
-#     -f docker/airgap/docker-compose.prod.yml up -d --no-build
+#   docker compose --env-file docker/airgap/.env -f docker/airgap/docker-compose.prod.yml build
+#   docker compose --env-file docker/airgap/.env -f docker/airgap/docker-compose.prod.yml up -d
 name: dna
 
 services:
@@ -23,8 +25,13 @@ services:
       start_period: 40s
 
   api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
     image: dna-backend:${DNA_TAG:-airgap}
-    pull_policy: never
     container_name: dna-backend
     ports:
       - "${DNA_API_PORT:-8000}:8000"
@@ -37,16 +44,17 @@ services:
       - SHOTGRID_URL=${SHOTGRID_URL:-}
       - SHOTGRID_SCRIPT_NAME=${SHOTGRID_SCRIPT_NAME:-}
       - SHOTGRID_API_KEY=${SHOTGRID_API_KEY:-}
-      # Vexa (reached over the shared vexa_vexa network)
-      - VEXA_API_URL=${VEXA_API_URL:-http://api-gateway:8000}
+      # Vexa runs on another host — reached over the network (not a shared docker net).
+      - VEXA_API_URL=${VEXA_API_URL:-http://160.33.19.70:18056}
       - VEXA_API_KEY=${VEXA_API_KEY:-}
       # LLM
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - GEMINI_URL=${GEMINI_URL:-https://generativelanguage.googleapis.com/v1beta/openai/}
-      # Auth
+      # Auth + CORS (frontend is a separate origin: http://<host>:${DNA_FRONTEND_PORT})
       - AUTH_PROVIDER=${AUTH_PROVIDER:-none}
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Transcript publishing
       - DNA_ENABLE_TRANSCRIPT_PUBLISH=${DNA_ENABLE_TRANSCRIPT_PUBLISH:-false}
       - SHOTGRID_TRANSCRIPT_ENTITY=${SHOTGRID_TRANSCRIPT_ENTITY:-CustomEntity01}
@@ -55,13 +63,10 @@ services:
       - EMAIL_SENDER=${EMAIL_SENDER:-}
       - GMAIL_CREDENTIALS_DIR=/app/gmail-credentials
     volumes:
-      # Place client_secret.json + token.json in this host dir on prod.
+      # Put client_secret.json + token.json in this host dir on prod (mounted ro).
       - ${GMAIL_CREDENTIALS_HOST_DIR:-./gmail-credentials}:/app/gmail-credentials:ro
     depends_on:
       - mongo
-    networks:
-      - default
-      - vexa_vexa
     restart: unless-stopped
     healthcheck:
       test:
@@ -77,8 +82,17 @@ services:
       start_period: 40s
 
   frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+        # Baked into the static build — must be URLs the end user's BROWSER can reach.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+        VITE_WS_URL: ${VITE_WS_URL:-}
+        VITE_AUTH_PROVIDER: ${VITE_AUTH_PROVIDER:-none}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     image: dna-frontend:${DNA_TAG:-airgap}
-    pull_policy: never
     container_name: dna-frontend
     ports:
       - "${DNA_FRONTEND_PORT:-8081}:8080"
@@ -88,11 +102,3 @@ services:
 
 volumes:
   mongo_data:
-
-networks:
-  default:
-  # Shared with the Vexa stack so the DNA api can reach api-gateway by name.
-  # Created by the Vexa core stack (project "vexa"). Start Vexa first.
-  vexa_vexa:
-    external: true
-    name: vexa_vexa

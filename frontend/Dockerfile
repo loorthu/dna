@@ -8,6 +8,11 @@ COPY package.json package-lock.json ./
 COPY packages/core/package*.json ./packages/core/
 COPY packages/app/package*.json ./packages/app/
 
+# Optional internal npm mirror for corporate / air-gapped builds where the build
+# host can't reach the public registry. Default (empty) uses the public registry.
+ARG NPM_REGISTRY=
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi
+
 # Use npm install (not ci) so Rollup/Vite optional native bindings are resolved for the
 # container platform (linux/amd64 in CI). npm ci can fail with MODULE_NOT_FOUND for
 # @rollup/rollup-linux-*-musl due to optional dependency resolution (npm/cli#4828).

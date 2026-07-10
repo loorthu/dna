@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Start the DNA stack on prod from pre-loaded images (never builds/pulls).
-# Start the Vexa stack FIRST — DNA's api joins Vexa's vexa_vexa network.
+# Start the DNA stack (mongo + backend + frontend) from built (or loaded) images.
+# DNA reaches Vexa over the network at VEXA_API_URL — Vexa runs on a different
+# host, so there's no shared docker network to wait on.
+#
+# Build first (./docker/airgap/build.sh) or load transferred images (./load.sh).
 #
 # Usage:  ./docker/airgap/up.sh [tag]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$ROOT"
 
 if [ ! -f "$SCRIPT_DIR/.env" ]; then
   echo "Error: docker/airgap/.env not found." >&2
@@ -15,15 +16,10 @@ if [ ! -f "$SCRIPT_DIR/.env" ]; then
   exit 1
 fi
 
-TAG="${1:-${DNA_TAG:-$(cat "$SCRIPT_DIR/dist/DNA_TAG" 2>/dev/null || echo airgap)}}"
+TAG="${1:-${DNA_TAG:-airgap}}"
 export DNA_TAG="$TAG"
 
-# DNA's api attaches to the Vexa network. Fail clearly if Vexa isn't up.
-if ! docker network inspect vexa_vexa >/dev/null 2>&1; then
-  echo "Error: docker network 'vexa_vexa' not found." >&2
-  echo "  Start the Vexa stack first:  (in the vexa repo) ./docker/airgap/up.sh" >&2
-  exit 1
-fi
+get() { grep -E "^$1=" "$SCRIPT_DIR/.env" | head -1 | cut -d= -f2- | tr -d ' '; }
 
 echo "==> Starting DNA stack (DNA_TAG=$TAG)..."
 docker compose --env-file "$SCRIPT_DIR/.env" \
@@ -31,6 +27,7 @@ docker compose --env-file "$SCRIPT_DIR/.env" \
 
 echo ""
 echo "==> DNA is up."
-echo "    Backend:   http://localhost:$(grep -E '^DNA_API_PORT=' "$SCRIPT_DIR/.env" | cut -d= -f2 || echo 8000)"
-echo "    Frontend:  http://localhost:$(grep -E '^DNA_FRONTEND_PORT=' "$SCRIPT_DIR/.env" | cut -d= -f2 || echo 8081)"
+echo "    Backend:   http://<this-host>:$(get DNA_API_PORT || echo 8000)"
+echo "    Frontend:  http://<this-host>:$(get DNA_FRONTEND_PORT || echo 8081)"
+echo "    Vexa API:  $(get VEXA_API_URL)"
 echo "    Stop:      ./docker/airgap/down.sh"

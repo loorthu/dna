@@ -11,8 +11,16 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements
 COPY requirements.txt .
 
+# Optional internal PyPI mirror for corporate / air-gapped builds where the
+# build host can't reach public PyPI. Defaults to public PyPI (normal builds
+# unchanged). Pass: --build-arg PIP_INDEX_URL=... --build-arg PIP_TRUSTED_HOST=...
+ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_TRUSTED_HOST=
+
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
+        ${PIP_TRUSTED_HOST:+--trusted-host $PIP_TRUSTED_HOST} \
+        -r requirements.txt
 
 # Copy application code
 COPY src/ ./src/
