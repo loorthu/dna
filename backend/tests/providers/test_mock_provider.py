@@ -12,7 +12,10 @@ from dna.prodtrack_providers.mock_provider import (
     MockProdtrackProvider,
     _shallow_entity,
 )
-from dna.prodtrack_providers.prodtrack_provider_base import get_prodtrack_provider
+from dna.prodtrack_providers.prodtrack_provider_base import (
+    RECENT_PLAYLIST_LIMIT,
+    get_prodtrack_provider,
+)
 
 
 def _create_seeded_db(path: Path) -> None:
@@ -438,6 +441,38 @@ def test_get_playlists_for_project(mock_provider):
     playlists = mock_provider.get_playlists_for_project(1)
     assert len(playlists) == 1
     assert playlists[0].id == 400
+
+
+def test_get_playlists_for_project_recent_first_and_limited(
+    mock_db_path, mock_provider
+):
+    """Playlists come back newest-first and capped at RECENT_PLAYLIST_LIMIT."""
+    # The provider opens the DB read-only, so seed via a direct writable
+    # connection to the same file.
+    conn = sqlite3.connect(mock_db_path)
+    conn.execute("INSERT INTO projects (id, name) VALUES (2, 'Busy Project')")
+    # Insert more playlists than the limit, in ascending created_at order so the
+    # newest (highest minute) is inserted last.
+    count = RECENT_PLAYLIST_LIMIT + 5
+    for i in range(count):
+        conn.execute(
+            "INSERT INTO playlists (id, code, description, project_id, created_at, updated_at) "
+            "VALUES (?, ?, 'desc', 2, ?, ?)",
+            (600 + i, f"pl_{i:02d}", f"2024-06-01T00:{i:02d}:00", "2024-06-01"),
+        )
+    conn.commit()
+    conn.close()
+
+    playlists = mock_provider.get_playlists_for_project(2)
+
+    # Capped at the limit, newest-first, and the oldest rows are dropped.
+    # (created_at is coerced to datetime by the model, so assert on the ids we
+    # control: id 600+i has the i-th minute, so newest == highest id.)
+    assert len(playlists) == RECENT_PLAYLIST_LIMIT
+    created = [p.created_at for p in playlists]
+    assert created == sorted(created, reverse=True)
+    assert playlists[0].id == 600 + count - 1
+    assert playlists[-1].id == 600 + count - RECENT_PLAYLIST_LIMIT
 
 
 def test_get_versions_for_playlist(mock_provider):

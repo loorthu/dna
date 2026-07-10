@@ -16,6 +16,7 @@ from dna.models.entity import (
     Version,
 )
 from dna.prodtrack_providers.prodtrack_provider_base import (
+    RECENT_PLAYLIST_LIMIT,
     ProdtrackProviderBase,
     UserNotFoundError,
 )
@@ -641,12 +642,16 @@ class ShotgridProvider(ProdtrackProviderBase):
         if not self._sg:
             raise ValueError("Not connected to ShotGrid")
 
+        # Only surface the most recently created playlists, newest first, so the
+        # login picker stays manageable on long-running shows.
         sg_playlists = self._sg.find(
             "Playlist",
             filters=[
                 ["project", "is", {"type": "Project", "id": project_id}],
             ],
             fields=["id", "code", "description", "project", "created_at", "updated_at"],
+            order=[{"field_name": "created_at", "direction": "desc"}],
+            limit=RECENT_PLAYLIST_LIMIT,
         )
 
         entity_mapping = FIELD_MAPPING["playlist"]

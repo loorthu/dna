@@ -8,6 +8,11 @@ if TYPE_CHECKING:
     from dna.models.entity import EntityBase, Playlist, Project, User, Version
 
 
+# Number of most-recently-created playlists surfaced in the login playlist
+# picker after a project is chosen (reverse-chronological).
+RECENT_PLAYLIST_LIMIT = 25
+
+
 class UserNotFoundError(Exception):
     """Raised when a user is not found in the production tracking system."""
 

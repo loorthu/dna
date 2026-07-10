@@ -5,6 +5,7 @@ import pytest
 
 from dna.models.entity import Shot, Task, Version
 from dna.prodtrack_providers.prodtrack_provider_base import (
+    RECENT_PLAYLIST_LIMIT,
     ProdtrackProviderBase,
     get_prodtrack_provider,
 )
@@ -1249,8 +1250,11 @@ class TestShotgridProviderGetPlaylistsForProject:
         assert results[1].id == 20
         assert results[1].code == "Final Review"
 
-    def test_get_playlists_for_project_filters_by_project(self, shotgrid_provider):
-        """Test that get_playlists_for_project filters by project."""
+    def test_get_playlists_for_project_filters_sorts_and_limits(
+        self, shotgrid_provider
+    ):
+        """Playlists are scoped to the project and returned newest-first,
+        capped at the recent-playlist limit."""
         shotgrid_provider.sg.find.return_value = []
 
         shotgrid_provider.get_playlists_for_project(42)
@@ -1268,6 +1272,8 @@ class TestShotgridProviderGetPlaylistsForProject:
                 "created_at",
                 "updated_at",
             ],
+            order=[{"field_name": "created_at", "direction": "desc"}],
+            limit=RECENT_PLAYLIST_LIMIT,
         )
 
     def test_get_playlists_for_project_raises_error_when_not_connected(self):

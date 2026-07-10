@@ -19,7 +19,10 @@ from dna.models.entity import (
     User,
     Version,
 )
-from dna.prodtrack_providers.prodtrack_provider_base import ProdtrackProviderBase
+from dna.prodtrack_providers.prodtrack_provider_base import (
+    RECENT_PLAYLIST_LIMIT,
+    ProdtrackProviderBase,
+)
 
 _SG_TYPE_TO_DNA: dict[str, str] = {
     "Project": "project",
@@ -539,8 +542,10 @@ class MockProdtrackProvider(ProdtrackProviderBase):
     def get_playlists_for_project(self, project_id: int) -> list[Playlist]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT id, code, description, project_id, created_at, updated_at FROM playlists WHERE project_id = ?",
-            (project_id,),
+            "SELECT id, code, description, project_id, created_at, updated_at "
+            "FROM playlists WHERE project_id = ? "
+            "ORDER BY created_at DESC LIMIT ?",
+            (project_id, RECENT_PLAYLIST_LIMIT),
         ).fetchall()
         return [self._playlist_from_row(r, r["project_id"]) for r in rows]
 
