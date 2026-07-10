@@ -1151,32 +1151,32 @@ class TestShotgridProviderGetProjectsForUser:
         assert results[1].id == 20
         assert results[1].name == "Project Beta"
 
-    def test_get_projects_for_user_queries_correct_user(self, shotgrid_provider):
-        """Test that get_projects_for_user queries the correct user by email."""
-        user_data = {"id": 1, "email": "jsmith@example.com", "name": "John Smith"}
-        shotgrid_provider.sg.find_one.return_value = user_data
+    def test_get_projects_for_user_does_not_look_up_user(self, shotgrid_provider):
+        """Projects are returned regardless of user membership, so no per-user
+        lookup should happen (see commit "Show all active ShotGrid projects
+        instead of filtering by user membership")."""
         shotgrid_provider.sg.find.return_value = []
 
         shotgrid_provider.get_projects_for_user("jsmith@example.com")
 
-        shotgrid_provider.sg.find_one.assert_called_once_with(
-            "HumanUser",
-            filters=[["email", "is", "jsmith@example.com"]],
-            fields=["id", "email", "name"],
-        )
+        shotgrid_provider.sg.find_one.assert_not_called()
 
-    def test_get_projects_for_user_filters_by_user(self, shotgrid_provider):
-        """Test that get_projects_for_user filters projects by user."""
-        user_data = {"id": 42, "email": "test@example.com", "name": "Test User"}
-        shotgrid_provider.sg.find_one.return_value = user_data
+    def test_get_projects_for_user_filters_and_sorts_projects(self, shotgrid_provider):
+        """Only Active, non-archived shows of an allowed type are returned,
+        sorted alphabetically by name (mirrors magboard's project selector)."""
         shotgrid_provider.sg.find.return_value = []
 
         shotgrid_provider.get_projects_for_user("test@example.com")
 
         shotgrid_provider.sg.find.assert_called_once_with(
             "Project",
-            filters=[["users", "is", user_data]],
+            filters=[
+                ["sg_status", "is", "Active"],
+                ["sg_type", "in", ["SPA", "Client"]],
+                ["archived", "is", False],
+            ],
             fields=["id", "name"],
+            order=[{"field_name": "name", "direction": "asc"}],
         )
 
     def test_get_projects_for_user_raises_error_when_not_connected(self):
@@ -1190,24 +1190,23 @@ class TestShotgridProviderGetProjectsForUser:
         with pytest.raises(ValueError, match="Not connected to ShotGrid"):
             provider.get_projects_for_user("testuser")
 
-    def test_get_projects_for_user_raises_error_when_user_not_found(
+    def test_get_projects_for_user_returns_projects_for_unknown_user(
         self, shotgrid_provider
     ):
-        """Test that get_projects_for_user raises error when user not found."""
-        shotgrid_provider.sg.find_one.return_value = None
+        """An unknown user still gets the full active-project list — membership
+        is not consulted, so no error is raised."""
+        shotgrid_provider.sg.find.return_value = [{"id": 10, "name": "Project Alpha"}]
 
-        with pytest.raises(ValueError, match="User not found: unknown@example.com"):
-            shotgrid_provider.get_projects_for_user("unknown@example.com")
+        results = shotgrid_provider.get_projects_for_user("unknown@example.com")
+
+        assert len(results) == 1
+        assert results[0].name == "Project Alpha"
 
     def test_get_projects_for_user_returns_empty_list_when_no_projects(
         self, shotgrid_provider
     ):
-        """Test that get_projects_for_user returns empty list when user has no projects."""
-        shotgrid_provider.sg.find_one.return_value = {
-            "id": 1,
-            "email": "newuser@example.com",
-            "name": "New User",
-        }
+        """Test that get_projects_for_user returns empty list when there are no
+        matching projects."""
         shotgrid_provider.sg.find.return_value = []
 
         results = shotgrid_provider.get_projects_for_user("newuser@example.com")

@@ -20,6 +20,10 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
     UserNotFoundError,
 )
 
+# Project types shown in the login project picker. Mirrors magboard's
+# PROJECT_ALLOWED_TYPES — only real production projects, not R&D/test shows.
+PROJECT_ALLOWED_TYPES = ("SPA", "Client")
+
 # Field Mappings map the DNA entity to the SG entity.
 # Key: DNA entity Name
 #   Entity_id: The SG entity Type.
@@ -602,12 +606,19 @@ class ShotgridProvider(ProdtrackProviderBase):
         if not self._sg:
             raise ValueError("Not connected to ShotGrid")
 
-        # Return all active projects regardless of user membership —
-        # in a studio setup users are assigned via tasks/groups, not the users field.
+        # Return all active production projects regardless of user membership —
+        # in a studio setup users are assigned via tasks/groups, not the users
+        # field. Filter/sort criteria mirror magboard's project selector: only
+        # Active, non-archived shows of an allowed type, sorted alphabetically.
         sg_projects = self._sg.find(
             "Project",
-            filters=[["sg_status", "is", "Active"]],
+            filters=[
+                ["sg_status", "is", "Active"],
+                ["sg_type", "in", list(PROJECT_ALLOWED_TYPES)],
+                ["archived", "is", False],
+            ],
             fields=["id", "name"],
+            order=[{"field_name": "name", "direction": "asc"}],
         )
 
         entity_mapping = FIELD_MAPPING["project"]

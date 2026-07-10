@@ -531,7 +531,9 @@ class MockProdtrackProvider(ProdtrackProviderBase):
 
     def get_projects_for_user(self, user_email: str) -> list[Project]:
         conn = self._get_conn()
-        rows = conn.execute("SELECT id, name FROM projects").fetchall()
+        rows = conn.execute(
+            "SELECT id, name FROM projects ORDER BY name COLLATE NOCASE"
+        ).fetchall()
         return [self._project_from_row(r) for r in rows]
 
     def get_playlists_for_project(self, project_id: int) -> list[Playlist]:
