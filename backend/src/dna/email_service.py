@@ -20,7 +20,6 @@ from typing import Optional
 
 from dna.models.draft_note import DraftNote
 from dna.models.entity import Version
-from dna.models.stored_segment import StoredSegment
 
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")
@@ -143,7 +142,6 @@ def build_notes_html(
     sent_by: str,
     versions: list[Version],
     drafts_by_version: dict[int, list[DraftNote]],
-    segments_by_version: dict[int, list[StoredSegment]],
 ) -> str:
     date_str = datetime.now().strftime("%B %d, %Y, %I:%M %p")
 
@@ -179,22 +177,6 @@ def build_notes_html(
                 notes_parts.append(
                     f'<p style="margin:4px 0;"><strong>{author}:</strong> {content}</p>'
                 )
-
-        segs = segments_by_version.get(version.id, [])
-        if segs:
-            lines = []
-            prev_speaker = None
-            for seg in segs:
-                speaker = seg.speaker or "Unknown"
-                if speaker != prev_speaker:
-                    lines.append(f'<strong>{_h(speaker)}:</strong> {_h(seg.text)}')
-                    prev_speaker = speaker
-                else:
-                    lines.append(_h(seg.text))
-            notes_parts.append(
-                '<p style="margin:8px 0 2px;font-size:11px;color:#888;font-style:italic;">Transcript:</p>'
-                + "<br>".join(f'<span style="font-size:12px;">{l}</span>' for l in lines)
-            )
 
         notes_html = "".join(notes_parts) or '<span style="color:#aaa;">—</span>'
         row_bg = "#ffffff" if idx % 2 == 1 else "#f9f9f9"

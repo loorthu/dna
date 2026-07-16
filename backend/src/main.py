@@ -1208,22 +1208,20 @@ async def email_notes(
     request: EmailNotesRequest,
     storage: StorageProviderDep,
     prodtrack: ProdtrackProviderDep,
-    _: CurrentUserDep,
+    current_user_email: CurrentUserDep,
 ) -> None:
     from dna.email_service import build_notes_html, send_notes_email
 
     versions = prodtrack.get_versions_for_playlist(playlist_id)
 
+    # Mirror the UI: include only the sender's own notes (manual + AI-inserted).
+    # Notes synced in from ShotGrid live under their original authors' emails and
+    # are never shown to this user, so filtering by the current user drops them.
     all_drafts = await storage.get_draft_notes_for_playlist(playlist_id)
     drafts_by_version: dict[int, list] = {}
     for d in all_drafts:
-        drafts_by_version.setdefault(d.version_id, []).append(d)
-
-    segments_by_version: dict[int, list] = {}
-    for v in versions:
-        segs = await storage.get_segments_for_version(playlist_id, v.id)
-        if segs:
-            segments_by_version[v.id] = segs
+        if emails_match(d.user_email, current_user_email):
+            drafts_by_version.setdefault(d.version_id, []).append(d)
 
     playlist_name = f"Playlist {playlist_id}"
     try:
@@ -1245,7 +1243,6 @@ async def email_notes(
         sent_by=request.sent_by,
         versions=versions,
         drafts_by_version=drafts_by_version,
-        segments_by_version=segments_by_version,
     )
 
     try:
