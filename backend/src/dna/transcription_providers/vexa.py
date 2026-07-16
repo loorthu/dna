@@ -222,7 +222,9 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
             response = await self.client.get("/bots/status")
             response.raise_for_status()
             data = response.json()
-            return data.get("running_bots", [])
+            # v012 gateway returns {"running": [...], "count": N}; older 0.10.x
+            # used {"running_bots": [...]}. Accept both.
+            return data.get("running") or data.get("running_bots", [])
         except httpx.HTTPStatusError as e:
             logger.error("Failed to get active bots: %s", e)
             return []
