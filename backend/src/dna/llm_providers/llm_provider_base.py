@@ -194,8 +194,14 @@ class LLMProviderBase:
                 {"role": "system", "content": GENERATE_NOTE_PROMPT},
                 {"role": "user", "content": user_message},
             ],
-            temperature=0.7,
-            max_tokens=1024,
+            # Low temperature for faithful, complete extraction (matches the
+            # note_assistant_v2 pipeline default) rather than creative compression.
+            temperature=0.1,
+            # Thinking models (e.g. gemini-2.5-flash) count internal reasoning
+            # tokens against this budget, so a small ceiling starves the visible
+            # note and truncates it mid-sentence (finish_reason=length). Detailed
+            # structured notes need ample room, so match the v2 pipeline's 8192.
+            max_tokens=8192,
         )
 
         return response.choices[0].message.content or ""
