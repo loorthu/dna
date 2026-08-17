@@ -12,6 +12,7 @@ export type { ReviewSyncClientConfig } from './reviewSyncClient';
 export {
   fetchReviewSessions,
   reviewSessionsUrl,
+  sessionClipRef,
   sortReviewSessions,
 } from './edbotSessions';
 export type { FetchReviewSessionsOptions } from './edbotSessions';

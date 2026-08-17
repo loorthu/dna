@@ -4,27 +4,45 @@ overview: Let a DNA user follow a live itview review session, so that when the r
 todos:
   - id: env-setup
     content: Set dna_dev onto a follow-along branch based on bot-authentication-v2, copy gitignored config from the dna checkout
-    status: pending
+    status: completed
   - id: backend-external-ref
     content: Add optional Version.external_ref + Project.code, populated from configurable ShotGrid fields (sg_jts / tank_name)
-    status: pending
+    status: completed
   - id: core-parse
     content: Add followAlong/ to @dna/core - types, parseCurrentClip (DOMParser), reviewSyncClient (STOMP), edbotSessions
-    status: pending
+    status: completed
   - id: app-context
     content: Add FollowAlongContext + useFollowAlong hook, mount beside EventProvider in ThemedApp
-    status: pending
+    status: completed
   - id: app-wire
     content: Drive selectedVersion from App.tsx when follow is on
-    status: pending
+    status: completed
   - id: app-ui
     content: FollowAlongMenu (session picker + connection LED) in VersionHeader; off-playlist toast
-    status: pending
+    status: completed
   - id: feature-flag
     content: Add followAlongEnabled to FeatureFlagsContext (VITE_FEATURE_FOLLOW_ALONG) and document env vars
-    status: pending
+    status: completed
   - id: tests
     content: Unit tests for parseCurrentClip, session/show filtering, version resolution, toast de-dup
+    status: completed
+  - id: live-capture
+    content: Capture live broker + session directory traffic and check the implementation against it
+    status: completed
+  - id: fix-connections-shape
+    content: edbot sends connections as a token-keyed object, not a list - flattenConnections read none of it
+    status: completed
+  - id: sessions-same-origin
+    content: Proxy the session directory at /review-sessions (nginx + vite) instead of calling it cross-origin
+    status: completed
+  - id: clip-arbitration
+    content: Reconcile competing announcements on one session name against the directory's reported clip
+    status: completed
+  - id: verify-external-ref
+    content: Confirm the production tracking field actually holds the player's clip id (needs ShotGrid access)
+    status: pending
+  - id: serve-scheme
+    content: Settle how DNA is served in the target deployment - a ws:// broker is blocked from an https:// page
     status: pending
 ---
 
@@ -68,17 +86,25 @@ the browser can map itview's JTS onto a DNA version.
 All in `notebox/site_media/js/note_detail.js`; the Django server is not involved
 at all (there is no STOMP library in its `requirements.txt`).
 
-- **Connect** (`:2076`): `Stomp.client('ws://mq1.spimageworks.com:61614/stomp')`,
-  anonymous auth (empty user/password).
-- **Subscribe** (`:2082`): `/topic/itview/current_clip.xml`. The payload is XML
+Line numbers below were re-checked against the served file on 2026-08-16.
+
+- **Connect** (`:1788`): `Stomp.client('ws://mq1.spimageworks.com:61614/stomp')`,
+  anonymous auth (`:1790`, empty user/password).
+- **Subscribe** (`:1794`): `/topic/itview/current_clip.xml`. The payload is XML
   and is broadcast to *every* listener.
-- **Filter** client-side by substring match on `<session>NAME</session>` **and**
-  `<show>SHOW</show>`.
-- **Extract** `<jts>(\d+)</jts>` — **JTS is the version identity** — plus
-  `<shot>(\w+)</shot>`.
-- **Session list** (`:1962`):
+- **Filter** (`:1797-1801`) client-side by substring match on
+  `<session>NAME</session>` **and** `<show>SHOW</show>` — and nothing else, which
+  is why competing publishers under one session name go unnoticed there.
+- **Extract** `<jts>(\d+)</jts>` (`:1807`) — **JTS is the version identity** —
+  plus `<shot>(\w+)</shot>` (`:1802`).
+- **Session list** (`:1462`):
   `GET http://edbot-vm.spimageworks.com:8080/edbotproxy/rest/show/{show}/sessions`
-  over JSONP, returning `[{id, name, connections:[{<id>:{username}}]}]`.
+  over JSONP via its own `jsonp.js`, with the callback parameter named `jsonp`.
+  Returns `[{id, name, connections:{<token>:{username, position:{cguid}}}}]` —
+  an object keyed by token, not the list this plan first described.
+- **Tells edbot the active report** (`:1772`), via
+  `/edbotproxy/rest/sessionid/{id}/notepk/{pk}`. DNA has no equivalent and needs
+  none; noted only so it is not mistaken for part of the read path.
 - **Persistence**: chosen session saved per report in the ExtJS state manager;
   auto-reconnect every 5 s, guarded by `requested_session` so a user disconnect
   cancels the retry loop.
@@ -300,23 +326,78 @@ Then `npm install` at `frontend/` and `npm run dev` (vite, port 5173).
 
 ---
 
-## Risks to settle during implementation
+## Findings from live traffic (2026-08-16)
 
-1. **edbot CORS.** notebox reaches edbot over JSONP, which strongly implies edbot
-   sends no CORS headers — in which case a React `fetch()` will be blocked.
-   **Verify this in a browser before building the session picker.** If blocked,
-   the fallback is a thin backend proxy (`GET /follow-along/sessions?show=`)
-   rather than reintroducing JSONP. This is the one item that could pull backend
-   work back into scope.
-2. **Mixed content.** notebox is served over `http://` and uses `ws://`. If DNA is
+Captured by subscribing to the topic directly and reading notebox's own
+`note_detail.js`. What the plan assumed, versus what the systems actually do.
+
+**Confirmed as specified.** Broker URL, topic name, anonymous connect and the
+session-directory URL all match what notebox uses (`note_detail.js:1462`,
+`:1788`, `:1790`, `:1794`). The broker is ActiveMQ 5.17.6 and negotiates STOMP
+1.2, which is what `@stomp/stompjs` asks for. `jts` really is version-level: two
+announcements for the same shot differed only by `jts`, resolving to two comp
+versions. Our `DOMParser` approach parsed 18/18 live frames, including the
+nesting the plan did not anticipate — `session` and `show` sit at the top level
+while `shot`, `jts` and `guid` are inside a `clip` wrapper, and `show` appears
+twice. Looking names up anywhere in the tree handles that; a fixed path would
+not have.
+
+**The session directory does not send CORS headers.** Confirmed against the live
+server. notebox gets away with it through JSONP — its own `jsonp.js`, a script
+tag injector, with the callback parameter named `jsonp` rather than the usual
+`callback`. DNA does not follow it there: injecting and executing script from
+another service is a poor fit for a project shipping into air-gapped sites.
+
+Instead the directory is served from DNA's own origin, at `/review-sessions`.
+The frontend's nginx already reverse-proxies `/api` and `/ws`; this is one more
+`location` block pointing at `REVIEW_SESSIONS_URL`, with `vite.config.ts` doing
+the same for `npm run dev`. **No backend involvement** — the studio-specific
+part is a deployment variable, which is where site glue belongs.
+
+**`connections` is an object, not a list.** The directory keys connections by
+token: `{"<token>": {"username": …, "position": {"cguid": …}}}`. The original
+`flattenConnections` guarded on `Array.isArray` and so read *nothing* from a
+real response — every session looked empty, and the "who is watching" sort
+degraded to alphabetical. Both shapes are now accepted.
+
+**Session plus show does not identify a single clip.** This is the one thing the
+port cannot copy. Over a two-minute capture, 18/18 announcements carried an
+identical session and show, while alternating between two different clips every
+6.42 seconds — two publishers announcing under one session name. notebox has no
+defence against this (`note_detail.js:1796-1826` acts on every matching frame);
+it just redraws a border, so the flicker is invisible. In DNA the same input
+drags the user's selected version and note draft back and forth.
+
+The directory settles it: every connection in that session reported the same
+`position.cguid`, matching one of the two announcements. So the payload's clip
+guid is reconciled against what the directory says the session is on, and
+announcements for anything else are withheld. An unexpected clip triggers a
+re-read rather than being discarded outright, since it may mean the room moved —
+and an already-seen announcement is emitted as soon as it becomes the expected
+one, so arbitration costs a directory round trip rather than a rebroadcast.
+
+Where no directory is configured, nothing arbitrates and every announcement for
+the session is taken — the previous behaviour, flicker included.
+
+## Risks still open
+
+1. **Mixed content.** notebox is served over `http://` and uses `ws://`. If DNA is
    served over `https://`, the browser blocks a `ws://` connection outright and
    follow-along fails silently. Confirm how DNA is served in the target
-   deployment; a `wss://` listener on the broker may be required.
-3. **Broker reachability.** Browser-direct means every DNA user's workstation must
-   reach `mq1:61614`. True for notebox users today, so low risk — but it will not
+   deployment; a `wss://` listener on the broker may be required. Only a
+   plaintext listener was found.
+2. **The external ref mapping is unverified.** Everything rests on the production
+   tracking field named by `PRODTRACK_VERSION_EXTERNAL_REF_FIELD` holding the
+   same id the player announces. That needs a look at real version data.
+3. **Show code.** The player announces a short code (`ccf`). `App.tsx` passes
+   `project.code ?? project.name`, so a site whose projects carry no code will
+   silently match nothing. Worth surfacing rather than failing quietly.
+4. **Broker reachability.** Browser-direct means every DNA user's workstation must
+   reach the broker. True for notebox users today, so low risk — but it will not
    work from a DMZ dev machine, so expect to develop against a stub.
-4. **JTS type.** Keep `external_ref` a string end to end and compare as strings;
-   itview sends digits, but ShotGrid custom fields are inconsistently typed.
+5. **JTS type.** Keep `external_ref` a string end to end and compare as strings;
+   the player sends digits, but tracking-system custom fields are inconsistently
+   typed.
 
 ---
 

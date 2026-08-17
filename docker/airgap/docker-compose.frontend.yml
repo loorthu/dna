@@ -20,6 +20,12 @@ services:
         VITE_WS_URL: ${VITE_WS_URL:-}
         VITE_AUTH_PROVIDER: ${VITE_AUTH_PROVIDER:-none}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        # Follow Along. /review-sessions is relative — nginx proxies it to
+        # REVIEW_SESSIONS_URL below. Unset broker or topic leaves it off.
+        VITE_FEATURE_FOLLOW_ALONG: ${VITE_FEATURE_FOLLOW_ALONG:-}
+        VITE_FOLLOW_ALONG_BROKER_URL: ${VITE_FOLLOW_ALONG_BROKER_URL:-}
+        VITE_FOLLOW_ALONG_TOPIC: ${VITE_FOLLOW_ALONG_TOPIC:-}
+        VITE_FOLLOW_ALONG_SESSIONS_URL: ${VITE_FOLLOW_ALONG_SESSIONS_URL:-/review-sessions}
     image: dna-frontend:${DNA_TAG:-airgap}
     container_name: dna-frontend
     ports:
@@ -27,6 +33,10 @@ services:
     environment:
       # The host running the DNA backend (API + WS). nginx proxies /api + /ws here.
       - BACKEND_URL=${BACKEND_URL:-http://160.33.19.70:8000}
+      # Review player's session directory; nginx proxies /review-sessions here.
+      # The default is a dead local port — Follow Along's session picker is
+      # simply unavailable until a site points this at its own directory.
+      - REVIEW_SESSIONS_URL=${REVIEW_SESSIONS_URL:-http://127.0.0.1:9}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]

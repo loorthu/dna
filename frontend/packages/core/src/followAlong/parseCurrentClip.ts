@@ -13,6 +13,7 @@ export interface CurrentClipElementNames {
   show: string;
   shot: string;
   externalRef: string;
+  clipRef: string;
 }
 
 export const DEFAULT_CURRENT_CLIP_ELEMENTS: CurrentClipElementNames = {
@@ -20,8 +21,18 @@ export const DEFAULT_CURRENT_CLIP_ELEMENTS: CurrentClipElementNames = {
   show: 'show',
   shot: 'shot',
   externalRef: 'jts',
+  clipRef: 'guid',
 };
 
+/**
+ * Text of the first element with this name, in document order.
+ *
+ * Names are looked up anywhere in the tree rather than at a fixed path, because
+ * payloads nest inconsistently: an announcement may carry the session at the
+ * top level and the clip's own fields inside a wrapper element. Where a name
+ * appears more than once (a clip repeating its show, say), the outermost one
+ * comes first in document order and wins.
+ */
 function elementText(doc: Document, tagName: string): string {
   const element = doc.getElementsByTagName(tagName)[0];
   return element?.textContent?.trim() ?? '';
@@ -70,6 +81,7 @@ export function createCurrentClipParser(
       show: elementText(doc, names.show),
       shot: elementText(doc, names.shot),
       externalRef,
+      clipRef: elementText(doc, names.clipRef),
     };
   };
 }

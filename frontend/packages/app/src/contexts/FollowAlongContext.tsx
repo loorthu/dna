@@ -11,6 +11,7 @@ import {
   ReviewSyncClient,
   createReviewSyncClient,
   fetchReviewSessions,
+  sessionClipRef,
   sortReviewSessions,
   type ReviewFocus,
   type ReviewSession,
@@ -20,8 +21,25 @@ import { useFeatureFlags } from './FeatureFlagsContext';
 
 const CONFIG = readFollowAlongConfig();
 
+/**
+ * Floor between directory re-reads triggered by an unexpected clip.
+ *
+ * The player rebroadcasts continuously, so an unresolved clip re-triggers on
+ * every announcement. This bounds that to one request per interval while
+ * staying well inside a rebroadcast, so a genuine clip change still resolves
+ * on the announcement that follows it.
+ */
+const CLIP_REFRESH_INTERVAL_MS = 2000;
+
+/** Backstop poll, for a session whose members leave without a new clip. */
+const SESSION_POLL_INTERVAL_MS = 30000;
+
 function sessionStorageKey(playlistId: number): string {
   return `dna-follow-along-session:${playlistId}`;
+}
+
+function sameSession(a: string | null, b: string): boolean {
+  return a !== null && a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 interface FollowAlongContextValue {
@@ -160,6 +178,63 @@ export function FollowAlongProvider({
   const refreshSessions = useCallback(() => {
     setSessionsNonce((nonce) => nonce + 1);
   }, []);
+
+  // Clips already put to the directory and not confirmed. Cleared whenever the
+  // answer changes, so a clip is asked about once rather than on every
+  // rebroadcast — a publisher that never goes away would otherwise keep the
+  // directory under poll for as long as the session is followed.
+  const askedClipRefs = useRef<Set<string>>(new Set());
+  const expectedClipRefRef = useRef<string | null>(null);
+
+  // Tell the client which clip the followed session is on, so announcements
+  // from anyone else publishing under that session name are withheld. Without
+  // a session directory this stays null and every announcement is taken.
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client) {
+      return;
+    }
+    const followed = sessions.find((candidate) =>
+      sameSession(session, candidate.name)
+    );
+    const expected = followed ? sessionClipRef(followed) : null;
+
+    if (expected !== expectedClipRefRef.current) {
+      expectedClipRefRef.current = expected;
+      askedClipRefs.current.clear();
+    }
+    client.setExpectedClipRef(expected);
+  }, [sessions, session, available]);
+
+  // An announcement for an unexpected clip means the room may have moved on,
+  // so re-read the directory rather than trusting or discarding it outright.
+  const lastClipRefreshRef = useRef(0);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client || !session || !CONFIG?.sessionsUrl) {
+      return;
+    }
+    return client.onUnknownClip((focus) => {
+      if (!focus.clipRef || askedClipRefs.current.has(focus.clipRef)) {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastClipRefreshRef.current < CLIP_REFRESH_INTERVAL_MS) {
+        return;
+      }
+      askedClipRefs.current.add(focus.clipRef);
+      lastClipRefreshRef.current = now;
+      refreshSessions();
+    });
+  }, [available, session, refreshSessions]);
+
+  useEffect(() => {
+    if (!available || !session || !CONFIG?.sessionsUrl) {
+      return;
+    }
+    const timer = setInterval(refreshSessions, SESSION_POLL_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [available, session, refreshSessions]);
 
   useEffect(() => {
     if (!available || !CONFIG?.sessionsUrl || !show) {

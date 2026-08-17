@@ -4,8 +4,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ReviewSyncClient, createReviewSyncClient } from './reviewSyncClient';
 import type { ReviewFocus } from './types';
 
-function clipXml(session: string, show: string, shot: string, jts: string) {
-  return `<current_clip><session>${session}</session><show>${show}</show><shot>${shot}</shot><jts>${jts}</jts></current_clip>`;
+function clipXml(
+  session: string,
+  show: string,
+  shot: string,
+  jts: string,
+  guid = ''
+) {
+  const guidElement = guid ? `<guid>${guid}</guid>` : '';
+  return `<current_clip><session>${session}</session><show>${show}</show><shot>${shot}</shot>${guidElement}<jts>${jts}</jts></current_clip>`;
 }
 
 describe('ReviewSyncClient', () => {
@@ -31,6 +38,7 @@ describe('ReviewSyncClient', () => {
         show: 'nite',
         shot: 'abc0100',
         externalRef: '42',
+        clipRef: '',
       },
     ]);
   });
@@ -155,5 +163,89 @@ describe('ReviewSyncClient', () => {
   it('starts disconnected with no error', () => {
     expect(client.isConnected).toBe(false);
     expect(client.connectionError).toBeNull();
+  });
+});
+
+// A live topic carries competing announcements under one session name: two
+// publishers alternating every few seconds, both passing the session and show
+// filter. Acting on both drags the user's selection back and forth, so the
+// session directory decides which one the room is actually on.
+describe('ReviewSyncClient clip arbitration', () => {
+  let client: ReviewSyncClient;
+  let focuses: ReviewFocus[];
+
+  const theRoom = () => clipXml('rounds', 'ccf', 'taf0140', '191004', 'real');
+  const someoneElse = () =>
+    clipXml('rounds', 'ccf', 'taf0140', '192358', 'other');
+
+  beforeEach(() => {
+    client = createReviewSyncClient({
+      brokerURL: 'ws://broker.test:61614/stomp',
+      topic: '/topic/current_clip.xml',
+    });
+    focuses = [];
+    client.subscribe((focus) => focuses.push(focus));
+    client.setSession('rounds');
+    client.setShow('ccf');
+  });
+
+  it('takes every announcement when no clip is expected', () => {
+    client.handleFrameBody(theRoom());
+    client.handleFrameBody(someoneElse());
+
+    expect(focuses.map((f) => f.externalRef)).toEqual(['191004', '192358']);
+  });
+
+  it('withholds announcements for any other clip', () => {
+    client.setExpectedClipRef('real');
+    client.handleFrameBody(theRoom());
+    client.handleFrameBody(someoneElse());
+    client.handleFrameBody(theRoom());
+
+    expect(focuses.map((f) => f.externalRef)).toEqual(['191004', '191004']);
+  });
+
+  it('reports the withheld clip so the directory can be re-read', () => {
+    const unknown: ReviewFocus[] = [];
+    client.onUnknownClip((focus) => unknown.push(focus));
+    client.setExpectedClipRef('real');
+
+    client.handleFrameBody(someoneElse());
+
+    expect(unknown.map((f) => f.externalRef)).toEqual(['192358']);
+    expect(focuses).toEqual([]);
+  });
+
+  it('emits a clip already announced as soon as it becomes expected', () => {
+    client.setExpectedClipRef('real');
+    client.handleFrameBody(someoneElse());
+    expect(focuses).toEqual([]);
+
+    // The room moved; the directory now names the clip we withheld.
+    client.setExpectedClipRef('other');
+
+    expect(focuses.map((f) => f.externalRef)).toEqual(['192358']);
+  });
+
+  it('takes announcements that carry no clip handle at all', () => {
+    client.setExpectedClipRef('real');
+    client.handleFrameBody(clipXml('rounds', 'ccf', 'taf0140', '5'));
+
+    expect(focuses.map((f) => f.externalRef)).toEqual(['5']);
+  });
+
+  it('forgets the expected clip when the session changes', () => {
+    client.setExpectedClipRef('real');
+    client.setSession('director');
+
+    expect(client.expectedClipRef).toBeNull();
+  });
+
+  it('does not re-emit the clip it is already showing', () => {
+    client.setExpectedClipRef('real');
+    client.handleFrameBody(theRoom());
+    client.setExpectedClipRef('real');
+
+    expect(focuses).toHaveLength(1);
   });
 });

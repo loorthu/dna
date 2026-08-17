@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   fetchReviewSessions,
   reviewSessionsUrl,
+  sessionClipRef,
   sortReviewSessions,
 } from './edbotSessions';
 
@@ -35,7 +36,50 @@ describe('reviewSessionsUrl', () => {
 });
 
 describe('fetchReviewSessions', () => {
-  it('flattens connections into a users list', async () => {
+  // Shape taken from a live edbot response: connections keyed by token, each
+  // carrying the clip that connection is showing.
+  it('flattens the token-keyed connections object into a users list', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse([
+        {
+          id: 'fb170680-34f8',
+          name: 'rounds',
+          connections: {
+            '5925e191-57ff': {
+              token: '5925e191-57ff',
+              username: 'jdoe',
+              hostname: 'dodo0050.example.com',
+              position: { cguid: 'f5d1cc15', shot: 'taf0140' },
+            },
+            'aaaaaaaa-57ff': {
+              token: 'aaaaaaaa-57ff',
+              username: 'ak',
+              position: { cguid: 'f5d1cc15', shot: 'taf0140' },
+            },
+          },
+        },
+      ])
+    );
+
+    const sessions = await fetchReviewSessions({
+      baseUrl: 'http://edbot.test:8080',
+      show: 'nite',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(sessions).toEqual([
+      {
+        id: 'fb170680-34f8',
+        name: 'rounds',
+        users: [
+          { id: '5925e191-57ff', username: 'jdoe', clipRef: 'f5d1cc15' },
+          { id: 'aaaaaaaa-57ff', username: 'ak', clipRef: 'f5d1cc15' },
+        ],
+      },
+    ]);
+  });
+
+  it('still accepts a list of single-key connection wrappers', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse([
         {
@@ -65,6 +109,26 @@ describe('fetchReviewSessions', () => {
         ],
       },
     ]);
+  });
+
+  it('accepts a list of flat connection records', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse([
+        {
+          id: '7',
+          name: 'flat',
+          connections: [{ token: 'c9', username: 'jdoe' }],
+        },
+      ])
+    );
+
+    const sessions = await fetchReviewSessions({
+      baseUrl: 'http://edbot.test:8080',
+      show: 'nite',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    expect(sessions[0].users).toEqual([{ id: 'c9', username: 'jdoe' }]);
   });
 
   it('handles sessions with no connections', async () => {
@@ -135,6 +199,63 @@ describe('fetchReviewSessions', () => {
     expect(fetchImpl).toHaveBeenCalledWith(expect.any(String), {
       signal: controller.signal,
     });
+  });
+});
+
+describe('sessionClipRef', () => {
+  it('returns the clip the members agree on', () => {
+    expect(
+      sessionClipRef({
+        id: '1',
+        name: 'rounds',
+        users: [
+          { id: 'a', username: 'jdoe', clipRef: 'f5d1cc15' },
+          { id: 'b', username: 'ak', clipRef: 'f5d1cc15' },
+        ],
+      })
+    ).toBe('f5d1cc15');
+  });
+
+  it('takes the plurality when a member is out of sync', () => {
+    expect(
+      sessionClipRef({
+        id: '1',
+        name: 'rounds',
+        users: [
+          { id: 'a', username: 'jdoe', clipRef: 'f5d1cc15' },
+          { id: 'b', username: 'ak', clipRef: 'f5d1cc15' },
+          { id: 'c', username: 'late', clipRef: '7a2d3562' },
+        ],
+      })
+    ).toBe('f5d1cc15');
+  });
+
+  it('keeps the first-seen clip on a tie, so polls do not flip', () => {
+    const session = {
+      id: '1',
+      name: 'rounds',
+      users: [
+        { id: 'a', username: 'jdoe', clipRef: 'f5d1cc15' },
+        { id: 'b', username: 'ak', clipRef: '7a2d3562' },
+      ],
+    };
+
+    expect(sessionClipRef(session)).toBe('f5d1cc15');
+    expect(sessionClipRef(session)).toBe('f5d1cc15');
+  });
+
+  it('returns null when nobody reports a clip', () => {
+    expect(
+      sessionClipRef({
+        id: '1',
+        name: 'idle',
+        users: [{ id: 'a', username: 'jdoe' }],
+      })
+    ).toBeNull();
+  });
+
+  it('returns null for an empty session', () => {
+    expect(sessionClipRef({ id: '1', name: 'idle', users: [] })).toBeNull();
   });
 });
 

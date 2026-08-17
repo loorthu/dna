@@ -110,14 +110,24 @@ const SessionButton = styled.button<{ $selected: boolean }>`
   }
 `;
 
+// The name is what a session is picked by, so it keeps its width and the
+// viewer list gives way. A busy session can list a dozen people, which is far
+// wider than this menu.
 const SessionName = styled.span`
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 `;
 
 const SessionUsers = styled.span`
-  flex-shrink: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
   font-size: 12px;
   color: ${({ theme }) => theme.colors.text.muted};
 `;
@@ -265,14 +275,22 @@ export function FollowAlongMenu() {
                 onClick={() => choose(reviewSession.name)}
               >
                 <SessionName>{reviewSession.name}</SessionName>
-                {reviewSession.users.length > 0 && (
-                  <SessionUsers>
-                    {reviewSession.users
-                      .map((user) => user.username)
-                      .filter(Boolean)
-                      .join(', ') || `${reviewSession.users.length} watching`}
-                  </SessionUsers>
-                )}
+                {reviewSession.users.length > 0 &&
+                  (() => {
+                    // One person can hold several connections to a session, so
+                    // the raw list repeats them.
+                    const names = [
+                      ...new Set(
+                        reviewSession.users
+                          .map((user) => user.username)
+                          .filter(Boolean)
+                      ),
+                    ];
+                    const label =
+                      names.join(', ') ||
+                      `${reviewSession.users.length} watching`;
+                    return <SessionUsers title={label}>{label}</SessionUsers>;
+                  })()}
               </SessionButton>
             ))}
           </SessionList>

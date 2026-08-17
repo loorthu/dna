@@ -27,6 +27,24 @@ server {
         proxy_read_timeout 300s;
     }
 
+    # Review player's session directory (Follow Along) -> ${REVIEW_SESSIONS_URL}.
+    # Serving it from this origin is what makes it reachable at all: the
+    # directory is a separate service that sends no CORS headers, so the SPA
+    # cannot read it cross-origin. Nothing about the player belongs in the DNA
+    # backend, so the mapping lives here, in deployment config.
+    #
+    # Left unset it parks on a dead local port, which keeps this block valid
+    # and the feature unavailable — the same thing an unset
+    # VITE_FOLLOW_ALONG_SESSIONS_URL means to the app.
+    location ^~ /review-sessions/ {
+        proxy_pass ${REVIEW_SESSIONS_URL}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 30s;
+    }
+
     # WebSocket (live transcription events) -> backend /ws
     location /ws {
         proxy_pass ${BACKEND_URL}/ws;
