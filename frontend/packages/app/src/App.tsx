@@ -9,6 +9,7 @@ import {
 import { useAuth } from './contexts';
 import { useGetVersionsForPlaylist } from './api';
 import { usePlaylistMetadata } from './hooks/usePlaylistMetadata';
+import { useFollowAlong } from './hooks/useFollowAlong';
 
 function App() {
   const queryClient = useQueryClient();
@@ -27,6 +28,18 @@ function App() {
   const { data: playlistMetadata } = usePlaylistMetadata(
     selectedPlaylist?.id ?? null
   );
+
+  const { followedVersion } = useFollowAlong({
+    show: selectedProject?.code ?? selectedProject?.name ?? null,
+    playlistId: selectedPlaylist?.id ?? null,
+    versions,
+  });
+
+  useEffect(() => {
+    if (followedVersion) {
+      setSelectedVersion(followedVersion);
+    }
+  }, [followedVersion]);
 
   useEffect(() => {
     if (versions.length > 0 && !selectedVersion) {

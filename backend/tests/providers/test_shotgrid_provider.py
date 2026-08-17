@@ -1176,7 +1176,7 @@ class TestShotgridProviderGetProjectsForUser:
                 ["sg_type", "in", ["SPA", "Client"]],
                 ["archived", "is", False],
             ],
-            fields=["id", "name"],
+            fields=["id", "name", "tank_name"],
             order=[{"field_name": "name", "direction": "asc"}],
         )
 

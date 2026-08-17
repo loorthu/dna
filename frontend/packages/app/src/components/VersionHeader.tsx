@@ -10,6 +10,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
+import { FollowAlongMenu } from './FollowAlongMenu';
 import { useHotkeyConfig } from '../hotkeys';
 import { useVersionStatuses } from '../hooks';
 import { useFeatureFlags } from '../contexts';
@@ -416,6 +417,7 @@ export function VersionHeader({
           </BackButton>
         </Tooltip>
         <TopBarActions>
+          <FollowAlongMenu />
           {inReviewEnabled && (
             <InReviewButton onClick={onInReview} disabled={!hasInReview}>
               <Eye size={14} />

@@ -60,6 +60,10 @@ class Project(EntityBase):
     """
 
     name: Optional[str] = Field(default=None, description="Project name")
+    code: Optional[str] = Field(
+        default=None,
+        description="Short project code used by external tools",
+    )
 
 
 class Task(EntityBase):
@@ -182,6 +186,15 @@ class Version(EntityBase):
         default=None,
         description="Web UI URL for the linked shot/asset in the production tracking system",
     )
+    external_ref: Optional[str] = Field(
+        default=None,
+        description="Opaque id for this version in an external review tool",
+    )
+
+    @field_validator("external_ref", mode="before")
+    @classmethod
+    def external_ref_to_str(cls, v):
+        return None if v is None else str(v)
 
     @field_validator("notes", mode="before")
     @classmethod

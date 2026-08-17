@@ -23,10 +23,12 @@
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^2.1.8",
+    "jsdom": "^30.0.1",
     "typescript": "^5.9.3",
     "vitest": "^2.1.8"
   },
   "dependencies": {
+    "@stomp/stompjs": "^7.3.0",
     "axios": "^1.13.2"
   }
 }

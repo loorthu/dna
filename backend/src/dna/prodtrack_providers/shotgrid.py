@@ -25,6 +25,22 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
 # PROJECT_ALLOWED_TYPES — only real production projects, not R&D/test shows.
 PROJECT_ALLOWED_TYPES = ("SPA", "Client")
 
+
+def _version_fields_with_external_ref(fields: dict[str, str]) -> dict[str, str]:
+    """Add the site's external review id field, when one is configured.
+
+    The field holding a version's id in an external review tool is a custom
+    field that does not exist on a stock ShotGrid site, so asking for it
+    unconditionally would break every version query. Sites that have one name
+    it in ``PRODTRACK_VERSION_EXTERNAL_REF_FIELD``; everywhere else the feature
+    is simply off.
+    """
+    external_ref_field = os.getenv("PRODTRACK_VERSION_EXTERNAL_REF_FIELD", "").strip()
+    if not external_ref_field:
+        return fields
+    return {**fields, external_ref_field: "external_ref"}
+
+
 # Field Mappings map the DNA entity to the SG entity.
 # Key: DNA entity Name
 #   Entity_id: The SG entity Type.
@@ -38,6 +54,7 @@ FIELD_MAPPING = {
         "fields": {
             "id": "id",
             "name": "name",
+            "tank_name": "code",
         },
         "linked_fields": {},
     },
@@ -84,19 +101,21 @@ FIELD_MAPPING = {
     },
     "version": {
         "entity_id": "Version",
-        "fields": {
-            "id": "id",
-            "code": "name",
-            "description": "description",
-            "sg_status_list": "status",
-            "user": "user",
-            "created_at": "created_at",
-            "updated_at": "updated_at",
-            "sg_path_to_movie": "movie_path",
-            "sg_path_to_frames": "frame_path",
-            "project": "project",
-            "image": "thumbnail",
-        },
+        "fields": _version_fields_with_external_ref(
+            {
+                "id": "id",
+                "code": "name",
+                "description": "description",
+                "sg_status_list": "status",
+                "user": "user",
+                "created_at": "created_at",
+                "updated_at": "updated_at",
+                "sg_path_to_movie": "movie_path",
+                "sg_path_to_frames": "frame_path",
+                "project": "project",
+                "image": "thumbnail",
+            }
+        ),
         "linked_fields": {"entity": "entity", "sg_task": "task", "notes": "notes"},
     },
     "playlist": {
@@ -618,7 +637,7 @@ class ShotgridProvider(ProdtrackProviderBase):
                 ["sg_type", "in", list(PROJECT_ALLOWED_TYPES)],
                 ["archived", "is", False],
             ],
-            fields=["id", "name"],
+            fields=list(FIELD_MAPPING["project"]["fields"].keys()),
             order=[{"field_name": "name", "direction": "asc"}],
         )
 

@@ -33,6 +33,8 @@ export interface EntityBase {
 export interface Project extends EntityBase {
   type: 'Project';
   name?: string;
+  /** Short project code used by external tools; falls back to `name`. */
+  code?: string;
 }
 
 export interface Task extends EntityBase {
@@ -85,6 +87,8 @@ export interface Version extends EntityBase {
   notes: Note[];
   prodtrack_detail_url?: string;
   prodtrack_entity_detail_url?: string;
+  /** Opaque id for this version in an external review tool. */
+  external_ref?: string;
 }
 
 export interface Playlist extends EntityBase {

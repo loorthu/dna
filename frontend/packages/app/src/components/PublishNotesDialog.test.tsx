@@ -6,12 +6,16 @@ import { PublishNotesDialog } from './PublishNotesDialog';
 import type { DraftNote, Version } from '@dna/core';
 import { useDraftNote } from '../hooks/useDraftNote';
 
-const mockPublishNotes = vi.fn();
+const mockPublishNotes = vi.fn().mockResolvedValue({
+  published_count: 0,
+  republished_count: 0,
+  failed_count: 0,
+});
 const mockReset = vi.fn();
 
 vi.mock('../hooks/usePublishNotes', () => ({
   usePublishNotes: () => ({
-    mutate: mockPublishNotes,
+    mutateAsync: mockPublishNotes,
     isPending: false,
     isError: false,
     error: null,
@@ -293,9 +297,8 @@ describe('PublishNotesDialog', () => {
     const user = userEvent.setup();
     const flushA = vi.fn(async () => {});
     const flushB = vi.fn(async () => {});
-    let call = 0;
-    mockedUseDraftNote.mockImplementation(() => {
-      const flush = call++ === 0 ? flushA : flushB;
+    mockedUseDraftNote.mockImplementation(({ versionId }) => {
+      const flush = versionId === 10 ? flushA : flushB;
       return {
         draftNote: {
           content: '',

@@ -76,7 +76,7 @@ class MockProdtrackProvider(ProdtrackProviderBase):
         return self._conn
 
     def _project_from_row(self, row: sqlite3.Row) -> Project:
-        return Project(id=row["id"], name=row["name"])
+        return Project(id=row["id"], name=row["name"], code=row["name"])
 
     def _user_from_row(self, row: sqlite3.Row) -> User:
         return User(
@@ -170,6 +170,10 @@ class MockProdtrackProvider(ProdtrackProviderBase):
                 if entity
                 else None
             ),
+            # Stand-in for a site's external review id, so Follow Along can be
+            # exercised without a production tracking system: broadcasting a
+            # version's own id selects it.
+            external_ref=str(row["id"]),
         )
 
     def _playlist_from_row(

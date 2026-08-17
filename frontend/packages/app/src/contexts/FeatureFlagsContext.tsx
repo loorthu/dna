@@ -10,6 +10,7 @@ import {
 const TRANSCRIPTION_KEY = 'dna-transcription-enabled';
 const AI_KEY = 'dna-ai-enabled';
 const IN_REVIEW_KEY = 'dna-in-review-enabled';
+const FOLLOW_ALONG_KEY = 'dna-follow-along-enabled';
 
 function readEnvOverride(envValue: string | undefined): boolean | null {
   if (envValue === 'true') return true;
@@ -20,19 +21,25 @@ function readEnvOverride(envValue: string | undefined): boolean | null {
 const ENV_TRANSCRIPTION = readEnvOverride(import.meta.env.VITE_FEATURE_TRANSCRIPTION);
 const ENV_IN_REVIEW = readEnvOverride(import.meta.env.VITE_FEATURE_IN_REVIEW);
 const ENV_AI = readEnvOverride(import.meta.env.VITE_FEATURE_AI);
+const ENV_FOLLOW_ALONG = readEnvOverride(
+  import.meta.env.VITE_FEATURE_FOLLOW_ALONG
+);
 
 interface FeatureFlagsContextValue {
   transcriptionEnabled: boolean;
   aiEnabled: boolean;
   inReviewEnabled: boolean;
+  followAlongEnabled: boolean;
   transcriptionLocked: boolean;
   aiLocked: boolean;
   inReviewLocked: boolean;
+  followAlongLocked: boolean;
   transcriptionLockReason: string | null;
   inReviewLockReason: string | null;
   setTranscriptionEnabled: (enabled: boolean) => void;
   setAiEnabled: (enabled: boolean) => void;
   setInReviewEnabled: (enabled: boolean) => void;
+  setFollowAlongEnabled: (enabled: boolean) => void;
 }
 
 const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(null);
@@ -53,6 +60,14 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
   const [inReviewBase, setInReviewState] = useState(() => {
     if (ENV_IN_REVIEW !== null) return ENV_IN_REVIEW;
     const stored = localStorage.getItem(IN_REVIEW_KEY);
+    return stored === null ? true : stored === 'true';
+  });
+
+  // Follow Along stands apart from the russian-doll chain below: it moves only
+  // the local selection and needs nothing from the transcription pipeline.
+  const [followAlongEnabled, setFollowAlongState] = useState(() => {
+    if (ENV_FOLLOW_ALONG !== null) return ENV_FOLLOW_ALONG;
+    const stored = localStorage.getItem(FOLLOW_ALONG_KEY);
     return stored === null ? true : stored === 'true';
   });
 
@@ -80,15 +95,23 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     setInReviewState(enabled);
   }, []);
 
+  const setFollowAlongEnabled = useCallback((enabled: boolean) => {
+    if (ENV_FOLLOW_ALONG !== null) return;
+    localStorage.setItem(FOLLOW_ALONG_KEY, String(enabled));
+    setFollowAlongState(enabled);
+  }, []);
+
   return (
     <FeatureFlagsContext.Provider
       value={{
         transcriptionEnabled,
         aiEnabled,
         inReviewEnabled,
+        followAlongEnabled,
         transcriptionLocked: ENV_TRANSCRIPTION !== null || aiEnabled,
         aiLocked: ENV_AI !== null,
         inReviewLocked: ENV_IN_REVIEW !== null || transcriptionEnabled,
+        followAlongLocked: ENV_FOLLOW_ALONG !== null,
         transcriptionLockReason:
           ENV_TRANSCRIPTION !== null
             ? 'pipeline'
@@ -104,6 +127,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
         setTranscriptionEnabled,
         setAiEnabled,
         setInReviewEnabled,
+        setFollowAlongEnabled,
       }}
     >
       {children}

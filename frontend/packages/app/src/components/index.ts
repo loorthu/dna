@@ -21,6 +21,7 @@ export {
   StyledSelectTrigger,
   StyledSelectContent,
 } from './FormInputs';
+export { FollowAlongMenu } from './FollowAlongMenu';
 export { TranscriptionMenu } from './TranscriptionMenu';
 export { TranscriptPanel } from './TranscriptPanel';
 export { SettingsModal } from './SettingsModal';

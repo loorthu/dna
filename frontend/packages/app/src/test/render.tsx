@@ -6,6 +6,10 @@ import { Theme } from '@radix-ui/themes';
 import { theme } from '../styles';
 import { AuthProvider } from '../contexts/AuthContext';
 import { ThemeModeProvider } from '../contexts/ThemeContext';
+import { FeatureFlagsProvider } from '../contexts/FeatureFlagsContext';
+import { FollowAlongProvider } from '../contexts/FollowAlongContext';
+import { ToastProvider } from '../contexts/ToastContext';
+import { EventProvider } from '../contexts/EventContext';
 
 interface WrapperProps {
   children: ReactNode;
@@ -30,7 +34,15 @@ function AllTheProviders({ children }: WrapperProps) {
       <ThemeProvider theme={theme}>
         <Theme>
           <ThemeModeProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <FeatureFlagsProvider>
+              <AuthProvider>
+                <ToastProvider>
+                  <EventProvider>
+                    <FollowAlongProvider>{children}</FollowAlongProvider>
+                  </EventProvider>
+                </ToastProvider>
+              </AuthProvider>
+            </FeatureFlagsProvider>
           </ThemeModeProvider>
         </Theme>
       </ThemeProvider>

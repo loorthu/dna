@@ -2,7 +2,13 @@ import { ThemeProvider } from 'styled-components';
 import { Theme } from '@radix-ui/themes';
 import App from './App';
 import { darkTheme, lightTheme, GlobalStyles } from './styles';
-import { EventProvider, ToastProvider, AuthProvider, useThemeMode } from './contexts';
+import {
+  EventProvider,
+  FollowAlongProvider,
+  ToastProvider,
+  AuthProvider,
+  useThemeMode,
+} from './contexts';
 import { HotkeysProvider } from './hotkeys';
 
 export function ThemedApp() {
@@ -16,7 +22,9 @@ export function ThemedApp() {
           <HotkeysProvider>
             <ToastProvider>
               <EventProvider>
-                <App />
+                <FollowAlongProvider>
+                  <App />
+                </FollowAlongProvider>
               </EventProvider>
             </ToastProvider>
           </HotkeysProvider>
