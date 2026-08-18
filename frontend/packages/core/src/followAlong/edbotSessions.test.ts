@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   fetchReviewSessions,
   reviewSessionsUrl,
-  sessionClipRef,
   sortReviewSessions,
 } from './edbotSessions';
 
@@ -72,8 +71,8 @@ describe('fetchReviewSessions', () => {
         id: 'fb170680-34f8',
         name: 'rounds',
         users: [
-          { id: '5925e191-57ff', username: 'jdoe', clipRef: 'f5d1cc15' },
-          { id: 'aaaaaaaa-57ff', username: 'ak', clipRef: 'f5d1cc15' },
+          { id: '5925e191-57ff', username: 'jdoe' },
+          { id: 'aaaaaaaa-57ff', username: 'ak' },
         ],
       },
     ]);
@@ -199,63 +198,6 @@ describe('fetchReviewSessions', () => {
     expect(fetchImpl).toHaveBeenCalledWith(expect.any(String), {
       signal: controller.signal,
     });
-  });
-});
-
-describe('sessionClipRef', () => {
-  it('returns the clip the members agree on', () => {
-    expect(
-      sessionClipRef({
-        id: '1',
-        name: 'rounds',
-        users: [
-          { id: 'a', username: 'jdoe', clipRef: 'f5d1cc15' },
-          { id: 'b', username: 'ak', clipRef: 'f5d1cc15' },
-        ],
-      })
-    ).toBe('f5d1cc15');
-  });
-
-  it('takes the plurality when a member is out of sync', () => {
-    expect(
-      sessionClipRef({
-        id: '1',
-        name: 'rounds',
-        users: [
-          { id: 'a', username: 'jdoe', clipRef: 'f5d1cc15' },
-          { id: 'b', username: 'ak', clipRef: 'f5d1cc15' },
-          { id: 'c', username: 'late', clipRef: '7a2d3562' },
-        ],
-      })
-    ).toBe('f5d1cc15');
-  });
-
-  it('keeps the first-seen clip on a tie, so polls do not flip', () => {
-    const session = {
-      id: '1',
-      name: 'rounds',
-      users: [
-        { id: 'a', username: 'jdoe', clipRef: 'f5d1cc15' },
-        { id: 'b', username: 'ak', clipRef: '7a2d3562' },
-      ],
-    };
-
-    expect(sessionClipRef(session)).toBe('f5d1cc15');
-    expect(sessionClipRef(session)).toBe('f5d1cc15');
-  });
-
-  it('returns null when nobody reports a clip', () => {
-    expect(
-      sessionClipRef({
-        id: '1',
-        name: 'idle',
-        users: [{ id: 'a', username: 'jdoe' }],
-      })
-    ).toBeNull();
-  });
-
-  it('returns null for an empty session', () => {
-    expect(sessionClipRef({ id: '1', name: 'idle', users: [] })).toBeNull();
   });
 });
 

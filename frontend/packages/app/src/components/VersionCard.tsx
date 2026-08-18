@@ -14,11 +14,16 @@ interface VersionCardProps {
   thumbnailUrl?: string;
   selected?: boolean;
   inReview?: boolean;
+  /** The followed review session is showing this version. A hint, not a selection. */
+  followed?: boolean;
   noteStatus?: NoteStatus | null;
   onClick?: () => void;
 }
 
-const Card = styled.div<{ $selected?: boolean }>`
+// Two independent states. The border is the user's own selection; the outline
+// sits outside it and marks what the followed review session is showing, so a
+// version that is both still reads as both.
+const Card = styled.div<{ $selected?: boolean; $followed?: boolean }>`
   display: flex;
   gap: 12px;
   padding: 12px;
@@ -28,11 +33,15 @@ const Card = styled.div<{ $selected?: boolean }>`
   transition: all ${({ theme }) => theme.transitions.fast};
   border: 2px solid
     ${({ theme, $selected }) =>
-    $selected ? theme.colors.accent.main : 'transparent'};
+      $selected ? theme.colors.accent.main : 'transparent'};
+  ${({ theme, $followed }) =>
+    $followed &&
+    `outline: 2px solid ${theme.colors.status.warning};
+     outline-offset: 1px;`}
 
   &:hover {
     border-color: ${({ theme, $selected }) =>
-    $selected ? theme.colors.accent.main : theme.colors.border.strong};
+      $selected ? theme.colors.accent.main : theme.colors.border.strong};
   }
 `;
 
@@ -92,9 +101,12 @@ const InReviewIcon = styled.span`
 
 const statusColor = (theme: DefaultTheme, status: NoteStatus) => {
   switch (status) {
-    case 'published': return theme.colors.status.success;
-    case 'edited': return theme.colors.status.warning;
-    case 'draft': return theme.colors.status.info;
+    case 'published':
+      return theme.colors.status.success;
+    case 'edited':
+      return theme.colors.status.warning;
+    case 'draft':
+      return theme.colors.status.info;
   }
 };
 
@@ -126,7 +138,8 @@ const PortalPill = styled.div<{ $status: NoteStatus }>`
     border-radius: 4px;
     font-size: 12px;
     font-weight: 600;
-    background-color: ${({ theme, $status }) => statusColor(theme, $status) + '33'};
+    background-color: ${({ theme, $status }) =>
+      statusColor(theme, $status) + '33'};
     color: ${({ theme, $status }) => statusColor(theme, $status)};
   }
 `;
@@ -150,7 +163,15 @@ const Department = styled.span`
   color: ${({ theme }) => theme.colors.text.muted};
 `;
 
-function StatusBadge({ status, label, letter }: { status: NoteStatus; label: string; letter: string }) {
+function StatusBadge({
+  status,
+  label,
+  letter,
+}: {
+  status: NoteStatus;
+  label: string;
+  letter: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
 
@@ -174,19 +195,20 @@ function StatusBadge({ status, label, letter }: { status: NoteStatus; label: str
       >
         {letter}
       </StatusIcon>
-      {pos && createPortal(
-        <PortalPill
-          $status={status}
-          style={{
-            top: pos.top,
-            right: pos.right,
-            transform: 'translateY(-100%) translateY(-6px)',
-          }}
-        >
-          <span>{label}</span>
-        </PortalPill>,
-        document.body
-      )}
+      {pos &&
+        createPortal(
+          <PortalPill
+            $status={status}
+            style={{
+              top: pos.top,
+              right: pos.right,
+              transform: 'translateY(-100%) translateY(-6px)',
+            }}
+          >
+            <span>{label}</span>
+          </PortalPill>,
+          document.body
+        )}
     </>
   );
 }
@@ -198,6 +220,7 @@ export function VersionCard({
   thumbnailUrl,
   selected = false,
   inReview = false,
+  followed = false,
   noteStatus = null,
   onClick,
 }: VersionCardProps) {
@@ -205,22 +228,33 @@ export function VersionCard({
 
   const getStatusLetter = (status: NoteStatus) => {
     switch (status) {
-      case 'published': return 'P';
-      case 'edited': return 'E';
-      case 'draft': return 'D';
+      case 'published':
+        return 'P';
+      case 'edited':
+        return 'E';
+      case 'draft':
+        return 'D';
     }
   };
 
   const getStatusLabel = (status: NoteStatus) => {
     switch (status) {
-      case 'published': return 'Published';
-      case 'edited': return 'Published (Edited)';
-      case 'draft': return 'Draft';
+      case 'published':
+        return 'Published';
+      case 'edited':
+        return 'Published (Edited)';
+      case 'draft':
+        return 'Draft';
     }
   };
 
   return (
-    <Card $selected={selected} onClick={onClick}>
+    <Card
+      $selected={selected}
+      $followed={followed}
+      title={followed ? 'On screen in the review session' : undefined}
+      onClick={onClick}
+    >
       <Thumbnail>
         {thumbnailUrl && <img src={thumbnailUrl} alt={displayName} />}
       </Thumbnail>

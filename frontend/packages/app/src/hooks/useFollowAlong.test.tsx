@@ -65,6 +65,8 @@ describe('useFollowAlong', () => {
     client = createReviewSyncClient({
       brokerURL: 'ws://broker.test:61614/stomp',
       topic: '/topic/current_clip.xml',
+      // Report announcements straight away; settling is covered in @dna/core.
+      settleMs: 0,
     });
   });
 

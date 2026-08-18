@@ -27,11 +27,9 @@ export interface ReviewFocus {
   /**
    * The player's own handle for this clip, distinct from {@link externalRef}.
    *
-   * A broadcast topic carries every session of every show, and more than one
-   * publisher can announce itself under the same session name — so session and
-   * show together do not identify a single clip. Where the session directory
-   * also reports what each connection is watching, this is what the two are
-   * reconciled on. Empty when the payload does not carry one.
+   * Two announcements can name the same version through different clips, so
+   * this is what tells them apart when diagnosing what a session is really
+   * broadcasting. Empty when the payload does not carry one.
    */
   clipRef: string;
 }
@@ -40,11 +38,6 @@ export interface ReviewFocus {
 export interface ReviewSessionUser {
   id: string;
   username: string;
-  /**
-   * Clip this connection is showing, when the directory reports it. Compared
-   * against {@link ReviewFocus.clipRef}.
-   */
-  clipRef?: string;
 }
 
 /** A review session a user can choose to follow. */

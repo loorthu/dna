@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import styled from 'styled-components';
 import {
   PanelLeftClose,
@@ -13,7 +13,10 @@ import type { Version, DraftNote } from '@dna/core';
 import { Logo } from './Logo';
 import { UserAvatar } from './UserAvatar';
 import { SplitButton } from './SplitButton';
-import { ExpandableSearch, type ExpandableSearchHandle } from './ExpandableSearch';
+import {
+  ExpandableSearch,
+  type ExpandableSearchHandle,
+} from './ExpandableSearch';
 import { SquareButton } from './SquareButton';
 import { VersionCard, NoteStatus } from './VersionCard';
 import { TranscriptionMenu } from './TranscriptionMenu';
@@ -30,6 +33,8 @@ interface SidebarProps {
   onReplacePlaylist?: () => void;
   playlistId: number | null;
   selectedVersionId?: number | null;
+  /** Version the followed review session is showing. Marked, never selected. */
+  followedVersionId?: number | null;
   onVersionSelect?: (version: Version) => void;
   userEmail: string;
   onLogout?: () => void;
@@ -240,6 +245,7 @@ export function Sidebar({
   onReplacePlaylist,
   playlistId,
   selectedVersionId,
+  followedVersionId,
   onVersionSelect,
   userEmail,
   onLogout,
@@ -288,6 +294,34 @@ export function Sidebar({
   );
 
   const inReviewVersionId = playlistMetadata?.in_review;
+
+  // Bring the followed version into view only when it is out of sight. The
+  // review session changes clip constantly, so scrolling on every change would
+  // pull the list around under someone who is reading it; a row already on
+  // screen needs no help. The delay lets a freshly rendered row register first.
+  useEffect(() => {
+    if (followedVersionId == null) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      const element = versionRefs.current.get(followedVersionId);
+      const container = scrollContainerRef.current;
+      if (!element || !container) {
+        return;
+      }
+
+      const row = element.getBoundingClientRect();
+      const view = container.getBoundingClientRect();
+      if (row.top >= view.top && row.bottom <= view.bottom) {
+        return;
+      }
+
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [followedVersionId]);
 
   const playlistMenuItems = [
     { label: 'Change Playlist', onSelect: onReplacePlaylist },
@@ -371,6 +405,9 @@ export function Sidebar({
                 thumbnailUrl={version.thumbnail}
                 selected={version.id === selectedVersionId}
                 inReview={inReviewEnabled && inReviewVersionId === version.id}
+                followed={
+                  followedVersionId != null && version.id === followedVersionId
+                }
                 noteStatus={((): NoteStatus | null => {
                   const note = draftNotes?.find(
                     (n) => n.version_id === version.id
@@ -411,7 +448,9 @@ export function Sidebar({
               />
             </>
           )}
-          <Tooltip content={`${collapsed ? 'Expand' : 'Collapse'} Sidebar (${getLabel('toggleSidebar')})`}>
+          <Tooltip
+            content={`${collapsed ? 'Expand' : 'Collapse'} Sidebar (${getLabel('toggleSidebar')})`}
+          >
             <CollapseButton
               onClick={() => onCollapsedChange(!collapsed)}
               aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -424,7 +463,9 @@ export function Sidebar({
 
       {collapsed ? (
         <CollapsedToolbar>
-          {transcriptionEnabled && <TranscriptionMenu playlistId={playlistId} collapsed />}
+          {transcriptionEnabled && (
+            <TranscriptionMenu playlistId={playlistId} collapsed />
+          )}
         </CollapsedToolbar>
       ) : (
         <Toolbar>
@@ -477,7 +518,9 @@ export function Sidebar({
         </CollapsedFooter>
       ) : (
         <Footer $collapsed={collapsed}>
-          {transcriptionEnabled && <TranscriptionMenu playlistId={playlistId} />}
+          {transcriptionEnabled && (
+            <TranscriptionMenu playlistId={playlistId} />
+          )}
           <Tooltip content={`Settings (${getLabel('openSettings')})`}>
             <SettingsButton onClick={toggleSettings}>
               <Settings size={16} />
@@ -491,8 +534,6 @@ export function Sidebar({
           />
         </Footer>
       )}
-
-
 
       {playlistId && (
         <PublishDialog

@@ -1,11 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Playlist, Project, Version } from '@dna/core';
-import {
-  Layout,
-  ContentArea,
-  ProjectSelector,
-} from './components';
+import { Layout, ContentArea, ProjectSelector } from './components';
 import { useAuth } from './contexts';
 import { useGetVersionsForPlaylist } from './api';
 import { usePlaylistMetadata } from './hooks/usePlaylistMetadata';
@@ -34,12 +30,6 @@ function App() {
     playlistId: selectedPlaylist?.id ?? null,
     versions,
   });
-
-  useEffect(() => {
-    if (followedVersion) {
-      setSelectedVersion(followedVersion);
-    }
-  }, [followedVersion]);
 
   useEffect(() => {
     if (versions.length > 0 && !selectedVersion) {
@@ -107,6 +97,7 @@ function App() {
       onReplacePlaylist={handleReplacePlaylist}
       playlistId={selectedPlaylist.id}
       selectedVersionId={selectedVersion?.id}
+      followedVersionId={followedVersion?.id ?? null}
       onVersionSelect={handleVersionSelect}
       userEmail={userEmail}
       onLogout={handleLogout}

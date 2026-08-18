@@ -15,8 +15,8 @@ import type { ReviewSession, ReviewSessionUser } from './types';
  *   }}]
  * ```
  *
- * `position.cguid` is the clip that connection is currently showing, which is
- * what tells competing announcements on the broadcast topic apart.
+ * Only the session names and who is watching them are read: the directory
+ * populates the picker, and nothing else depends on it being reachable.
  *
  * The whole file is an adapter for that one service; a site running a
  * different session directory supplies its own fetcher of `ReviewSession[]`.
@@ -42,13 +42,10 @@ function text(value: unknown): string {
 /** Reads one connection record into a user, whatever it is keyed by. */
 function toUser(id: string, value: unknown): ReviewSessionUser {
   const record = (value ?? {}) as Record<string, unknown>;
-  const position = (record.position ?? {}) as Record<string, unknown>;
-  const clipRef = text(position.cguid).trim();
 
   return {
     id: text(record.token).trim() || id,
     username: text(record.username),
-    ...(clipRef ? { clipRef } : {}),
   };
 }
 
@@ -126,36 +123,6 @@ export async function fetchReviewSessions({
       users: flattenConnections(session.connections),
     }))
     .filter((session) => session.name !== '');
-}
-
-/**
- * The clip a session's members agree they are looking at, or `null` when the
- * directory reports none.
- *
- * Members can disagree — someone joining mid-review, or a viewer who has
- * stepped out of sync — so this is a plurality, not a requirement of unanimity.
- * A tie resolves to whichever clip was seen first, which keeps the answer
- * stable across polls rather than flipping between equally-backed clips.
- */
-export function sessionClipRef(session: ReviewSession): string | null {
-  const counts = new Map<string, number>();
-
-  for (const user of session.users) {
-    const clipRef = user.clipRef?.trim();
-    if (clipRef) {
-      counts.set(clipRef, (counts.get(clipRef) ?? 0) + 1);
-    }
-  }
-
-  let winner: string | null = null;
-  let best = 0;
-  for (const [clipRef, count] of counts) {
-    if (count > best) {
-      winner = clipRef;
-      best = count;
-    }
-  }
-  return winner;
 }
 
 /** Sessions someone is watching sort first, then alphabetically. */

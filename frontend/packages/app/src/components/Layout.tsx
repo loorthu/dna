@@ -8,6 +8,8 @@ interface LayoutProps {
   onReplacePlaylist?: () => void;
   playlistId: number | null;
   selectedVersionId?: number | null;
+  /** Version the followed review session is showing, if any. A hint only. */
+  followedVersionId?: number | null;
   onVersionSelect?: (version: Version) => void;
   userEmail: string;
   onLogout?: () => void;
@@ -46,6 +48,7 @@ export function Layout({
   onReplacePlaylist,
   playlistId,
   selectedVersionId,
+  followedVersionId,
   onVersionSelect,
   userEmail,
   onLogout,
@@ -73,6 +76,7 @@ export function Layout({
         onReplacePlaylist={onReplacePlaylist}
         playlistId={playlistId}
         selectedVersionId={selectedVersionId}
+        followedVersionId={followedVersionId}
         onVersionSelect={onVersionSelect}
         userEmail={userEmail}
         onLogout={onLogout}

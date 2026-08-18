@@ -7,8 +7,16 @@ import type {
   ReviewFocusParser,
 } from './types';
 
-/** Announcements kept so a clip can be resolved without awaiting a rebroadcast. */
-const RECENT_CLIP_LIMIT = 16;
+/**
+ * How long a clip must be the latest announcement before it is reported.
+ *
+ * The player rebroadcasts continuously and more than one publisher can announce
+ * under the same session name, so announcements arrive in bursts. Settling
+ * briefly keeps a rapid burst from being reported as several changes. It is
+ * deliberately short: this drives a hint, and a late hint is worth less than a
+ * slightly noisy one.
+ */
+const DEFAULT_SETTLE_MS = 1500;
 
 export interface ReviewSyncClientConfig {
   /** STOMP-over-WebSocket broker, e.g. `ws://broker.example.com:61614/stomp`. */
@@ -23,10 +31,22 @@ export interface ReviewSyncClientConfig {
   debug?: boolean;
   /** Swap in when the player's payload is not the default XML shape. */
   parse?: ReviewFocusParser;
+  /** Overrides {@link DEFAULT_SETTLE_MS}; 0 reports every announcement. */
+  settleMs?: number;
 }
 
 function normalize(value: string | null | undefined): string {
   return value?.trim().toLowerCase() ?? '';
+}
+
+/**
+ * Whether two announcements point at the same thing as far as a subscriber is
+ * concerned. Compared on the clip id rather than the whole focus: the player
+ * may re-announce the same clip with a different internal handle, and that is
+ * not a change anyone downstream can see.
+ */
+function sameClip(a: ReviewFocus, b: ReviewFocus): boolean {
+  return a.externalRef === b.externalRef;
 }
 
 /**
@@ -51,9 +71,8 @@ export class ReviewSyncClient {
   private _session: string | null = null;
   private _show: string | null = null;
   private _lastFocus: ReviewFocus | null = null;
-  private _expectedClipRef: string | null = null;
-  private unknownClipCallbacks: Set<ReviewFocusCallback> = new Set();
-  private recentByClipRef: Map<string, ReviewFocus> = new Map();
+  private settleTimer: ReturnType<typeof setTimeout> | null = null;
+  private pending: ReviewFocus | null = null;
 
   constructor(config: ReviewSyncClientConfig) {
     this.config = config;
@@ -134,6 +153,7 @@ export class ReviewSyncClient {
     const client = this.client;
     this.client = null;
     this._isConnected = false;
+    this.clearSettle();
 
     if (client) {
       void client.deactivate();
@@ -151,26 +171,30 @@ export class ReviewSyncClient {
       return;
     }
 
-    this.remember(focus);
-
-    // More than one publisher can announce under the same session name, so a
-    // frame that clears the session filter is not necessarily the clip the
-    // room is on. Hand it to whoever can arbitrate instead of acting on it.
-    if (!this.matchesClip(focus)) {
-      this.unknownClipCallbacks.forEach((callback) => {
-        try {
-          callback(focus);
-        } catch (err) {
-          console.error(
-            '[ReviewSyncClient] Error in unknown clip callback:',
-            err
-          );
-        }
-      });
+    // Already reporting this clip: the player is just repeating itself.
+    if (this._lastFocus && sameClip(this._lastFocus, focus)) {
+      this.clearSettle();
       return;
     }
 
-    this.emit(focus);
+    const settleMs = this.config.settleMs ?? DEFAULT_SETTLE_MS;
+    if (settleMs <= 0) {
+      this.emit(focus);
+      return;
+    }
+
+    this.pending = focus;
+    if (this.settleTimer) {
+      return;
+    }
+    this.settleTimer = setTimeout(() => {
+      this.settleTimer = null;
+      const settled = this.pending;
+      this.pending = null;
+      if (settled && !(this._lastFocus && sameClip(this._lastFocus, settled))) {
+        this.emit(settled);
+      }
+    }, settleMs);
   }
 
   private emit(focus: ReviewFocus): void {
@@ -184,19 +208,12 @@ export class ReviewSyncClient {
     });
   }
 
-  private remember(focus: ReviewFocus): void {
-    if (!focus.clipRef) {
-      return;
+  private clearSettle(): void {
+    if (this.settleTimer) {
+      clearTimeout(this.settleTimer);
+      this.settleTimer = null;
     }
-    this.recentByClipRef.delete(focus.clipRef);
-    this.recentByClipRef.set(focus.clipRef, focus);
-    while (this.recentByClipRef.size > RECENT_CLIP_LIMIT) {
-      const oldest = this.recentByClipRef.keys().next().value;
-      if (oldest === undefined) {
-        break;
-      }
-      this.recentByClipRef.delete(oldest);
-    }
+    this.pending = null;
   }
 
   private matchesFilter(focus: ReviewFocus): boolean {
@@ -210,15 +227,6 @@ export class ReviewSyncClient {
       return false;
     }
     return true;
-  }
-
-  private matchesClip(focus: ReviewFocus): boolean {
-    // With nothing to arbitrate against, every announcement for the session is
-    // taken at face value — the behaviour of a site with no session directory.
-    if (!this._expectedClipRef || !focus.clipRef) {
-      return true;
-    }
-    return focus.clipRef === this._expectedClipRef;
   }
 
   private fail(error: Error): void {
@@ -246,49 +254,9 @@ export class ReviewSyncClient {
     this.forget();
   }
 
-  /**
-   * Names the clip the followed session is really on, from the session
-   * directory. Announcements for any other clip are withheld.
-   *
-   * When the named clip has already been announced, it is emitted straight
-   * away rather than waiting for the player to repeat itself — the arbitration
-   * costs a directory round trip, not a rebroadcast interval.
-   */
-  setExpectedClipRef(clipRef: string | null): void {
-    const next = clipRef?.trim() || null;
-    if (next === this._expectedClipRef) {
-      return;
-    }
-    this._expectedClipRef = next;
-
-    if (!next) {
-      return;
-    }
-    const known = this.recentByClipRef.get(next);
-    if (known && known !== this._lastFocus) {
-      this.emit(known);
-    }
-  }
-
-  get expectedClipRef(): string | null {
-    return this._expectedClipRef;
-  }
-
-  /**
-   * Notified when the session announces a clip that is not the expected one —
-   * the cue to re-read the session directory, since the room may have moved.
-   */
-  onUnknownClip(callback: ReviewFocusCallback): () => void {
-    this.unknownClipCallbacks.add(callback);
-    return () => {
-      this.unknownClipCallbacks.delete(callback);
-    };
-  }
-
   private forget(): void {
     this._lastFocus = null;
-    this._expectedClipRef = null;
-    this.recentByClipRef.clear();
+    this.clearSettle();
   }
 
   subscribe(callback: ReviewFocusCallback): () => void {
