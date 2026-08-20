@@ -21,7 +21,10 @@ def _clear_prompt_cache():
 
 def test_get_default_note_prompt_loads_packaged_yaml():
     text = get_default_note_prompt()
-    assert "Purpose and Goals" in text
+    # An anchor from the short-profile body the packaged YAML now carries. The previous anchor
+    # ("Purpose and Goals") belonged to the earlier long-form prompt and outlived it, so this
+    # asserted the shape of a template that no longer ships.
+    assert "Action Items:" in text
     assert "{{ transcript }}" in text or "{{transcript}}" in text
 
 

@@ -120,8 +120,11 @@ class TestLLMProviderBase:
                     "content": "Transcript -- Context -- Notes\n\nAdditional Instructions: Be concise",
                 },
             ],
-            temperature=0.7,
-            max_tokens=1024,
+            # Deliberate, and documented at the call site: 0.1 for faithful extraction rather
+            # than creative compression, and 8192 because thinking models count internal
+            # reasoning tokens against this budget and a small ceiling truncates the note.
+            temperature=0.1,
+            max_tokens=8192,
         )
 
     @pytest.mark.asyncio
