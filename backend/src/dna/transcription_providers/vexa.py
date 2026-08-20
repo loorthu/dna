@@ -268,6 +268,18 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
         response.raise_for_status()
         return response.content, response.headers.get("x-chunk-sha256")
 
+    async def get_recording_media_raw(
+        self, recording_id: int, media_file_id: int, media_type: str = "audio"
+    ) -> bytes:
+        """The assembled master's bytes. Finalize-on-read applies here too, so this materializes
+        the master if a prior /master call has not already done so."""
+        response = await self.client.get(
+            f"/recordings/{recording_id}/media/{media_file_id}/raw",
+            params={"type": media_type},
+        )
+        response.raise_for_status()
+        return response.content
+
     async def delete_recording(self, recording_id: int) -> dict[str, Any]:
         """Purge the upstream copy. The meeting and its transcript are untouched."""
         response = await self.client.delete(f"/recordings/{recording_id}")

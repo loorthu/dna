@@ -1,0 +1,13 @@
+# The collector's whole dependency surface.
+#
+# imageio-ffmpeg is here rather than `apt-get install ffmpeg` in the Dockerfile because the
+# air-gapped prod host mirrors PyPI and npm through Artifactory but not Debian. As a wheel this
+# builds on prod as well as on an internet-connected machine; as an apt package it would build
+# only on the latter and have to be carried over. The wheel bundles a full static ffmpeg
+# (johnvansickle 7.x — libx264, libopus, aac, mp4), which is more than the mux needs.
+#
+# Pin 0.6.0 deliberately: 0.5.1 bundles ffmpeg 4.2.2, which has the aac encoder but is six years
+# older than the build the mux was validated against. The bundled binary version is a property of
+# THIS pin, so moving it silently changes the encoder — re-run the mux check if it ever changes.
+httpx==0.27.2
+imageio-ffmpeg==0.6.0

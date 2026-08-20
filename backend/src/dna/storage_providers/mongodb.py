@@ -269,6 +269,25 @@ class MongoDBStorageProvider(StorageProviderBase):
         result = await self.playlist_metadata_collection.delete_one(query)
         return result.deleted_count > 0
 
+    async def list_playlists_pending_archive(self, limit: int = 25) -> list[int]:
+        # A null path matches both "absent" and "explicitly null", so a playlist that never had a
+        # recording and one whose archive is still in flight look the same here — which is right:
+        # the collector cannot tell them apart either, and asking is cheap (a 404 it backs off on).
+        cursor = (
+            self.playlist_metadata_collection.find(
+                {
+                    "vexa_meeting_id": {"$ne": None},
+                    "recording_network_path": None,
+                },
+                {"playlist_id": 1},
+            )
+            # Vexa meeting ids increase monotonically, so this is "most recent first" without
+            # needing a timestamp the metadata does not carry. It bounds the queue to the
+            # meetings that could plausibly still be recording.
+            .sort("vexa_meeting_id", -1).limit(limit)
+        )
+        return [doc["playlist_id"] async for doc in cursor]
+
     async def upsert_segment(
         self,
         playlist_id: int,

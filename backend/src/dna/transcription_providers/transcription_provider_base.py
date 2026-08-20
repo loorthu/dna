@@ -128,6 +128,18 @@ class TranscriptionProviderBase:
         """One part's bytes plus its advertised sha256, so the caller can verify what it got."""
         raise NotImplementedError()
 
+    async def get_recording_media_raw(
+        self, recording_id: int, media_file_id: int, media_type: str = "audio"
+    ) -> bytes:
+        """The ASSEMBLED master's bytes for one media file.
+
+        The counterpart to ``get_recording_master``, which returns only metadata. Used for the
+        audio stream, which is fetched whole once the meeting is over rather than part-by-part:
+        it is a fraction of the video's size, and it is only needed at the moment the two streams
+        are muxed together.
+        """
+        raise NotImplementedError()
+
     async def delete_recording(self, recording_id: int) -> dict[str, Any]:
         """Purge one recording's media and its record, leaving the meeting and its transcript."""
         raise NotImplementedError()

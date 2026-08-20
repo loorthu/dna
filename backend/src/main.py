@@ -1947,6 +1947,26 @@ async def generate_note(
 
 
 @app.get(
+    "/recordings/pending",
+    tags=["Recordings"],
+    summary="Playlists whose meeting recording has not been archived yet",
+    description=(
+        "The collector's work queue, newest first. A playlist appears here while it has a meeting "
+        "and no recorded archive — the same condition that makes its upstream copy undeletable, "
+        "so the queue cannot drift out of step with the delete guard. Playlists whose meeting was "
+        "never recorded also appear; the collector discovers that from a 404 and backs off."
+    ),
+)
+async def list_pending_recordings(
+    storage_provider: StorageProviderDep,
+    _: CurrentUserDep,
+    limit: int = 25,
+) -> dict:
+    playlist_ids = await storage_provider.list_playlists_pending_archive(limit=limit)
+    return {"playlist_ids": playlist_ids, "count": len(playlist_ids)}
+
+
+@app.get(
     "/recordings/{playlist_id}/chunks",
     tags=["Recordings"],
     summary="List a playlist recording's parts",
@@ -1996,6 +2016,38 @@ async def get_recording_chunk(
         content=data,
         media_type="video/mp4",
         headers={"X-Chunk-Sha256": sha256 or "", "X-Chunk-Seq": str(chunk_seq)},
+    )
+
+
+@app.get(
+    "/recordings/{playlist_id}/audio",
+    tags=["Recordings"],
+    summary="Download a playlist recording's assembled audio master",
+    description=(
+        "The audio stream, whole. Unlike video it is not relayed part-by-part: it is far smaller "
+        "and is wanted only at the moment the two streams are muxed. Responds with both streams' "
+        "start clocks, since they do not begin together and the mux must pad by the difference."
+    ),
+)
+async def get_recording_audio(
+    playlist_id: int,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> Response:
+    service = RecordingMediaService(transcription_provider, storage_provider)
+    try:
+        data, meta = await service.get_audio(playlist_id)
+    except RecordingNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=data,
+        media_type="audio/webm",
+        headers={
+            "X-Audio-Start-Time-Utc": meta.get("start_time_utc") or "",
+            "X-Video-Start-Time-Utc": meta.get("video_start_time_utc") or "",
+            "X-Audio-Duration-Seconds": str(meta.get("duration_seconds") or ""),
+        },
     )
 
 

@@ -85,6 +85,16 @@ class StorageProviderBase:
         """Delete playlist metadata. Returns True if deleted."""
         raise NotImplementedError()
 
+    async def list_playlists_pending_archive(self, limit: int = 25) -> list[int]:
+        """Playlists whose meeting media has not been archived yet, newest first.
+
+        "Not archived" is the absence of a network path, which is exactly the condition that
+        keeps the upstream copy undeletable — so this is the collector's work queue, expressed as
+        the same fact the delete guard turns on rather than as a second piece of bookkeeping that
+        could disagree with it.
+        """
+        raise NotImplementedError()
+
     async def upsert_segment(
         self,
         playlist_id: int,

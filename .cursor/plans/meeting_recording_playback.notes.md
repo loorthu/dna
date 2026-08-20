@@ -2,7 +2,7 @@
 
 Operational knowledge that is NOT recoverable from the code or the commits. The plan
 (`meeting_recording_playback.plan.md`) says what to build and why; this says how to run it on this
-laptop. Phases 1–4 are done and committed; Phase 5 (the airgap collector) is next.
+laptop. Phases 1–5 are done and committed; Phase 6 (the cut list) is next.
 
 ## The VPN breaks TLS in four different places
 
@@ -138,6 +138,55 @@ were found by *distrusting a green test*:
 - **`make ... | tail` hides failures** — the pipeline's exit status is `tail`'s. Two builds looked
   green when they had failed.
 
+## Running the collector against the live stack
+
+`dna-backend` bind-mounts `./src`, so backend changes need only `docker restart dna-backend` — and
+a plain restart (not a recreate) keeps the baked-in `VEXA_API_KEY`.
+
+```sh
+docker run -d --name dna-collector --network backend_default \
+  -e DNA_API_URL=http://dna-backend:8000 -e COLLECTOR_STAGING_DIR=/staging \
+  -e RECORDING_NETWORK_PATH=/net/media/dna-recordings -e COLLECTOR_POLL_SECONDS=10 \
+  -v dna-collector-staging:/staging -v <host-archive-dir>:/net/media/dna-recordings \
+  dna-collector:airgap
+```
+
+Build it with the CA base and public PyPI (`.env` points `PIP_INDEX_URL` at Artifactory, which is
+unreachable from here). `docker compose build` cannot pass `--build-context`, so use `docker build`:
+
+```sh
+docker build -t dna-collector:airgap -f docker/airgap/collector/Dockerfile \
+  --build-arg PIP_INDEX_URL=https://pypi.org/simple \
+  --build-context dna=backend/src/dna \
+  --build-context python:3.11-slim=docker-image://dna-python311-ca:latest \
+  docker/airgap/collector
+```
+
+`dna-python311-ca` is `python:3.11-slim` with `/tmp/roots.pem` appended to its CA bundle plus
+`PIP_CERT`/`SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE` — the same trick as `vexa-python-ca`, for 3.11.
+
+**Re-running a collection.** Once a playlist is archived it drops out of `/recordings/pending`
+(that is the point). To re-test, clear the archive fields and wipe the staging volume:
+
+```sh
+docker exec dna-mongo mongosh --quiet dna --eval '
+  db.playlist_metadata.updateOne({playlist_id:460115},{$unset:{recording_network_path:"",
+    recording_sha256:"",vexa_recording_id:"",recording_media_file_id:"",
+    recording_start_time_utc:"",recording_duration_seconds:""}})'
+docker volume rm dna-collector-staging
+```
+
+**Inspecting the live Meet DOM** — how the alone-monitor bug was confirmed rather than guessed.
+Only `playwright-core` is in the bot image, and pnpm's layout means it must be imported by path:
+
+```js
+import pw from '/app/node_modules/.pnpm/playwright-core@1.56.0/node_modules/playwright-core/index.js';
+const b = await pw.chromium.connectOverCDP('http://<session-browser-ip>:9223');
+```
+
+Run it with `-w /app` on the `vexa-v012_vexa` network. The bot's `cdpUrl` env gives the address.
+Attaching a second CDP client alongside the bot's own did not disturb the recording.
+
 ## Outstanding
 
 - `gate:config-contract` is RED, pre-existing from `cb09e142`: `BROWSER_SESSION_NAME_PREFIX` and
@@ -145,8 +194,22 @@ were found by *distrusting a green test*:
   `config.v1.json`. Two lines; owner's call.
 - Vexa `5160dd55` carries a sealed-contract change (`api.v1` resealed). Per AGENTS.md the seal diff
   is the review artifact and wants a human on the PR — it should not ride in on green gates.
-- The **audio** media file still has `start_time_utc = None`; only video was wired. Phase 5's mux
-  would otherwise assume both streams start together.
-- `docker/airgap/.env` is stale vs `.env.example` (no `BACKEND_URL`, no `REVIEW_SESSIONS_URL`).
+- DNA's `--cov-fail-under=90` FAILS, and did before this work: 87.41% at the start of Phase 5,
+  89% after it. The gap is `email_service.py` at 0% (116 statements), unrelated to recordings.
+- DNA's `black --check` FAILS on three files nobody in this work touched — `email_service.py`,
+  `models/transcription.py`, `prodtrack_providers/shotgrid.py` — drift from earlier commits.
+  Reformatting them was deliberately reverted to keep the Phase 5 diff focused.
 - The CA patches live only in local images. If this becomes the regular test bed, that injection
   belongs in the Dockerfiles behind a build arg, or every contributor on the VPN rediscovers it.
+- Playback is served from `RECORDING_NETWORK_PATH`, which on this laptop is a scratch directory.
+  A real mount has to exist on prod before Phase 7 means anything.
+
+## What Phase 5 measured
+
+- **A/V offset is not a constant.** Two runs of identical code measured 1428 ms and 123 ms. Any
+  hardcoded or once-measured offset would have been wrong on one of them.
+- **Frame pacer holds.** 275.65 s of video against 275.4 s of wall clock — +0.09% over 4m35s,
+  including a long static stretch, which is exactly where screencast starves and time could drift.
+- **Resume produces the identical file.** A collection interrupted at 7 of 9 parts, with stray
+  bytes appended to simulate a torn write, archived byte-for-byte the same sha256 as an
+  uninterrupted run.

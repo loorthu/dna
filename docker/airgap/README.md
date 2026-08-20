@@ -8,9 +8,14 @@ backend host needed).
 
 ```
   browser ──http──▶  prod frontend (nginx, :8081)
-                        │  /api/*  ─────proxy────▶  DNA backend  (this machine :8000)
-                        │  /ws     ─────proxy────▶  DNA backend  /ws
-                        └  /       ─────serves────  the SPA
+                        │  /api/*      ──proxy────▶  DNA backend  (this machine :8000)
+                        │  /ws         ──proxy────▶  DNA backend  /ws
+                        │  /recordings/ ─serves───   the recordings share (local, Range)
+                        └  /           ──serves───   the SPA
+
+                     collector (same host)
+                        └  pulls each meeting's media through the DNA backend,
+                           writes it to the share, then releases the upstream copy
 ```
 
 ## Backend (this internet machine)
@@ -42,6 +47,18 @@ Open `http://<prod-host>:8081`. Stop with `./docker/airgap/down.sh`.
 On an internet machine (leave `NPM_REGISTRY` empty → public):
 `./docker/airgap/build.sh && ./docker/airgap/save.sh` → copy `dist/*` → prod
 `./docker/airgap/load.sh && ./docker/airgap/up.sh`.
+
+## Meeting recordings
+
+`docker/airgap/collector/` runs alongside the frontend and takes custody of each meeting's
+recording: it mirrors the media out of Vexa through the DNA backend while the meeting runs, muxes
+the audio in, writes the finished MP4 to `RECORDING_NETWORK_PATH`, records it in DNA, and only
+then deletes the upstream copy. nginx serves that same path at `/recordings/`, so playback is a
+local file with native Range support — no proxy hop, and seeking is free.
+
+Set `RECORDING_NETWORK_PATH` in `.env` to the real mount before starting: it is used inside both
+containers *and* recorded in DNA as the file's location, so it has to be the same string
+everywhere. See `collector/README.md` for the ordering guarantee and how it resumes.
 
 ## How the wiring works
 - **`VITE_API_BASE_URL=/api`** (relative) — the SPA calls `/api/...`; nginx

@@ -813,3 +813,120 @@ class TestWsListener:
 
         vexa_provider._ws_connection = MockWS()
         await vexa_provider._ws_listener()
+
+
+class TestVexaProviderRecordings:
+    """The recording relay's upstream half.
+
+    Each of these is a route the airgap collector's media reaches DNA through, so the thing worth
+    pinning is the REQUEST: the wrong path, verb or query parameter is a silent behaviour change
+    that only shows up as a 404 during a live meeting.
+    """
+
+    @staticmethod
+    def _wire(vexa_provider, handler):
+        """Drive the provider against a mocked transport, capturing what it asked for."""
+        seen: list[httpx.Request] = []
+
+        def capture(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return handler(request)
+
+        vexa_provider._client = httpx.AsyncClient(
+            base_url=vexa_provider.base_url, transport=httpx.MockTransport(capture)
+        )
+        return seen
+
+    async def test_list_recordings_filters_to_one_meeting_client_side(
+        self, vexa_provider
+    ):
+        """The upstream route is API-key-scoped and returns everything the credential can see."""
+        self._wire(
+            vexa_provider,
+            lambda r: httpx.Response(
+                200,
+                json={
+                    "recordings": [
+                        {"id": 1, "meeting_id": 8},
+                        {"id": 2, "meeting_id": 9},
+                    ]
+                },
+            ),
+        )
+
+        assert [r["id"] for r in await vexa_provider.list_recordings(8)] == [1]
+        assert len(await vexa_provider.list_recordings(None)) == 2
+
+    async def test_get_recording_master_asks_for_the_requested_stream(
+        self, vexa_provider
+    ):
+        seen = self._wire(
+            vexa_provider,
+            lambda r: httpx.Response(
+                200, json={"media_file_id": 7, "start_time_utc": "t"}
+            ),
+        )
+
+        result = await vexa_provider.get_recording_master(42, media_type="audio")
+
+        assert result["media_file_id"] == 7
+        assert seen[0].url.path == "/recordings/42/master"
+        assert seen[0].url.params["type"] == "audio"
+
+    async def test_list_recording_chunks_passes_the_after_cursor(self, vexa_provider):
+        """`after` is what makes polling cheap — without it every pass re-reads the whole index."""
+        seen = self._wire(
+            vexa_provider,
+            lambda r: httpx.Response(200, json={"chunks": [], "complete": False}),
+        )
+
+        await vexa_provider.list_recording_chunks(42, 7, after_seq=3)
+
+        assert seen[0].url.path == "/recordings/42/media/7/chunks"
+        assert seen[0].url.params["after"] == "3"
+
+    async def test_get_recording_chunk_returns_bytes_and_the_advertised_hash(
+        self, vexa_provider
+    ):
+        seen = self._wire(
+            vexa_provider,
+            lambda r: httpx.Response(
+                200, content=b"PARTBYTES", headers={"X-Chunk-Sha256": "abc123"}
+            ),
+        )
+
+        data, sha = await vexa_provider.get_recording_chunk(42, 7, 2)
+
+        assert (data, sha) == (b"PARTBYTES", "abc123")
+        assert seen[0].url.path == "/recordings/42/media/7/chunks/2"
+
+    async def test_get_recording_media_raw_fetches_the_assembled_master(
+        self, vexa_provider
+    ):
+        """The audio half of the mux: whole bytes, not parts."""
+        seen = self._wire(vexa_provider, lambda r: httpx.Response(200, content=b"OPUS"))
+
+        data = await vexa_provider.get_recording_media_raw(42, 9, media_type="audio")
+
+        assert data == b"OPUS"
+        assert seen[0].url.path == "/recordings/42/media/9/raw"
+        assert seen[0].url.params["type"] == "audio"
+
+    async def test_delete_recording_uses_DELETE(self, vexa_provider):
+        seen = self._wire(
+            vexa_provider, lambda r: httpx.Response(200, json={"deleted": 12})
+        )
+
+        assert await vexa_provider.delete_recording(42) == {"deleted": 12}
+        assert seen[0].method == "DELETE"
+        assert seen[0].url.path == "/recordings/42"
+
+    async def test_an_upstream_error_is_raised_not_swallowed(self, vexa_provider):
+        """The collector decides what to do about a failure; silently returning empty would look
+        like 'no parts yet' and let a truncated recording finalize."""
+        self._wire(
+            vexa_provider, lambda r: httpx.Response(500, json={"detail": "boom"})
+        )
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await vexa_provider.list_recording_chunks(42, 7)

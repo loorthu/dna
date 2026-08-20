@@ -142,6 +142,42 @@ class RecordingMediaService:
             ids["recording_id"], ids["media_file_id"], chunk_seq
         )
 
+    async def get_audio(self, playlist_id: int) -> tuple[bytes, dict[str, Any]]:
+        """The assembled AUDIO master, whole, with its own wall-clock anchor.
+
+        Audio is relayed whole rather than part-by-part, unlike video. It is a small fraction of
+        the video's size, and it is wanted at exactly one moment — when the collector muxes the
+        two streams together, after the meeting has ended — so the argument for mirroring it
+        during the session does not apply.
+
+        The anchor is the reason this returns metadata alongside the bytes. The streams do NOT
+        start together: the bot starts video first by design, so audio begins some way in, and
+        the mux has to pad by the difference. Both anchors come from the bot's own clock, so the
+        difference is exact rather than skew-prone.
+
+        Deliberately NOT folded into ``list_chunks``: reading a master is finalize-on-read, which
+        reassembles it from every part. On a ~10s poll that would rebuild the audio master for
+        the whole meeting, over and over.
+        """
+        ids = await self.resolve(playlist_id)
+        master = await self.provider.get_recording_master(
+            ids["recording_id"], media_type="audio"
+        )
+        audio_media_file_id = master.get("media_file_id")
+        if audio_media_file_id is None:
+            raise RecordingNotFound(
+                f"Recording {ids['recording_id']} has no audio media file"
+            )
+        data = await self.provider.get_recording_media_raw(
+            ids["recording_id"], audio_media_file_id, media_type="audio"
+        )
+        return data, {
+            "media_file_id": audio_media_file_id,
+            "start_time_utc": master.get("start_time_utc"),
+            "duration_seconds": master.get("duration_seconds"),
+            "video_start_time_utc": ids["start_time_utc"],
+        }
+
     async def record_archive(
         self, playlist_id: int, network_path: str, sha256: str
     ) -> dict[str, Any]:

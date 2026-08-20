@@ -37,9 +37,53 @@ services:
       # The default is a dead local port — Follow Along's session picker is
       # simply unavailable until a site points this at its own directory.
       - REVIEW_SESSIONS_URL=${REVIEW_SESSIONS_URL:-http://127.0.0.1:9}
+      # Where the archived recordings are mounted; nginx aliases /recordings/ here.
+      # Substituted into default.conf.template at container start, like BACKEND_URL.
+      - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
+    volumes:
+      # The archived recordings, served straight off the share by nginx (see
+      # default.conf.template). Read-only: the collector writes them, this only
+      # reads. Same path inside both containers so a network_path recorded by
+      # the collector is the same string nginx resolves.
+      - ${RECORDING_NETWORK_PATH:-./recordings}:${RECORDING_NETWORK_PATH:-./recordings}:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  # Mirrors each meeting recording out of Vexa (through DNA, the only path across the
+  # airgap) while the meeting runs, then muxes in the audio, writes the finished file to
+  # the share, records it in DNA and only then releases the upstream copy.
+  collector:
+    build:
+      context: ./collector
+      dockerfile: Dockerfile
+      additional_contexts:
+        # The collection logic comes from the backend package so it is the same code the
+        # backend test suite covers — not a vendored second copy.
+        dna: ../../backend/src/dna
+      args:
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
+        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
+    image: dna-collector:${DNA_TAG:-airgap}
+    container_name: dna-collector
+    environment:
+      # The collector talks to the DNA backend DIRECTLY, not through this host's nginx:
+      # it is a server-side client, so there is no origin to keep single and no reason
+      # to add a proxy hop to several hundred MB per meeting.
+      - DNA_API_URL=${BACKEND_URL:-http://160.33.19.70:8000}
+      - DNA_API_TOKEN=${DNA_API_TOKEN:-}
+      - COLLECTOR_STAGING_DIR=/staging
+      - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
+      - COLLECTOR_POLL_SECONDS=${COLLECTOR_POLL_SECONDS:-10}
+    volumes:
+      # Staging is a NAMED volume, not a bind or a tmpfs: a half-mirrored meeting has to
+      # survive a container restart, which is the whole point of the resume logic.
+      - collector-staging:/staging
+      - ${RECORDING_NETWORK_PATH:-./recordings}:${RECORDING_NETWORK_PATH:-./recordings}
+    restart: unless-stopped
+
+volumes:
+  collector-staging:

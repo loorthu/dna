@@ -282,3 +282,76 @@ async def test_archive_then_delete_is_the_intended_sequence(storage, provider):
     )
     await svc.delete_upstream(PLAYLIST_ID)
     provider.delete_recording.assert_awaited_once_with(RECORDING_ID)
+
+
+# ── the audio master ────────────────────────────────────────────────────────────────────────────
+
+
+AUDIO_MEDIA_FILE_ID = 55501
+AUDIO_START_UTC = "2026-08-19T20:44:41.871Z"
+
+
+def _with_audio(provider):
+    """Give the provider an audio master alongside the video one it already has."""
+
+    async def master(recording_id, media_type="video"):
+        if media_type == "audio":
+            return {
+                "media_file_id": AUDIO_MEDIA_FILE_ID,
+                "duration_seconds": 132.7,
+                "start_time_utc": AUDIO_START_UTC,
+            }
+        return {
+            "media_file_id": MEDIA_FILE_ID,
+            "duration_seconds": 134.2,
+            "start_time_utc": START_UTC,
+        }
+
+    provider.get_recording_master = AsyncMock(side_effect=master)
+    provider.get_recording_media_raw = AsyncMock(return_value=b"OPUSBYTES")
+    return provider
+
+
+async def test_get_audio_returns_the_master_with_BOTH_anchors(storage, provider):
+    """The mux needs the difference between the two start clocks, so one anchor is useless on its
+    own — returning both is what saves the caller a second round trip to work out the offset.
+    """
+    svc = RecordingMediaService(_with_audio(provider), storage)
+
+    data, meta = await svc.get_audio(PLAYLIST_ID)
+
+    assert data == b"OPUSBYTES"
+    assert meta["start_time_utc"] == AUDIO_START_UTC
+    assert meta["video_start_time_utc"] == START_UTC
+    assert meta["media_file_id"] == AUDIO_MEDIA_FILE_ID
+
+
+async def test_get_audio_reads_the_AUDIO_media_file_not_the_video_one(
+    storage, provider
+):
+    """Both streams live in one recording, so the media type is the only thing separating them."""
+    svc = RecordingMediaService(_with_audio(provider), storage)
+
+    await svc.get_audio(PLAYLIST_ID)
+
+    provider.get_recording_media_raw.assert_awaited_once_with(
+        RECORDING_ID, AUDIO_MEDIA_FILE_ID, media_type="audio"
+    )
+
+
+async def test_get_audio_404s_when_the_recording_has_no_audio_stream(storage, provider):
+    """A video-only recording is a real case (the tap never started). The collector treats this
+    as 'archive without sound', which is why it must be a clean 404 rather than a crash.
+    """
+
+    async def master(recording_id, media_type="video"):
+        if media_type == "audio":
+            return {"media_file_id": None, "start_time_utc": None}
+        return {"media_file_id": MEDIA_FILE_ID, "start_time_utc": START_UTC}
+
+    provider.get_recording_master = AsyncMock(side_effect=master)
+
+    svc = RecordingMediaService(provider, storage)
+
+    with pytest.raises(RecordingNotFound, match="no audio media file"):
+        await svc.get_audio(PLAYLIST_ID)

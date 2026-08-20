@@ -1044,3 +1044,76 @@ class TestMongoDBStorageProvider:
         assert isinstance(result[0], NoteQCCheck)
         assert result[0].name == "Custom"
         mock_qc.find_one_and_update.assert_not_called()
+
+
+class TestPendingArchiveQuery:
+    """The collector's work queue.
+
+    It is derived from the SAME fact the delete guard turns on — the absence of a network path —
+    rather than from separate bookkeeping, so the queue cannot drift out of step with what is
+    actually safe to delete.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        with mock.patch.dict(
+            "os.environ", {"MONGODB_URL": "mongodb://localhost:27017"}
+        ):
+            yield MongoDBStorageProvider()
+
+    @staticmethod
+    def _with_docs(provider, docs):
+        """Wire a collection whose find() returns an async cursor over `docs`, capturing the query."""
+
+        class Cursor:
+            def __init__(self, items):
+                self.items = items
+
+            def sort(self, *a, **k):
+                self.sort_args = a
+                return self
+
+            def limit(self, n):
+                self.limit_value = n
+                return self
+
+            async def __aiter__(self):
+                for item in self.items:
+                    yield item
+
+        cursor = Cursor(docs)
+        collection = mock.MagicMock()
+        collection.find = mock.MagicMock(return_value=cursor)
+        client = mock.MagicMock()
+        client.dna.playlist_metadata = collection
+        provider._client = client
+        return collection, cursor
+
+    async def test_returns_playlists_that_have_a_meeting_but_no_archive(self, provider):
+        collection, cursor = self._with_docs(
+            provider, [{"playlist_id": 3}, {"playlist_id": 1}]
+        )
+
+        assert await provider.list_playlists_pending_archive() == [3, 1]
+
+        query = collection.find.call_args[0][0]
+        assert query["vexa_meeting_id"] == {"$ne": None}
+        assert query["recording_network_path"] is None, (
+            "a null path matches both 'absent' and 'explicitly null' — an archived playlist has "
+            "a path and must drop out of the queue"
+        )
+
+    async def test_newest_meetings_first_and_bounded(self, provider):
+        """Vexa meeting ids increase monotonically, so this is 'most recent' without a timestamp
+        the metadata does not carry — and the bound keeps a long-lived deployment's queue finite.
+        """
+        _, cursor = self._with_docs(provider, [])
+
+        await provider.list_playlists_pending_archive(limit=5)
+
+        assert cursor.sort_args == ("vexa_meeting_id", -1)
+        assert cursor.limit_value == 5
+
+    async def test_an_empty_queue_is_not_an_error(self, provider):
+        self._with_docs(provider, [])
+        assert await provider.list_playlists_pending_archive() == []
