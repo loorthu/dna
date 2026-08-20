@@ -45,6 +45,7 @@ from dna.models.qc_check import (
 )
 from dna.models.requests import (
     CreateNoteRequest,
+    EmailNotesRequest,
     EntityLink,
     FilterCondition,
     FindRequest,
@@ -55,7 +56,7 @@ from dna.models.requests import (
     PublishNoteTarget,
     PublishTranscriptRequest,
     PublishTranscriptResponse,
-    EmailNotesRequest,
+    RecordingArchiveRequest,
     SearchRequest,
     SearchResult,
     StatusOption,
@@ -97,6 +98,7 @@ __all__ = [
     "FilterCondition",
     "FindRequest",
     "GenerateNoteRequest",
+    "RecordingArchiveRequest",
     "GenerateNoteResponse",
     "SearchRequest",
     "SearchResult",

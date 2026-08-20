@@ -149,6 +149,23 @@ class EmailNotesRequest(BaseModel):
     """Request model for emailing notes for a playlist."""
 
     to: str = Field(description="Recipient email address(es), comma-separated")
-    cc: Optional[str] = Field(default=None, description="CC email address(es), comma-separated")
-    subject: Optional[str] = Field(default=None, description="Email subject (auto-generated if omitted)")
+    cc: Optional[str] = Field(
+        default=None, description="CC email address(es), comma-separated"
+    )
+    subject: Optional[str] = Field(
+        default=None, description="Email subject (auto-generated if omitted)"
+    )
     sent_by: str = Field(description="Display name or email of the person sending")
+
+
+class RecordingArchiveRequest(BaseModel):
+    """The collector declaring where it durably archived a playlist's recording.
+
+    Recording this is what later permits purging the upstream copy; until it exists, deletion is
+    refused. The hash is the collector's own, computed over the file it wrote.
+    """
+
+    network_path: str = Field(
+        ..., description="Absolute path of the archived media on the shared filesystem"
+    )
+    sha256: str = Field(..., description="sha256 of the archived file")

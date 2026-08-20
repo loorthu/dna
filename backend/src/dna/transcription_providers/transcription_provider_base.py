@@ -89,6 +89,49 @@ class TranscriptionProviderBase:
         """
         raise NotImplementedError()
 
+    async def list_recordings(
+        self, vexa_meeting_id: Optional[int] = None
+    ) -> list[dict[str, Any]]:
+        """Recordings visible to the configured API credential.
+
+        ``vexa_meeting_id`` filters to one meeting's recordings; ``None`` returns all.
+        Each recording carries ``media_files[]``, one per stream (audio, video).
+        """
+        raise NotImplementedError()
+
+    async def get_recording_master(
+        self, recording_id: int, media_type: str = "video"
+    ) -> dict[str, Any]:
+        """Metadata for a recording's assembled master.
+
+        Also the finalize-on-read trigger, so this is what makes the master exist. Returns at
+        least ``media_file_id``, ``duration_seconds`` and ``start_time_utc`` — the last being the
+        recorder's own clock at its first frame, which is the anchor for mapping a transcript
+        moment onto an offset in the media.
+        """
+        raise NotImplementedError()
+
+    async def list_recording_chunks(
+        self, recording_id: int, media_file_id: int, after_seq: int = -1
+    ) -> dict[str, Any]:
+        """The per-part index for a media file: ``{chunks: [...], complete: bool, ...}``.
+
+        ``after_seq`` returns only parts newer than a given seq, so a consumer mirroring the
+        recording can poll cheaply. Readable while the recording is still in progress, which is
+        what lets a copy be built during the meeting rather than after it.
+        """
+        raise NotImplementedError()
+
+    async def get_recording_chunk(
+        self, recording_id: int, media_file_id: int, chunk_seq: int
+    ) -> tuple[bytes, Optional[str]]:
+        """One part's bytes plus its advertised sha256, so the caller can verify what it got."""
+        raise NotImplementedError()
+
+    async def delete_recording(self, recording_id: int) -> dict[str, Any]:
+        """Purge one recording's media and its record, leaving the meeting and its transcript."""
+        raise NotImplementedError()
+
     def register_meeting_id_mapping(
         self, internal_id: int, platform: str, native_meeting_id: str
     ) -> None:

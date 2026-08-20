@@ -19,7 +19,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from dna.auth.email import emails_match
@@ -35,6 +35,7 @@ from dna.models import (
     DispatchBotRequest,
     DraftNote,
     DraftNoteUpdate,
+    EmailNotesRequest,
     FindRequest,
     GenerateNoteRequest,
     GenerateNoteResponse,
@@ -48,11 +49,11 @@ from dna.models import (
     PlaylistMetadataUpdate,
     Project,
     PublishedTranscriptUpdate,
-    EmailNotesRequest,
     PublishNotesRequest,
     PublishNotesResponse,
     PublishTranscriptRequest,
     PublishTranscriptResponse,
+    RecordingArchiveRequest,
     RunQCChecksRequest,
     RunQCChecksResponse,
     SearchRequest,
@@ -75,6 +76,11 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
     get_prodtrack_provider,
 )
 from dna.qc.qc_runner import run_qc_checks_for_draft
+from dna.recording_media import (
+    ArchiveNotConfirmed,
+    RecordingMediaService,
+    RecordingNotFound,
+)
 from dna.storage_providers.storage_provider_base import (
     StorageProviderBase,
     get_storage_provider,
@@ -1246,7 +1252,9 @@ async def email_notes(
     )
 
     try:
-        send_notes_email(to=request.to, subject=subject, html_content=html_body, cc=request.cc)
+        send_notes_email(
+            to=request.to, subject=subject, html_content=html_body, cc=request.cc
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1930,3 +1938,109 @@ async def generate_note(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Recording media relay (the airgap collector's read path) ─────────────────────────────────────
+#
+# Addressed by PLAYLIST: the collector knows playlists, and mapping one to a Vexa recording is
+# DNA's job. Thin wrappers — the flow lives in dna/recording_media.py so it is coverage-measured.
+
+
+@app.get(
+    "/recordings/{playlist_id}/chunks",
+    tags=["Recordings"],
+    summary="List a playlist recording's parts",
+    description=(
+        "The per-part index for this playlist's meeting recording: seq, size and sha256 per part, "
+        "plus `complete` and the recorder's start clock. Readable WHILE the meeting is still "
+        "running, so a copy can be mirrored as it is produced. Pass `after` with the highest seq "
+        "already held to poll for only what is new."
+    ),
+)
+async def list_recording_chunks(
+    playlist_id: int,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+    after: int = -1,
+) -> dict:
+    service = RecordingMediaService(transcription_provider, storage_provider)
+    try:
+        return await service.list_chunks(playlist_id, after=after)
+    except RecordingNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get(
+    "/recordings/{playlist_id}/chunks/{chunk_seq}",
+    tags=["Recordings"],
+    summary="Download one part of a playlist recording",
+    description=(
+        "One part's bytes, relayed verbatim. Responds with X-Chunk-Sha256 so the caller can "
+        "verify the part it just received."
+    ),
+)
+async def get_recording_chunk(
+    playlist_id: int,
+    chunk_seq: int,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> Response:
+    service = RecordingMediaService(transcription_provider, storage_provider)
+    try:
+        data, sha256 = await service.get_chunk(playlist_id, chunk_seq)
+    except RecordingNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=data,
+        media_type="video/mp4",
+        headers={"X-Chunk-Sha256": sha256 or "", "X-Chunk-Seq": str(chunk_seq)},
+    )
+
+
+@app.post(
+    "/recordings/{playlist_id}/archived",
+    tags=["Recordings"],
+    summary="Record that the recording has been durably archived",
+    description=(
+        "Declare where the assembled media now lives and its sha256. This is what later permits "
+        "deleting the upstream copy — deletion is refused until it is recorded."
+    ),
+)
+async def record_recording_archive(
+    playlist_id: int,
+    body: RecordingArchiveRequest,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> dict:
+    service = RecordingMediaService(transcription_provider, storage_provider)
+    try:
+        return await service.record_archive(playlist_id, body.network_path, body.sha256)
+    except RecordingNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete(
+    "/recordings/{playlist_id}",
+    tags=["Recordings"],
+    summary="Purge the upstream copy of a playlist's recording",
+    description=(
+        "Deletes the recording from Vexa, leaving the meeting and its transcript. REFUSED with "
+        "409 unless an archive has been recorded first — the archived copy is the only other one."
+    ),
+)
+async def delete_recording_upstream(
+    playlist_id: int,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> dict:
+    service = RecordingMediaService(transcription_provider, storage_provider)
+    try:
+        return await service.delete_upstream(playlist_id)
+    except RecordingNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ArchiveNotConfirmed as e:
+        raise HTTPException(status_code=409, detail=str(e))

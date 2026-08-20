@@ -235,10 +235,14 @@ class MongoDBStorageProvider(StorageProviderBase):
         update_fields = {
             k: v
             for k, v in data.model_dump().items()
-            if v is not None and k != "clear_resumed_at"
+            if v is not None and k not in ("clear_resumed_at", "clear_recording_link")
         }
 
         unset_fields: dict[str, Any] = {}
+
+        if data.clear_recording_link:
+            unset_fields["vexa_recording_id"] = ""
+            unset_fields["recording_media_file_id"] = ""
 
         if data.clear_resumed_at:
             unset_fields["transcription_resumed_at"] = ""

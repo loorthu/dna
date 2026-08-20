@@ -216,6 +216,64 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
             duration=data.get("duration"),
         )
 
+    # ── recordings ────────────────────────────────────────────────────────────────────────────
+    #
+    # The bot records the meeting and uploads it in parts as it goes. These read that back: the
+    # parts index and the part bytes are what let a copy be built DURING the meeting rather than
+    # waiting for the assembled master afterwards.
+
+    async def list_recordings(
+        self, vexa_meeting_id: Optional[int] = None
+    ) -> list[dict[str, Any]]:
+        """Recordings for the configured API key, optionally filtered to one meeting.
+
+        The upstream route is key-scoped and returns every recording the credential can see, so
+        the meeting filter is applied here rather than passed along.
+        """
+        response = await self.client.get("/recordings")
+        response.raise_for_status()
+        recordings = response.json().get("recordings", [])
+        if vexa_meeting_id is None:
+            return recordings
+        return [r for r in recordings if r.get("meeting_id") == vexa_meeting_id]
+
+    async def get_recording_master(
+        self, recording_id: int, media_type: str = "video"
+    ) -> dict[str, Any]:
+        """Master metadata. Also the finalize-on-read trigger that materializes the master."""
+        response = await self.client.get(
+            f"/recordings/{recording_id}/master", params={"type": media_type}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def list_recording_chunks(
+        self, recording_id: int, media_file_id: int, after_seq: int = -1
+    ) -> dict[str, Any]:
+        """The per-part index. Safe to poll while the recording is still in progress."""
+        response = await self.client.get(
+            f"/recordings/{recording_id}/media/{media_file_id}/chunks",
+            params={"after": after_seq},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def get_recording_chunk(
+        self, recording_id: int, media_file_id: int, chunk_seq: int
+    ) -> tuple[bytes, Optional[str]]:
+        """One part's bytes and the sha256 the index advertised for it."""
+        response = await self.client.get(
+            f"/recordings/{recording_id}/media/{media_file_id}/chunks/{chunk_seq}"
+        )
+        response.raise_for_status()
+        return response.content, response.headers.get("x-chunk-sha256")
+
+    async def delete_recording(self, recording_id: int) -> dict[str, Any]:
+        """Purge the upstream copy. The meeting and its transcript are untouched."""
+        response = await self.client.delete(f"/recordings/{recording_id}")
+        response.raise_for_status()
+        return response.json()
+
     async def get_active_bots(self) -> list[dict[str, Any]]:
         """Get list of active bots for the current user."""
         try:
