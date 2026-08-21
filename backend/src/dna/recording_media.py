@@ -225,6 +225,19 @@ class RecordingMediaService:
                 f"Playlist {playlist_id} resolves to recording {ids['recording_id']}, but the "
                 f"archive was collected from recording {recording_id}; refusing to record it"
             )
+
+        # Re-read the master for its FINAL length. The stored duration was written when the
+        # recording was first resolved — which, with the collector running continuously, is
+        # seconds into the meeting — so it describes however much had uploaded by then rather
+        # than the meeting. Archiving is the moment it stops moving: the collector only gets
+        # here once the index reports the upload complete, so this is the length of the file
+        # that was just archived. Costs one call, once per recording.
+        final = await self.provider.get_recording_master(
+            ids["recording_id"], media_type="video"
+        )
+        duration = final.get("duration_seconds")
+        start = final.get("start_time_utc")
+
         await self.storage.upsert_playlist_metadata(
             playlist_id,
             PlaylistMetadataUpdate(
@@ -232,8 +245,21 @@ class RecordingMediaService:
                 recording_sha256=sha256,
                 archived_recording_id=ids["recording_id"],
                 archived_meeting_id=metadata.vexa_meeting_id if metadata else None,
+                # `None` means "leave unchanged" to the upsert, so a master that cannot report
+                # these keeps whatever was already known rather than blanking it.
+                # `None` means "leave unchanged" to the upsert, so a master that cannot report
+                # these keeps whatever was already known rather than blanking it.
+                recording_duration_seconds=duration,
+                recording_start_time_utc=start,
             ),
         )
+        if duration is not None and ids.get("duration_seconds") != duration:
+            logger.info(
+                "Playlist %s: final duration %.1fs (was %s at first resolve)",
+                playlist_id,
+                duration,
+                ids.get("duration_seconds"),
+            )
         logger.info(
             "Playlist %s recording archived at %s (sha256 %s…)",
             playlist_id,

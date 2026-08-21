@@ -277,6 +277,62 @@ async def test_record_archive_stamps_which_meeting_and_recording_it_holds(
     assert update.archived_meeting_id == VEXA_MEETING_ID
 
 
+async def test_record_archive_replaces_a_duration_measured_mid_meeting(
+    storage, provider
+):
+    """The stored duration is written at first resolve, which is SECONDS into the meeting.
+
+    With the collector polling continuously it makes first contact while the bot is still
+    uploading, so the cached figure describes one chunk rather than the meeting — two real
+    archives were recorded as 14.8s when the files were 91s and 53s. Archiving is the moment the
+    length stops moving, so it is re-read here.
+    """
+    linked = _metadata(
+        vexa_recording_id=RECORDING_ID,
+        recording_media_file_id=MEDIA_FILE_ID,
+        recording_link_meeting_id=VEXA_MEETING_ID,
+        recording_duration_seconds=14.8,  # what one chunk looked like at first contact
+        recording_start_time_utc=START_UTC,
+    )
+    storage.get_playlist_metadata = AsyncMock(return_value=linked)
+    provider.get_recording_master = AsyncMock(
+        return_value={
+            "media_file_id": MEDIA_FILE_ID,
+            "duration_seconds": 91.28,
+            "start_time_utc": START_UTC,
+        }
+    )
+    svc = RecordingMediaService(provider, storage)
+
+    await svc.record_archive(PLAYLIST_ID, "/net/media/x.mp4", "hash")
+
+    update = storage.upsert_playlist_metadata.await_args.args[1]
+    assert update.recording_duration_seconds == 91.28, (
+        "the archive must record the length of the file it archived, not the length that had "
+        "uploaded when the collector first looked"
+    )
+    assert (
+        update.recording_start_time_utc == START_UTC
+    ), "the anchor must survive unchanged"
+
+
+async def test_record_archive_keeps_what_it_knows_if_the_master_cannot_say(
+    storage, provider
+):
+    """A master with no duration must not blank a figure that was already known."""
+    provider.get_recording_master = AsyncMock(
+        return_value={"media_file_id": MEDIA_FILE_ID}
+    )
+    svc = RecordingMediaService(provider, storage)
+
+    await svc.record_archive(PLAYLIST_ID, "/net/media/x.mp4", "hash")
+
+    update = storage.upsert_playlist_metadata.await_args.args[1]
+    assert (
+        update.recording_duration_seconds is None
+    ), "None means 'leave unchanged' to the upsert"
+
+
 async def test_record_archive_refuses_a_recording_it_did_not_resolve(storage, provider):
     """A disagreement means the two ends are looking at different recordings.
 
