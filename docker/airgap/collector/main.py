@@ -123,6 +123,32 @@ def resolve_ffmpeg() -> str:
         return "ffmpeg"
 
 
+def _require_writable(path: str, setting: str) -> None:
+    """Refuse to start unless the directories can actually be written.
+
+    Both are mounts owned by the host, and the uid this runs as is a deployment choice — so "can I
+    write here" is settled outside this image and is exactly the sort of thing that is right on one
+    host and wrong on the next.
+
+    Checked at STARTUP because the alternative is discovering it during a meeting. Nothing is
+    written until parts arrive, so a container with an unwritable staging directory looks perfectly
+    healthy for as long as nobody records anything, and then loses the recording it existed to save.
+    """
+    probe = os.path.join(path, ".collector-write-test")
+    try:
+        with open(probe, "w") as handle:
+            handle.write("")
+        os.remove(probe)
+    except OSError as e:
+        raise SystemExit(
+            f"{setting}={path} is not writable as uid {os.getuid()}:{os.getgid()} "
+            f"({e.strerror}). The collector must own what it writes: set COLLECTOR_UID/"
+            f"COLLECTOR_GID to an account that can write it, or fix the directory's ownership. "
+            f"(An existing staging VOLUME keeps the ownership it was created with — recreate it "
+            f"after changing the uid.)"
+        )
+
+
 async def run_forever() -> None:
     base_url = os.environ.get("DNA_API_URL", "http://localhost:8000")
     staging = os.environ.get("COLLECTOR_STAGING_DIR", "/staging")
@@ -131,6 +157,8 @@ async def run_forever() -> None:
     max_playlists = int(os.environ.get("COLLECTOR_MAX_PLAYLISTS", "25"))
 
     os.makedirs(staging, exist_ok=True)
+    _require_writable(staging, "COLLECTOR_STAGING_DIR")
+    _require_writable(archive, "RECORDING_NETWORK_PATH")
 
     client = DnaCollectorClient(base_url, os.environ.get("DNA_API_TOKEN"))
     collector = RecordingCollector(

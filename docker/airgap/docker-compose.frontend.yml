@@ -69,6 +69,13 @@ services:
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
     image: dna-collector:${DNA_TAG:-airgap}
     container_name: dna-collector
+    # The uid:gid archives are written as. It MUST be able to write RECORDING_NETWORK_PATH, and
+    # nginx must be able to read what it writes — so the right value is whoever owns the share,
+    # not a number chosen here. Defaults to the image's unprivileged user; set COLLECTOR_UID /
+    # COLLECTOR_GID in .env for the real mount. Deliberately not root: an archive is the only copy
+    # of that meeting once the upstream is released, and a root-owned file cannot be rotated or
+    # removed by the people who own the share.
+    user: "${COLLECTOR_UID:-1000}:${COLLECTOR_GID:-1000}"
     environment:
       # The collector talks to the DNA backend DIRECTLY, not through this host's nginx:
       # it is a server-side client, so there is no origin to keep single and no reason

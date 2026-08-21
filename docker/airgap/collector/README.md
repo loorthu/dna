@@ -73,9 +73,40 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 | `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share nginx serves |
 | `COLLECTOR_POLL_SECONDS` | `10` | |
 | `COLLECTOR_MAX_PLAYLISTS` | `25` | work-queue depth per pass |
+| `COLLECTOR_UID` / `COLLECTOR_GID` | `1000` / `1000` | who the archives end up owned by |
 
 Staging is a named volume rather than a bind or a tmpfs precisely because a half-mirrored meeting
 has to survive a container restart.
+
+## Who the files belong to
+
+The collector runs unprivileged, and every archive is owned by the uid it runs as. That uid is a
+deployment choice, not an image one: it has to be able to **write** `RECORDING_NETWORK_PATH`, and
+nginx has to be able to **read** what it writes (files are `0644`). On the host,
+`stat -c '%u:%g' <mount>` usually names the right pair.
+
+```sh
+COLLECTOR_UID=1234
+COLLECTOR_GID=100
+```
+
+It is deliberately not root. An archive is the only copy of its meeting once the upstream copy is
+released, and a root-owned file cannot be rotated, moved or deleted by whoever owns the share.
+
+Both directories are probed for writability at **startup**, and the collector refuses to run if
+either fails. Nothing is written until parts actually arrive, so without that check a misconfigured
+container looks perfectly healthy right up until the first meeting it was supposed to save.
+
+**Changing the uid on an existing deployment needs the staging volume recreated.** A named volume
+keeps the ownership it was created with, so it stays root-owned from before and the new uid cannot
+write to it — the startup probe says so plainly. Any half-mirrored meeting in there is abandoned,
+so do it between meetings:
+
+```sh
+docker compose ... down
+docker volume rm <project>_collector-staging
+docker compose ... up -d
+```
 
 ## Running it
 
