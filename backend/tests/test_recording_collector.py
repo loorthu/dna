@@ -31,6 +31,10 @@ from dna.recording_collector import (
 
 VIDEO_T0 = "2026-08-20T17:00:00.000Z"
 AUDIO_T0 = "2026-08-20T17:00:01.500Z"
+# Staging and archive paths are scoped by recording, not by playlist, so the tests have to name
+# the recording they are inspecting — the same scoping that stops a playlist's second meeting
+# from resuming the first one's byte stream.
+REC = 7001
 
 
 class FakeClient:
@@ -44,7 +48,9 @@ class FakeClient:
         self.audio = audio
         self.audio_start = AUDIO_T0
         self.calls: list[str] = []
+        self.recording_id: int | None = REC
         self.archived: list[tuple[str, str]] = []
+        self.archived_recording_ids: list[int | None] = []
         self.deleted: list[int] = []
         self.corrupt_seq: int | None = None
         self.hide_seq: int | None = None
@@ -57,7 +63,12 @@ class FakeClient:
             for i, p in enumerate(self.parts)
             if i > after and i != self.hide_seq
         ]
-        return {"chunks": chunks, "complete": self.complete, "start_time_utc": VIDEO_T0}
+        return {
+            "chunks": chunks,
+            "complete": self.complete,
+            "start_time_utc": VIDEO_T0,
+            "recording_id": self.recording_id,
+        }
 
     async def get_chunk(self, playlist_id: int, seq: int) -> tuple[bytes, str | None]:
         self.calls.append(f"get({seq})")
@@ -76,10 +87,15 @@ class FakeClient:
         }
 
     async def record_archive(
-        self, playlist_id: int, network_path: str, sha256: str
+        self,
+        playlist_id: int,
+        network_path: str,
+        sha256: str,
+        recording_id: int | None = None,
     ) -> dict:
         self.calls.append("archive")
         self.archived.append((network_path, sha256))
+        self.archived_recording_ids.append(recording_id)
         return {"ok": True}
 
     async def delete_upstream(self, playlist_id: int) -> dict:
@@ -195,7 +211,7 @@ async def test_parts_are_appended_in_order_and_reassemble_exactly(tmp_path):
 
     assert result["status"] == "mirroring"
     assert result["parts"] == 3
-    assert open(collector.video_path(1), "rb").read() == b"".join(parts)
+    assert open(collector.video_path(1, REC), "rb").read() == b"".join(parts)
 
 
 @pytest.mark.asyncio
@@ -210,7 +226,7 @@ async def test_a_second_poll_fetches_only_what_is_new(tmp_path):
 
     assert "get(2)" in client.calls
     assert "get(0)" not in client.calls, "already-held parts must not be re-fetched"
-    assert open(collector.video_path(1), "rb").read() == b"AAAABBBBCCCC"
+    assert open(collector.video_path(1, REC), "rb").read() == b"AAAABBBBCCCC"
 
 
 @pytest.mark.asyncio
@@ -224,7 +240,7 @@ async def test_a_corrupt_part_is_not_appended_and_is_retried(tmp_path):
     assert (
         result["status"] == "mirroring"
     ), "a bad part must not let the recording finalize"
-    assert open(collector.video_path(1), "rb").read() == b"AAAA"
+    assert open(collector.video_path(1, REC), "rb").read() == b"AAAA"
     assert client.deleted == [], "nothing may be released while a part is unverified"
 
     client.corrupt_seq = None  # the retry succeeds
@@ -244,7 +260,7 @@ async def test_a_hole_in_the_index_stops_the_pass_without_finalizing(tmp_path):
     result = await collector.poll_once(1)
 
     assert result["status"] == "mirroring"
-    assert open(collector.video_path(1), "rb").read() == b"AAAA"
+    assert open(collector.video_path(1, REC), "rb").read() == b"AAAA"
     assert client.deleted == []
 
 
@@ -268,7 +284,7 @@ async def test_a_restart_mid_meeting_resumes_rather_than_restarting(tmp_path):
 
     assert "get(0)" not in fresh_client.calls and "get(1)" not in fresh_client.calls
     assert "get(2)" in fresh_client.calls
-    assert open(resumed.video_path(1), "rb").read() == b"AAAABBBBCCCC"
+    assert open(resumed.video_path(1, REC), "rb").read() == b"AAAABBBBCCCC"
 
 
 @pytest.mark.asyncio
@@ -278,7 +294,7 @@ async def test_a_crash_between_the_append_and_the_state_write_is_trimmed(tmp_pat
     await collector.poll_once(1)
 
     # Simulate dying just after appending part 2's bytes and before recording them.
-    with open(collector.video_path(1), "ab") as handle:
+    with open(collector.video_path(1, REC), "ab") as handle:
         handle.write(b"CCC")
 
     client.parts.append(b"CCCC")
@@ -287,7 +303,7 @@ async def test_a_crash_between_the_append_and_the_state_write_is_trimmed(tmp_pat
 
     assert "get(2)" in client.calls
     assert (
-        open(collector.video_path(1), "rb").read() == b"AAAABBBBCCCC"
+        open(collector.video_path(1, REC), "rb").read() == b"AAAABBBBCCCC"
     ), "the partially-written tail must be truncated, not left in the middle of the stream"
 
 
@@ -297,7 +313,7 @@ async def test_a_torn_state_file_restarts_the_mirror_rather_than_stranding_it(tm
     collector = make_collector(tmp_path, client)
     await collector.poll_once(1)
 
-    with open(collector.state_path(1), "w", encoding="utf-8") as handle:
+    with open(collector.state_path(1, REC), "w", encoding="utf-8") as handle:
         handle.write("{ this is not json")
 
     client.calls.clear()
@@ -332,8 +348,8 @@ async def test_the_staging_copies_are_cleaned_up_once_the_archive_is_durable(tmp
     client = FakeClient([b"AAAA"], complete=True)
     collector = make_collector(tmp_path, client)
     await collector.poll_once(1)
-    assert not os.path.exists(collector.video_path(1))
-    assert not os.path.exists(collector.audio_path(1))
+    assert not os.path.exists(collector.video_path(1, REC))
+    assert not os.path.exists(collector.audio_path(1, REC))
 
 
 @pytest.mark.asyncio
@@ -410,7 +426,88 @@ async def test_an_already_archived_playlist_is_not_collected_twice(tmp_path):
     result = await collector.poll_once(1)
 
     assert result["status"] == "archived"
-    assert client.calls == [], "an archived playlist must make no further calls"
+    # The index IS read again — it is what names the recording, and the state file cannot be
+    # chosen before that is known. What must not happen is any of the expensive or destructive
+    # work: no part is re-fetched, nothing is re-archived, nothing is deleted a second time.
+    assert client.calls == ["list(-1)"]
+    assert client.archived == [client.archived[0]], "must not archive twice"
+    assert client.deleted == [1], "must not delete upstream twice"
+
+
+@pytest.mark.asyncio
+async def test_a_second_recording_on_the_same_playlist_gets_its_own_archive(tmp_path):
+    """A playlist outlives any one meeting. The first archive must survive the second.
+
+    This is the shape that destroyed a recording in practice: both meetings archived to
+    playlist-<id>.mp4, and because the upstream copy is released immediately afterwards, the
+    overwrite took the only remaining copy of the first one.
+    """
+    first = FakeClient([b"AAAA"], complete=True)
+    first.recording_id = 1001
+    collector = make_collector(tmp_path, first)
+    await collector.poll_once(1)
+    first_archive = first.archived[0][0]
+
+    # Same playlist and the same staging/archive dirs, a different meeting's recording.
+    second = FakeClient([b"BBBBBB"], complete=True)
+    second.recording_id = 2002
+    collector.client = second
+    await collector.poll_once(1)
+    second_archive = second.archived[0][0]
+
+    assert first_archive != second_archive, "each recording needs its own archive path"
+    assert os.path.exists(first_archive), "the first archive must not be destroyed"
+    assert open(first_archive, "rb").read().startswith(b"AAAA")
+    assert open(second_archive, "rb").read().startswith(b"BBBBBB")
+    assert second.archived_recording_ids == [
+        2002
+    ], "DNA is told which recording this is"
+
+
+@pytest.mark.asyncio
+async def test_state_from_another_recording_is_not_resumed(tmp_path):
+    """Resuming across recordings would splice two meetings into one file.
+
+    Per-part hashes cannot catch it: every part of the new recording verifies correctly against
+    its own index. Only the recording's identity distinguishes them.
+    """
+    client = FakeClient([b"AAAA", b"BBBB"], complete=False)
+    collector = make_collector(tmp_path, client)
+    await collector.poll_once(1)  # holds parts 0..1 of recording REC
+
+    path = collector.state_path(1, REC)
+    with open(path, "r", encoding="utf-8") as handle:
+        raw = json.load(handle)
+    assert len(raw["parts"]) == 2
+
+    # A state file sitting at this recording's path but CLAIMING another recording — what a
+    # pre-scoping state file left behind, or a hand-edited one, looks like.
+    raw["recording_id"] = 9999
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(raw, handle)
+
+    fresh = collector.load_state(1, REC)
+    assert (
+        fresh.parts == []
+    ), "state naming another recording must be discarded, not resumed"
+    assert fresh.recording_id == REC
+
+
+@pytest.mark.asyncio
+async def test_an_existing_archive_file_is_never_overwritten(tmp_path):
+    """Belt and braces behind the naming: the archive is the only copy once upstream is released."""
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+
+    destination = collector.archive_path(1, REC)
+    with open(destination, "wb") as handle:
+        handle.write(b"AN EARLIER RECORDING")
+
+    with pytest.raises(CollectorError, match="refusing to overwrite"):
+        await collector.poll_once(1)
+
+    assert open(destination, "rb").read() == b"AN EARLIER RECORDING"
+    assert client.deleted == [], "upstream must survive a refused archive"
 
 
 @pytest.mark.asyncio
@@ -451,7 +548,7 @@ async def test_a_part_whose_index_and_response_hashes_disagree_is_not_appended(
     result = await collector.poll_once(1)
 
     assert result["status"] == "mirroring"
-    assert open(collector.video_path(1), "rb").read() == b"AAAA"
+    assert open(collector.video_path(1, REC), "rb").read() == b"AAAA"
     assert client.deleted == []
 
 

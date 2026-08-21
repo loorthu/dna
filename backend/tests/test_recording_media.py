@@ -17,6 +17,7 @@ import pytest
 from dna.models.playlist_metadata import PlaylistMetadata
 from dna.recording_media import (
     ArchiveNotConfirmed,
+    ArchiveRecordingMismatch,
     RecordingMediaService,
     RecordingNotFound,
 )
@@ -258,6 +259,84 @@ async def test_record_archive_persists_path_and_hash(storage, provider):
     assert update.recording_network_path == "/net/media/dna/460115.mp4"
     assert update.recording_sha256 == "abc123def456"
     assert result["recording_id"] == RECORDING_ID
+
+
+async def test_record_archive_stamps_which_meeting_and_recording_it_holds(
+    storage, provider
+):
+    """The queue asks 'has THIS meeting been archived', so the archive has to say which one it is.
+
+    Without the stamp the only question answerable was 'does this playlist have any archive',
+    which made a playlist that hosted a second meeting look finished forever.
+    """
+    svc = RecordingMediaService(provider, storage)
+    await svc.record_archive(PLAYLIST_ID, "/net/media/x.mp4", "hash")
+
+    update = storage.upsert_playlist_metadata.await_args.args[1]
+    assert update.archived_recording_id == RECORDING_ID
+    assert update.archived_meeting_id == VEXA_MEETING_ID
+
+
+async def test_record_archive_refuses_a_recording_it_did_not_resolve(storage, provider):
+    """A disagreement means the two ends are looking at different recordings.
+
+    Recording it anyway would stamp THIS meeting as archived while the bytes on disk came from
+    another one — and the meeting actually in progress would never be collected.
+    """
+    svc = RecordingMediaService(provider, storage)
+
+    with pytest.raises(ArchiveRecordingMismatch):
+        await svc.record_archive(
+            PLAYLIST_ID, "/net/media/x.mp4", "hash", recording_id=999999
+        )
+
+    # resolve() may legitimately write the resolution CACHE on the way through. What must not be
+    # written is the archive itself — that is the fact the delete guard later opens on.
+    written = [c.args[1] for c in storage.upsert_playlist_metadata.await_args_list]
+    assert all(u.recording_network_path is None for u in written)
+    assert all(u.archived_recording_id is None for u in written)
+
+
+async def test_a_link_resolved_for_an_earlier_meeting_is_not_reused(storage, provider):
+    """The cache is only good for the meeting it was resolved against.
+
+    A playlist whose collection never finished keeps its link, so a SECOND meeting would be served
+    the FIRST meeting's recording — and archiving that under the new meeting's id would strand the
+    real recording upstream forever.
+    """
+    stale = _metadata(
+        vexa_recording_id=111111,
+        recording_media_file_id=222222,
+        recording_link_meeting_id=VEXA_MEETING_ID
+        - 1,  # resolved for the previous meeting
+    )
+    storage.get_playlist_metadata = AsyncMock(return_value=stale)
+    svc = RecordingMediaService(provider, storage)
+
+    ids = await svc.resolve(PLAYLIST_ID)
+
+    assert (
+        ids["recording_id"] == RECORDING_ID
+    ), "must re-resolve, not serve the stale link"
+    provider.list_recordings.assert_awaited_once_with(VEXA_MEETING_ID)
+    update = storage.upsert_playlist_metadata.await_args.args[1]
+    assert update.recording_link_meeting_id == VEXA_MEETING_ID
+
+
+async def test_a_link_resolved_for_the_current_meeting_is_reused(storage, provider):
+    """The gate must not defeat the cache it qualifies — a matching stamp still short-circuits."""
+    linked = _metadata(
+        vexa_recording_id=RECORDING_ID,
+        recording_media_file_id=MEDIA_FILE_ID,
+        recording_link_meeting_id=VEXA_MEETING_ID,
+    )
+    storage.get_playlist_metadata = AsyncMock(return_value=linked)
+    svc = RecordingMediaService(provider, storage)
+
+    ids = await svc.resolve(PLAYLIST_ID)
+
+    assert ids["recording_id"] == RECORDING_ID
+    provider.list_recordings.assert_not_awaited()
 
 
 async def test_archive_then_delete_is_the_intended_sequence(storage, provider):

@@ -169,3 +169,9 @@ class RecordingArchiveRequest(BaseModel):
         ..., description="Absolute path of the archived media on the shared filesystem"
     )
     sha256: str = Field(..., description="sha256 of the archived file")
+    recording_id: Optional[int] = Field(
+        default=None,
+        description="The Vexa recording the collector mirrored. Optional, but when supplied it "
+        "must match what the playlist currently resolves to — a mismatch means the two ends are "
+        "looking at different recordings, and is refused with 409 rather than recorded.",
+    )

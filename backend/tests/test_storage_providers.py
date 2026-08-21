@@ -1049,9 +1049,14 @@ class TestMongoDBStorageProvider:
 class TestPendingArchiveQuery:
     """The collector's work queue.
 
-    It is derived from the SAME fact the delete guard turns on — the absence of a network path —
-    rather than from separate bookkeeping, so the queue cannot drift out of step with what is
-    actually safe to delete.
+    Eligibility is asked per MEETING: a playlist is due when the archive on record is not the one
+    its CURRENT meeting produced. The earlier form asked whether the playlist had any archive at
+    all, which made it look finished forever — a playlist's second meeting was never collected,
+    and its recording sat upstream indefinitely.
+
+    The query stays deliberately coarse. It cannot know the current RECORDING without calling
+    Vexa, so the collector makes that finer comparison itself, against the id the chunk index
+    names.
     """
 
     @pytest.fixture
@@ -1098,9 +1103,16 @@ class TestPendingArchiveQuery:
 
         query = collection.find.call_args[0][0]
         assert query["vexa_meeting_id"] == {"$ne": None}
-        assert query["recording_network_path"] is None, (
-            "a null path matches both 'absent' and 'explicitly null' — an archived playlist has "
-            "a path and must drop out of the queue"
+        assert query["$expr"] == {
+            "$ne": ["$archived_meeting_id", "$vexa_meeting_id"]
+        }, (
+            "eligibility is per MEETING, not per playlist: asking 'does this playlist have any "
+            "archive' made a playlist that hosted a second meeting look done forever, so the "
+            "second recording was never collected"
+        )
+        assert "recording_network_path" not in query, (
+            "the presence of a path says a recording was archived once — not that THIS meeting's "
+            "was, which is the question the queue has to ask"
         )
 
     async def test_newest_meetings_first_and_bounded(self, provider):

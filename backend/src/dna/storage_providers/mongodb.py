@@ -243,6 +243,10 @@ class MongoDBStorageProvider(StorageProviderBase):
         if data.clear_recording_link:
             unset_fields["vexa_recording_id"] = ""
             unset_fields["recording_media_file_id"] = ""
+            # The meeting stamp belongs to the cache it qualifies, so it goes with it.
+            # archived_meeting_id / archived_recording_id deliberately stay: they record what
+            # was archived, which outlives the upstream copy being purged.
+            unset_fields["recording_link_meeting_id"] = ""
 
         if data.clear_resumed_at:
             unset_fields["transcription_resumed_at"] = ""
@@ -277,7 +281,14 @@ class MongoDBStorageProvider(StorageProviderBase):
             self.playlist_metadata_collection.find(
                 {
                     "vexa_meeting_id": {"$ne": None},
-                    "recording_network_path": None,
+                    # Eligible while the archive on record is not THIS meeting's. Asking
+                    # "is there any archive" instead made a playlist look done forever, so a
+                    # second meeting on it was never collected. `$ne` on two fields needs $expr;
+                    # a missing archived_meeting_id resolves to null and so never equals a real
+                    # meeting id, which is the "never collected" case.
+                    "$expr": {
+                        "$ne": ["$archived_meeting_id", "$vexa_meeting_id"],
+                    },
                 },
                 {"playlist_id": 1},
             )

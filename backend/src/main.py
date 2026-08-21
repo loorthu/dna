@@ -78,6 +78,7 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
 from dna.qc.qc_runner import run_qc_checks_for_draft
 from dna.recording_media import (
     ArchiveNotConfirmed,
+    ArchiveRecordingMismatch,
     RecordingMediaService,
     RecordingNotFound,
 )
@@ -2069,9 +2070,16 @@ async def record_recording_archive(
 ) -> dict:
     service = RecordingMediaService(transcription_provider, storage_provider)
     try:
-        return await service.record_archive(playlist_id, body.network_path, body.sha256)
+        return await service.record_archive(
+            playlist_id,
+            body.network_path,
+            body.sha256,
+            recording_id=body.recording_id,
+        )
     except RecordingNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ArchiveRecordingMismatch as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.delete(

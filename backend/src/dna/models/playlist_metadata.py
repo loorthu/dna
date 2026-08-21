@@ -52,6 +52,24 @@ class PlaylistMetadataUpdate(BaseModel):
         default=None,
         description="sha256 of the archived file, as computed by the collector",
     )
+    archived_meeting_id: Optional[int] = Field(
+        default=None,
+        description="The Vexa meeting whose recording the archive holds. Compared against the "
+        "playlist's CURRENT vexa_meeting_id to decide whether there is new work: a playlist that "
+        "hosts a second meeting becomes collectable again, instead of looking done forever.",
+    )
+    archived_recording_id: Optional[int] = Field(
+        default=None,
+        description="The Vexa recording the archive holds. Survives clear_recording_link (which "
+        "clears the resolution CACHE, a different thing) because it is the record of what was "
+        "archived, and it names the file on disk.",
+    )
+    recording_link_meeting_id: Optional[int] = Field(
+        default=None,
+        description="The meeting vexa_recording_id/recording_media_file_id were resolved for. "
+        "The cache is only trusted while this matches vexa_meeting_id — otherwise a playlist "
+        "whose collection never finished would keep serving the PREVIOUS meeting's recording.",
+    )
     clear_recording_link: bool = Field(
         default=False,
         description="If True, unsets vexa_recording_id + recording_media_file_id. Needed because "
@@ -84,3 +102,6 @@ class PlaylistMetadata(BaseModel):
     recording_duration_seconds: Optional[float] = None
     recording_network_path: Optional[str] = None
     recording_sha256: Optional[str] = None
+    archived_meeting_id: Optional[int] = None
+    archived_recording_id: Optional[int] = None
+    recording_link_meeting_id: Optional[int] = None

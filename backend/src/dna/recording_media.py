@@ -33,6 +33,10 @@ class ArchiveNotConfirmed(Exception):
     """Refusing to delete: no durable archive has been recorded for this recording."""
 
 
+class ArchiveRecordingMismatch(Exception):
+    """The archive being recorded came from a different recording than this playlist resolves to."""
+
+
 class RecordingMediaService:
     """Resolve a playlist's recording and relay its parts.
 
@@ -56,6 +60,24 @@ class RecordingMediaService:
 
         recording_id = metadata.vexa_recording_id
         media_file_id = metadata.recording_media_file_id
+        # The cache is only good for the meeting it was resolved against. A playlist whose
+        # collection never finished keeps its link (nothing purged it), so a SECOND meeting would
+        # otherwise be served the first meeting's recording — and, once archived under the new
+        # meeting's id, the second recording would never be collected at all.
+        if (
+            recording_id is not None
+            and metadata.recording_link_meeting_id is not None
+            and metadata.recording_link_meeting_id != metadata.vexa_meeting_id
+        ):
+            logger.info(
+                "Playlist %s: recording link was resolved for meeting %s but the playlist is now "
+                "on meeting %s — re-resolving",
+                playlist_id,
+                metadata.recording_link_meeting_id,
+                metadata.vexa_meeting_id,
+            )
+            recording_id = None
+            media_file_id = None
         if recording_id is not None and media_file_id is not None:
             return {
                 "recording_id": recording_id,
@@ -101,6 +123,7 @@ class RecordingMediaService:
             PlaylistMetadataUpdate(
                 vexa_recording_id=recording_id,
                 recording_media_file_id=media_file_id,
+                recording_link_meeting_id=metadata.vexa_meeting_id,
                 recording_start_time_utc=master.get("start_time_utc"),
                 recording_duration_seconds=master.get("duration_seconds"),
             ),
@@ -179,18 +202,36 @@ class RecordingMediaService:
         }
 
     async def record_archive(
-        self, playlist_id: int, network_path: str, sha256: str
+        self,
+        playlist_id: int,
+        network_path: str,
+        sha256: str,
+        recording_id: Optional[int] = None,
     ) -> dict[str, Any]:
         """Record that the media is durably archived somewhere DNA does not own.
 
         This is the fact that later permits deleting the upstream copy, so it is written before
         any deletion is possible — never inferred from one.
+
+        ``recording_id`` is the caller's claim about WHICH recording it mirrored. It is optional
+        for older callers, but when given it must match what this playlist currently resolves to:
+        a disagreement means the collector and DNA are looking at different recordings, and
+        recording the archive anyway would mark the wrong meeting as collected.
         """
+        metadata = await self.storage.get_playlist_metadata(playlist_id)
         ids = await self.resolve(playlist_id)
+        if recording_id is not None and recording_id != ids["recording_id"]:
+            raise ArchiveRecordingMismatch(
+                f"Playlist {playlist_id} resolves to recording {ids['recording_id']}, but the "
+                f"archive was collected from recording {recording_id}; refusing to record it"
+            )
         await self.storage.upsert_playlist_metadata(
             playlist_id,
             PlaylistMetadataUpdate(
-                recording_network_path=network_path, recording_sha256=sha256
+                recording_network_path=network_path,
+                recording_sha256=sha256,
+                archived_recording_id=ids["recording_id"],
+                archived_meeting_id=metadata.vexa_meeting_id if metadata else None,
             ),
         )
         logger.info(

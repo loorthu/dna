@@ -82,11 +82,20 @@ class DnaCollectorClient:
         }
 
     async def record_archive(
-        self, playlist_id: int, network_path: str, sha256: str
+        self,
+        playlist_id: int,
+        network_path: str,
+        sha256: str,
+        recording_id: Optional[int] = None,
     ) -> dict[str, Any]:
+        # recording_id is the collector's claim about what it actually mirrored. DNA compares it
+        # with what the playlist resolves to and refuses on a disagreement, so the two ends cannot
+        # silently archive one recording under another's name.
+        body: dict[str, Any] = {"network_path": network_path, "sha256": sha256}
+        if recording_id is not None:
+            body["recording_id"] = recording_id
         response = await self.client.post(
-            f"/recordings/{playlist_id}/archived",
-            json={"network_path": network_path, "sha256": sha256},
+            f"/recordings/{playlist_id}/archived", json=body
         )
         response.raise_for_status()
         return response.json()

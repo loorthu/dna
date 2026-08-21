@@ -71,6 +71,11 @@ class CollectorState:
     """What has been mirrored for one playlist so far."""
 
     playlist_id: int
+    # WHICH recording these parts came from. Without it the state was keyed on the playlist
+    # alone, so a second meeting resumed the first one's byte stream — appending new parts onto
+    # old ones, which per-part hashes cannot detect because each new part verifies fine against
+    # its own index.
+    recording_id: Optional[int] = None
     parts: list[PartRecord] = field(default_factory=list)
     complete: bool = False
     video_start_time_utc: Optional[str] = None
@@ -89,6 +94,7 @@ class CollectorState:
     def as_dict(self) -> dict[str, Any]:
         return {
             "playlist_id": self.playlist_id,
+            "recording_id": self.recording_id,
             "parts": [p.as_dict() for p in self.parts],
             "complete": self.complete,
             "video_start_time_utc": self.video_start_time_utc,
@@ -98,8 +104,10 @@ class CollectorState:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "CollectorState":
+        recording_id = raw.get("recording_id")
         return cls(
             playlist_id=int(raw["playlist_id"]),
+            recording_id=int(recording_id) if recording_id is not None else None,
             parts=[PartRecord(**p) for p in raw.get("parts", [])],
             complete=bool(raw.get("complete")),
             video_start_time_utc=raw.get("video_start_time_utc"),
@@ -158,7 +166,11 @@ class CollectorClient(Protocol):
     ) -> tuple[bytes, Optional[str]]: ...
     async def get_audio(self, playlist_id: int) -> tuple[bytes, dict[str, Any]]: ...
     async def record_archive(
-        self, playlist_id: int, network_path: str, sha256: str
+        self,
+        playlist_id: int,
+        network_path: str,
+        sha256: str,
+        recording_id: Optional[int] = None,
     ) -> dict[str, Any]: ...
     async def delete_upstream(self, playlist_id: int) -> dict[str, Any]: ...
 
@@ -282,29 +294,52 @@ class RecordingCollector:
 
     # -- paths ----------------------------------------------------------------------------------
 
-    def video_path(self, playlist_id: int) -> str:
-        return os.path.join(self.staging_dir, f"{playlist_id}.video.mp4")
+    # Every path is scoped by RECORDING, not just playlist. A playlist outlives any one meeting,
+    # so playlist-only names made the second meeting collide with the first: staging resumed the
+    # wrong byte stream, and the archive silently overwrote a file whose upstream copy had
+    # already been released — destroying the only remaining copy.
+    def _scope(self, playlist_id: int, recording_id: Optional[int]) -> str:
+        return (
+            f"{playlist_id}-{recording_id}"
+            if recording_id is not None
+            else str(playlist_id)
+        )
 
-    def audio_path(self, playlist_id: int) -> str:
-        return os.path.join(self.staging_dir, f"{playlist_id}.audio.webm")
+    def video_path(self, playlist_id: int, recording_id: Optional[int] = None) -> str:
+        return os.path.join(
+            self.staging_dir, f"{self._scope(playlist_id, recording_id)}.video.mp4"
+        )
 
-    def state_path(self, playlist_id: int) -> str:
-        return os.path.join(self.staging_dir, f"{playlist_id}.state.json")
+    def audio_path(self, playlist_id: int, recording_id: Optional[int] = None) -> str:
+        return os.path.join(
+            self.staging_dir, f"{self._scope(playlist_id, recording_id)}.audio.webm"
+        )
 
-    def archive_path(self, playlist_id: int) -> str:
-        return os.path.join(self.archive_root, f"playlist-{playlist_id}.mp4")
+    def state_path(self, playlist_id: int, recording_id: Optional[int] = None) -> str:
+        return os.path.join(
+            self.staging_dir, f"{self._scope(playlist_id, recording_id)}.state.json"
+        )
+
+    def archive_path(self, playlist_id: int, recording_id: Optional[int] = None) -> str:
+        if recording_id is None:
+            return os.path.join(self.archive_root, f"playlist-{playlist_id}.mp4")
+        return os.path.join(
+            self.archive_root, f"playlist-{playlist_id}-rec{recording_id}.mp4"
+        )
 
     # -- state ----------------------------------------------------------------------------------
 
-    def load_state(self, playlist_id: int) -> CollectorState:
+    def load_state(
+        self, playlist_id: int, recording_id: Optional[int] = None
+    ) -> CollectorState:
         """The state file reconciled against the staging bytes that actually survived.
 
         Reconciliation happens HERE rather than at write time because a crash is exactly the case
         where the two disagree, and a restart is the only moment anyone can notice.
         """
-        path = self.state_path(playlist_id)
+        path = self.state_path(playlist_id, recording_id)
         if not os.path.exists(path):
-            return CollectorState(playlist_id=playlist_id)
+            return CollectorState(playlist_id=playlist_id, recording_id=recording_id)
         try:
             with open(path, "r", encoding="utf-8") as handle:
                 state = CollectorState.from_dict(json.load(handle))
@@ -316,9 +351,26 @@ class RecordingCollector:
                 playlist_id,
                 e,
             )
-            return CollectorState(playlist_id=playlist_id)
+            return CollectorState(playlist_id=playlist_id, recording_id=recording_id)
 
-        video = self.video_path(playlist_id)
+        # Belt and braces: the filename already scopes by recording, but a state file that names
+        # a DIFFERENT recording must never be resumed — that is the splice this fix exists to
+        # prevent, and it costs one re-fetch to refuse.
+        if (
+            recording_id is not None
+            and state.recording_id is not None
+            and state.recording_id != recording_id
+        ):
+            logger.warning(
+                "Playlist %s: staged state belongs to recording %s, not %s — starting fresh",
+                playlist_id,
+                state.recording_id,
+                recording_id,
+            )
+            return CollectorState(playlist_id=playlist_id, recording_id=recording_id)
+        state.recording_id = recording_id or state.recording_id
+
+        video = self.video_path(playlist_id, state.recording_id)
         size = os.path.getsize(video) if os.path.exists(video) else 0
         plan = plan_resume(state.parts, size)
         if plan.dropped or plan.truncate_to != size:
@@ -341,7 +393,7 @@ class RecordingCollector:
 
     def save_state(self, state: CollectorState) -> None:
         """Write the state file atomically — a torn write here is a lost recording on restart."""
-        path = self.state_path(state.playlist_id)
+        path = self.state_path(state.playlist_id, state.recording_id)
         tmp = f"{path}.tmp"
         with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(state.as_dict(), handle, indent=2)
@@ -360,6 +412,21 @@ class RecordingCollector:
         """
         playlist_id = state.playlist_id
         index = await self.client.list_chunks(playlist_id, after=state.next_seq - 1)
+        indexed_recording = index.get("recording_id")
+        if (
+            indexed_recording is not None
+            and state.recording_id is not None
+            and int(indexed_recording) != state.recording_id
+        ):
+            # The playlist moved to another recording mid-pass. Appending across that boundary is
+            # the corruption this guards; the next poll picks the new recording up cleanly under
+            # its own state file.
+            raise CollectionFailed(
+                f"Playlist {playlist_id}: index now reports recording {indexed_recording}, "
+                f"but {state.recording_id} is being mirrored — abandoning this pass"
+            )
+        if state.recording_id is None and indexed_recording is not None:
+            state.recording_id = int(indexed_recording)
         state.video_start_time_utc = (
             index.get("start_time_utc") or state.video_start_time_utc
         )
@@ -409,7 +476,7 @@ class RecordingCollector:
             # Bytes first, then the record of them. The reverse order would let a crash leave the
             # state claiming a part the file does not contain, which is the harder direction to
             # detect; this way the file is merely ahead, and plan_resume trims it.
-            with open(self.video_path(playlist_id), "ab") as handle:
+            with open(self.video_path(playlist_id, state.recording_id), "ab") as handle:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
@@ -430,12 +497,13 @@ class RecordingCollector:
     async def finalize(self, state: CollectorState) -> dict[str, Any]:
         """Mux, write to the network path, verify what landed, record it, release upstream."""
         playlist_id = state.playlist_id
-        video = self.video_path(playlist_id)
+        recording_id = state.recording_id
+        video = self.video_path(playlist_id, recording_id)
         if not os.path.exists(video) or os.path.getsize(video) == 0:
             raise CollectorError(f"Playlist {playlist_id}: nothing staged to finalize")
 
         audio_delay_ms, delay_source = 0, "no-audio"
-        audio = self.audio_path(playlist_id)
+        audio = self.audio_path(playlist_id, recording_id)
         try:
             data, meta = await self.client.get_audio(playlist_id)
             with open(audio, "wb") as handle:
@@ -456,7 +524,9 @@ class RecordingCollector:
             )
             audio = ""
 
-        out = os.path.join(self.staging_dir, f"{playlist_id}.final.mp4")
+        out = os.path.join(
+            self.staging_dir, f"{self._scope(playlist_id, recording_id)}.final.mp4"
+        )
         if audio:
             command = build_mux_command(
                 self.ffmpeg_path, video, audio, out, audio_delay_ms
@@ -475,8 +545,16 @@ class RecordingCollector:
         else:
             os.replace(video, out)
 
-        destination = self.archive_path(playlist_id)
+        destination = self.archive_path(playlist_id, recording_id)
         os.makedirs(os.path.dirname(destination), exist_ok=True)
+        # Never write over an existing archive. The name now carries the recording id so this
+        # should be unreachable, but the failure it guards is unrecoverable: the upstream copy is
+        # released right after archiving, so an overwrite destroys the only remaining copy.
+        if os.path.exists(destination):
+            raise CollectorError(
+                f"Playlist {playlist_id}: {destination} already exists — refusing to overwrite "
+                f"an archive (it may be the only copy of that recording)"
+            )
         digest = sha256_file(out)
         _move(out, destination)
 
@@ -491,7 +569,9 @@ class RecordingCollector:
                 f"not {digest} — refusing to record it or release upstream"
             )
 
-        await self.client.record_archive(playlist_id, destination, digest)
+        await self.client.record_archive(
+            playlist_id, destination, digest, recording_id=recording_id
+        )
         state.archived_path, state.archived_sha256 = destination, digest
         state.complete = True
         self.save_state(state)
@@ -504,7 +584,10 @@ class RecordingCollector:
             digest[:12],
         )
 
-        for leftover in (self.video_path(playlist_id), self.audio_path(playlist_id)):
+        for leftover in (
+            self.video_path(playlist_id, recording_id),
+            self.audio_path(playlist_id, recording_id),
+        ):
             if os.path.exists(leftover):
                 os.remove(leftover)
         return {
@@ -531,10 +614,24 @@ class RecordingCollector:
         await self.client.delete_upstream(state.playlist_id)
 
     async def poll_once(self, playlist_id: int) -> dict[str, Any]:
-        """One pass for one playlist: mirror what is new, and finish if the recording is done."""
-        state = self.load_state(playlist_id)
+        """One pass for one playlist: mirror what is new, and finish if the recording is done.
+
+        The recording is identified BEFORE any state is loaded. The work queue can only ask a
+        coarse question (has this playlist's current MEETING been archived), so the precise
+        decision — is this exact recording already held — is made here, where the index has just
+        named it.
+        """
+        index = await self.client.list_chunks(playlist_id, after=-1)
+        recording_id = index.get("recording_id")
+        recording_id = int(recording_id) if recording_id is not None else None
+
+        state = self.load_state(playlist_id, recording_id)
         if state.complete and state.archived_path:
-            return {"playlist_id": playlist_id, "status": "archived"}
+            return {
+                "playlist_id": playlist_id,
+                "recording_id": recording_id,
+                "status": "archived",
+            }
 
         appended, complete = await self.ingest_new_parts(state)
         if not complete:
