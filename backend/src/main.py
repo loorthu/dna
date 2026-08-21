@@ -76,6 +76,7 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
     get_prodtrack_provider,
 )
 from dna.qc.qc_runner import run_qc_checks_for_draft
+from dna.recording_cuts_service import RecordingCutsService, recording_playback_enabled
 from dna.recording_media import (
     ArchiveNotConfirmed,
     ArchiveRecordingMismatch,
@@ -1998,6 +1999,33 @@ async def list_pending_recordings(
 ) -> dict:
     playlist_ids = await storage_provider.list_playlists_pending_archive(limit=limit)
     return {"playlist_ids": playlist_ids, "count": len(playlist_ids)}
+
+
+@app.get(
+    "/recordings/cuts/{playlist_id}",
+    tags=["Recordings"],
+    summary="Where each version was discussed in the meeting recording",
+    description=(
+        "Everything the player needs in one call: the media URL nginx serves, the recording's "
+        "own start clock and WHICH anchor produced it, and per version the spans of the "
+        "recording that discussed it.\n\n"
+        "`status` distinguishes the several ways there can be nothing to play — `no_recording` "
+        "(never recorded), `pending` (being recorded now), `archiving` (recorded, the collector "
+        "has not finished), `no_segments` (recorded, but nothing was said against these "
+        "versions) and `ready`. They are different situations and want different things from "
+        "the viewer; collapsing them would render all four as the same blank box."
+    ),
+)
+async def get_recording_cuts(
+    playlist_id: int,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> dict:
+    if not recording_playback_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    service = RecordingCutsService(transcription_provider, storage_provider)
+    return await service.build(playlist_id)
 
 
 @app.get(

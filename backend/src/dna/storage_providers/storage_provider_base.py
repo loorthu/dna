@@ -111,6 +111,17 @@ class StorageProviderBase:
         """Get all segments for a version, ordered by start time."""
         raise NotImplementedError()
 
+    async def get_segments_for_playlist(
+        self, playlist_id: int
+    ) -> list["StoredSegment"]:
+        """Every stored segment for a playlist, across all versions.
+
+        The cut list is built per playlist rather than per version because a meeting's segments
+        belong to whichever version was in review at the time, and the caller wants all of them
+        in one pass — asking version by version would mean knowing the versions first.
+        """
+        raise NotImplementedError()
+
     async def get_user_settings(self, user_email: str) -> Optional["UserSettings"]:
         """Get user settings by email."""
         raise NotImplementedError()

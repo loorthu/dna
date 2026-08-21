@@ -351,6 +351,23 @@ class MongoDBStorageProvider(StorageProviderBase):
             results.append(StoredSegment(**doc))
         return results
 
+    async def get_segments_for_playlist(self, playlist_id: int) -> list[StoredSegment]:
+        """Every segment for a playlist, ordered by version then start time.
+
+        An index-prefix scan: `segments_list_by_version` is
+        (playlist_id, version_id, absolute_start_time), so both the match and the ordering are
+        served by the index that already exists for the per-version read.
+        """
+        query = {"playlist_id": playlist_id}
+        cursor = self.segments_collection.find(query).sort(
+            [("version_id", 1), ("absolute_start_time", 1)]
+        )
+        results = []
+        async for doc in cursor:
+            doc["_id"] = str(doc["_id"])
+            results.append(StoredSegment(**doc))
+        return results
+
     async def get_user_settings(self, user_email: str) -> Optional[UserSettings]:
         """Get user settings by email."""
         query = {"user_email": user_email}
