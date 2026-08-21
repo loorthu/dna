@@ -34,6 +34,10 @@ class TranscriptionService:
         self.event_publisher = event_publisher
         self._subscribed_meetings: set[str] = set()
         self._meeting_to_playlist: dict[str, int] = {}
+        # Playlists already reported as discarding their segments. Segments arrive in a steady
+        # stream, so warning per batch buried the message in its own repetition — thirty identical
+        # lines say no more than one, and make the log harder to read than silence would.
+        self._warned_not_saving: set[int] = set()
 
     async def init_providers(self) -> None:
         """Initialize providers if not already set."""
@@ -240,11 +244,32 @@ class TranscriptionService:
 
         metadata = await self.storage_provider.get_playlist_metadata(playlist_id)
         if metadata is None or metadata.in_review is None:
-            logger.warning(
-                "No in_review version found for playlist %s, cannot save segments",
-                playlist_id,
-            )
+            # Everything upstream is working — the bot is in the meeting and Vexa is transcribing
+            # — and every segment is being thrown away because there is no version to attach it
+            # to. Announce it once, to the UI as well as the log: the failure is invisible from
+            # the outside, which is what made it cost a whole meeting on 2026-08-21.
+            if playlist_id not in self._warned_not_saving:
+                self._warned_not_saving.add(playlist_id)
+                logger.warning(
+                    "Playlist %s: DISCARDING segments — no version is in review. The bot and "
+                    "transcription are working; nothing is being kept. Mark a version in review "
+                    "to start storing them (earlier speech is not backfilled).",
+                    playlist_id,
+                )
+                await self.event_publisher.publish(
+                    EventType.BOT_STATUS_CHANGED,
+                    {
+                        "platform": platform,
+                        "meeting_id": meeting_id,
+                        "playlist_id": playlist_id,
+                        "saving_segments": False,
+                        "warnings": ["no_version_in_review"],
+                    },
+                )
             return
+        # Saving again — let a later lapse warn afresh rather than staying quiet because of one
+        # long-past complaint.
+        self._warned_not_saving.discard(playlist_id)
 
         if metadata.transcription_paused:
             logger.debug(

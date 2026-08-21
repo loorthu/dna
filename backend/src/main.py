@@ -1747,6 +1747,19 @@ async def dispatch_bot(
             playlist_id=request.playlist_id,
         )
 
+        # Segments are stored against the version in review. With none set, the bot joins, Vexa
+        # transcribes, and DNA drops every segment on arrival — a run that looks entirely healthy
+        # while keeping nothing. Say so at the one moment someone is watching.
+        metadata = await storage_provider.get_playlist_metadata(request.playlist_id)
+        session.saving_segments = bool(metadata and metadata.in_review is not None)
+        if not session.saving_segments:
+            session.warnings.append("no_version_in_review")
+            logging.getLogger(__name__).warning(
+                "Playlist %s: bot dispatched with no version in review — segments will be "
+                "discarded until one is set",
+                request.playlist_id,
+            )
+
         event_publisher = get_event_publisher()
         await event_publisher.publish(
             EventType.BOT_STATUS_CHANGED,
@@ -1756,6 +1769,8 @@ async def dispatch_bot(
                 "playlist_id": request.playlist_id,
                 "status": "joining",
                 "vexa_meeting_id": session.vexa_meeting_id,
+                "saving_segments": session.saving_segments,
+                "warnings": session.warnings,
             },
         )
 
@@ -1805,13 +1820,31 @@ async def get_bot_status(
     platform: Platform,
     meeting_id: str,
     transcription_provider: TranscriptionProviderDep,
+    storage_provider: StorageProviderDep,
     _: CurrentUserDep,
+    playlist_id: Optional[int] = None,
 ) -> BotStatus:
     """Get the status of a transcription bot."""
     try:
-        return await transcription_provider.get_bot_status(platform, meeting_id)
+        status = await transcription_provider.get_bot_status(platform, meeting_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # A bot can be perfectly healthy while its transcript goes nowhere, so "is it working" has to
+    # include whether anything is being kept.
+    #
+    # It is answerable only per PLAYLIST. A meeting id does not identify one — the same meeting
+    # room gets reused across playlists, and whether segments are being stored is a property of
+    # the playlist, not the room. Asked without `playlist_id` this stays None (unknown) rather
+    # than guessing: picking an arbitrary playlist that shares the room produced a confident
+    # warning about a playlist the caller was not even looking at.
+    if playlist_id is not None:
+        metadata = await storage_provider.get_playlist_metadata(playlist_id)
+        if metadata is not None:
+            status.saving_segments = metadata.in_review is not None
+            if not status.saving_segments:
+                status.warnings.append("no_version_in_review")
+    return status
 
 
 @app.get(

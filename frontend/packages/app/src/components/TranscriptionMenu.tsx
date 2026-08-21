@@ -5,6 +5,7 @@ import {
   PhoneOff,
   Loader2,
   AlertCircle,
+  AlertTriangle,
   CheckCircle2,
   Radio,
   Pause,
@@ -92,6 +93,27 @@ const ErrorMessage = styled.div`
   border-radius: ${({ theme }) => theme.radii.md};
   font-size: 12px;
   color: ${({ theme }) => theme.colors.status.error};
+`;
+
+/* Not an error — the bot is working. It is the transcript that is going nowhere, which looks
+   identical to a quiet meeting from the outside. Amber rather than red: nothing has failed, but
+   it will not fix itself either. */
+const WarningMessage = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: ${({ theme }) => theme.radii.md};
+  font-size: 12px;
+  line-height: 1.4;
+  color: ${({ theme }) => theme.colors.status.warning};
+
+  svg {
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
 `;
 
 const InputGroup = styled.div`
@@ -311,10 +333,24 @@ export function TranscriptionMenu({
   const needsPasscode = parseMeetingUrl(meetingUrl)?.platform === 'teams';
   const isPaused = metadata?.transcription_paused ?? false;
 
+  // Segments are stored against the version in review. With none set the bot joins and Vexa
+  // transcribes, and every segment is discarded on arrival — indistinguishable from a meeting
+  // where nobody spoke, which is exactly how a whole meeting's transcript was lost.
+  const hasVersionInReview = (metadata?.in_review ?? null) !== null;
+  const isDiscardingSegments = isActive && !hasVersionInReview;
+  // Said BEFORE the button is pressed as well as after. Forgetting to mark a version is the
+  // actual failure mode, and a warning that only appears once the bot is running arrives after
+  // the transcript has already started being thrown away.
+  const willDiscardSegments =
+    !isActive && !hasVersionInReview && meetingUrl.trim().length > 0;
+
   const isLiveButPaused =
     isPaused && ['in_call', 'transcribing'].includes(currentStatus);
   const isAwaitingAdmission = currentStatus === 'waiting_room';
-  const shouldPulseYellow = isLiveButPaused || isAwaitingAdmission;
+  // Carried on the trigger too, not just inside the popover: a warning nobody opens the menu to
+  // see is no better than the silence it replaced.
+  const shouldPulseYellow =
+    isLiveButPaused || isAwaitingAdmission || isDiscardingSegments;
 
   const getPhoneIconColor = () => {
     if (shouldPulseYellow) {
@@ -438,6 +474,26 @@ export function TranscriptionMenu({
               <AlertCircle size={14} />
               {error.message}
             </ErrorMessage>
+          )}
+
+          {(isDiscardingSegments || willDiscardSegments) && (
+            <WarningMessage>
+              <AlertTriangle size={14} />
+              {isDiscardingSegments ? (
+                <span>
+                  <strong>Transcript is not being saved.</strong> No version is
+                  marked In&nbsp;Review, so segments are discarded as they
+                  arrive. Mark a version In&nbsp;Review to start keeping them —
+                  speech from before that is not backfilled.
+                </span>
+              ) : (
+                <span>
+                  <strong>No version is marked In&nbsp;Review.</strong> The bot
+                  will join and transcribe, but nothing will be saved. Mark a
+                  version In&nbsp;Review first.
+                </span>
+              )}
+            </WarningMessage>
           )}
 
           {!isActive && (

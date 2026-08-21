@@ -687,6 +687,65 @@ class TestOnTranscriptionUpdated:
         mock_event_publisher.ws_manager.broadcast.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_discarding_segments_is_announced_once_not_per_batch(
+        self, service_ready, mock_storage_provider, mock_event_publisher
+    ):
+        """Dropping every segment must not be silent — and must not drown itself out either.
+
+        Nothing downstream can tell this apart from a quiet meeting: the bot is in the call, Vexa
+        is transcribing, and the API returns an empty list. The only signal used to be a log line
+        repeated per batch, which is how a whole meeting's transcript was lost unnoticed.
+        """
+        mock_storage_provider.get_playlist_metadata.return_value = PlaylistMetadata(
+            _id="m", playlist_id=42, in_review=None
+        )
+
+        for _ in range(3):
+            await service_ready.on_transcription_updated(
+                self._payload(confirmed=[self._seg()])
+            )
+
+        not_saving = [
+            call
+            for call in mock_event_publisher.publish.await_args_list
+            if call.args[0] == EventType.BOT_STATUS_CHANGED
+            and call.args[1].get("saving_segments") is False
+        ]
+        assert len(not_saving) == 1, "announced exactly once across repeated batches"
+        assert not_saving[0].args[1]["warnings"] == ["no_version_in_review"]
+        assert not_saving[0].args[1]["playlist_id"] == 42
+        mock_storage_provider.upsert_segment.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_later_lapse_is_announced_again(
+        self, service_ready, mock_storage_provider, mock_event_publisher
+    ):
+        """Warning once per playlist must not mean once per process lifetime."""
+        dropping = PlaylistMetadata(_id="m", playlist_id=42, in_review=None)
+        saving = PlaylistMetadata(_id="m", playlist_id=42, in_review=7)
+
+        mock_storage_provider.get_playlist_metadata.return_value = dropping
+        await service_ready.on_transcription_updated(
+            self._payload(confirmed=[self._seg()])
+        )
+        mock_storage_provider.get_playlist_metadata.return_value = saving
+        await service_ready.on_transcription_updated(
+            self._payload(confirmed=[self._seg()])
+        )
+        mock_storage_provider.get_playlist_metadata.return_value = dropping
+        await service_ready.on_transcription_updated(
+            self._payload(confirmed=[self._seg()])
+        )
+
+        not_saving = [
+            call
+            for call in mock_event_publisher.publish.await_args_list
+            if call.args[0] == EventType.BOT_STATUS_CHANGED
+            and call.args[1].get("saving_segments") is False
+        ]
+        assert len(not_saving) == 2, "the second lapse must be announced too"
+
+    @pytest.mark.asyncio
     async def test_returns_when_paused(
         self, service_ready, mock_storage_provider, mock_event_publisher
     ):

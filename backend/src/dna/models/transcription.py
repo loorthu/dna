@@ -43,7 +43,10 @@ class DispatchBotRequest(BaseModel):
     )
     bot_name: Optional[str] = Field(default=None, description="Custom name for the bot")
     language: Optional[str] = Field(default=None, description="Transcription language")
-    authenticated: bool = Field(default=True, description="Join as authenticated user via active browser_session")
+    authenticated: bool = Field(
+        default=True,
+        description="Join as authenticated user via active browser_session",
+    )
 
 
 class BotStatus(BaseModel):
@@ -54,6 +57,13 @@ class BotStatus(BaseModel):
     status: BotStatusEnum
     message: Optional[str] = None
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    saving_segments: Optional[bool] = Field(
+        default=None,
+        description="Whether arriving segments are being stored, or None when the status was "
+        "read without a playlist to check against. False means the bot is working and the "
+        "transcript is being discarded — see BotSession.saving_segments.",
+    )
+    warnings: list[str] = Field(default_factory=list)
 
 
 class BotSession(BaseModel):
@@ -68,6 +78,18 @@ class BotSession(BaseModel):
     language: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    saving_segments: bool = Field(
+        default=True,
+        description="Whether arriving segments are being stored. False when the playlist has no "
+        "version in review: the bot still joins and Vexa still transcribes, but DNA has nowhere "
+        "to put the segments and drops them. Reported so a caller is not left reading a healthy "
+        "status while the transcript is going nowhere.",
+    )
+    warnings: list[str] = Field(
+        default_factory=list,
+        description="Machine-readable notes about this session that are not failures. "
+        "`no_version_in_review` is the one that matters: everything works and nothing is kept.",
+    )
 
 
 class TranscriptSegment(BaseModel):
