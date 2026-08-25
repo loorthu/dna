@@ -83,6 +83,7 @@ from dna.recording_media import (
     RecordingMediaService,
     RecordingNotFound,
 )
+from dna.site_routing import site_for_client
 from dna.storage_providers.storage_provider_base import (
     StorageProviderBase,
     get_storage_provider,
@@ -1715,12 +1716,16 @@ async def run_qc_checks(
 )
 async def dispatch_bot(
     request: DispatchBotRequest,
+    http_request: Request,
     transcription_provider: TranscriptionProviderDep,
     storage_provider: StorageProviderDep,
     transcription_service: TranscriptionServiceDep,
     _: CurrentUserDep,
 ) -> BotSession:
     """Dispatch a transcription bot to a meeting."""
+    dispatch_site = site_for_client(
+        http_request.client.host if http_request.client else None
+    )
     try:
         session = await transcription_provider.dispatch_bot(
             platform=request.platform,
@@ -1744,6 +1749,10 @@ async def dispatch_bot(
                 # recording path off for this playlist rather than leaving the collector to
                 # rediscover, once every poll and forever, that there is nothing to fetch.
                 recording_enabled=session.recording_enabled,
+                # The side that asked for this recording owns collecting it. Its collector runs
+                # beside the front end that dispatched, which is the host this request's peer
+                # belongs to — so the media is archived where the player will look for it.
+                collector_site=dispatch_site,
                 transcription_paused=False,
                 clear_resumed_at=True,
             ),
@@ -1999,19 +2008,26 @@ async def generate_note(
     tags=["Recordings"],
     summary="Playlists whose meeting recording has not been archived yet",
     description=(
-        "The collector's work queue, newest first. A playlist appears here while it has a meeting "
-        "and no recorded archive — the same condition that makes its upstream copy undeletable, "
-        "so the queue cannot drift out of step with the delete guard. Playlists whose meeting was "
-        "never recorded also appear; the collector discovers that from a 404 and backs off."
+        "One collector's work queue, newest first. A playlist appears while it has a meeting and "
+        "no archive for THAT meeting — the same condition that makes its upstream copy "
+        "undeletable, so the queue cannot drift out of step with the delete guard.\n\n"
+        "`site` scopes the queue to the side that dispatched the meeting, so the collector "
+        "running beside that front end is the one that archives it — otherwise the media lands on "
+        "a host that is not the one serving playback. Omit it to get the unrouted jobs, which is "
+        "the whole queue for a single-collector deployment. A named site and the unrouted set are "
+        "exclusive, so no playlist is ever offered to two collectors."
     ),
 )
 async def list_pending_recordings(
     storage_provider: StorageProviderDep,
     _: CurrentUserDep,
     limit: int = 25,
+    site: Optional[str] = None,
 ) -> dict:
-    playlist_ids = await storage_provider.list_playlists_pending_archive(limit=limit)
-    return {"playlist_ids": playlist_ids, "count": len(playlist_ids)}
+    playlist_ids = await storage_provider.list_playlists_pending_archive(
+        limit=limit, site=site
+    )
+    return {"playlist_ids": playlist_ids, "count": len(playlist_ids), "site": site}
 
 
 @app.get(

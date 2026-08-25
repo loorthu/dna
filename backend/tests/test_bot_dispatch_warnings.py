@@ -217,3 +217,54 @@ class TestUpstreamRefusalsArePassedOn:
 
         assert response.status_code == 400
         assert "connection refused" in response.json()["detail"]
+
+
+class TestTheDispatchRecordsWhichSideAskedForIt:
+    """The job follows the request home.
+
+    A collector runs beside each front end, and the one on the side that dispatched is the one
+    that must archive — or the media lands on a host that is not the one serving playback: a
+    recording that exists, cannot be played, and whose upstream copy has already been released.
+    """
+
+    @pytest.fixture
+    def client(self):
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_storage(self):
+        s = mock.AsyncMock()
+        s.get_playlist_metadata.return_value = _metadata(in_review=101)
+        return s
+
+    @pytest.fixture
+    def override_deps(self, mock_storage):
+        provider = mock.AsyncMock()
+        provider.dispatch_bot.return_value = _session()
+        app.dependency_overrides[get_storage_provider_cached] = lambda: mock_storage
+        app.dependency_overrides[get_transcription_provider_cached] = lambda: provider
+        app.dependency_overrides[get_transcription_service_cached] = (
+            lambda: mock.AsyncMock()
+        )
+        yield
+        app.dependency_overrides.clear()
+
+    def test_the_dispatching_peer_is_recorded_as_the_site(
+        self, client, mock_storage, override_deps
+    ):
+        client.post("/transcription/bot", json=DISPATCH)
+
+        update = mock_storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.collector_site == "testclient", (
+            "the peer that dispatched — a front end's own proxy, which is the host its "
+            "collector runs on"
+        )
+
+    def test_a_configured_name_is_used_instead_of_the_address(
+        self, client, mock_storage, override_deps
+    ):
+        with mock.patch.dict("os.environ", {"DNA_COLLECTOR_SITES": "testclient=prod"}):
+            client.post("/transcription/bot", json=DISPATCH)
+
+        update = mock_storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.collector_site == "prod"

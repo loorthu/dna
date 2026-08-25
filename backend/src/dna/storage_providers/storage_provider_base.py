@@ -111,6 +111,16 @@ class StorageProviderBase:
         """Get all segments for a version, ordered by start time."""
         raise NotImplementedError()
 
+    async def list_playlists_pending_archive(
+        self, limit: int = 25, site: Optional[str] = None
+    ) -> list[int]:
+        """Playlists whose current meeting still needs collecting, for ONE collector.
+
+        ``site`` scopes the queue to the side that dispatched the meeting; None means the
+        unrouted jobs. The two are exclusive, so two collectors are never handed the same work.
+        """
+        raise NotImplementedError()
+
     async def get_segments_for_playlist(
         self, playlist_id: int
     ) -> list["StoredSegment"]:

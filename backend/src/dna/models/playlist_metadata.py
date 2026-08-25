@@ -29,6 +29,14 @@ class PlaylistMetadataUpdate(BaseModel):
         "Used when starting a new transcription session.",
     )
     # ── recording (the meeting's media, produced by the bot and archived by the collector) ──
+    collector_site: Optional[str] = Field(
+        default=None,
+        description="Which side dispatched this meeting, and therefore whose collector should "
+        "archive it. Inferred from the peer that made the dispatch — the front end's own proxy, "
+        "which runs on the same host as its collector. None means unrouted, and is offered only "
+        "to a collector that also declares no site, so no two collectors can be handed the same "
+        "job.",
+    )
     recording_enabled: Optional[bool] = Field(
         default=None,
         description="Whether the CURRENT meeting is being recorded, as Vexa resolved it at "
@@ -109,6 +117,7 @@ class PlaylistMetadata(BaseModel):
         description="Timestamp when transcription was last resumed. "
         "Segments with start time before this are discarded.",
     )
+    collector_site: Optional[str] = None
     recording_enabled: Optional[bool] = None
     vexa_recording_id: Optional[int] = None
     recording_media_file_id: Optional[int] = None

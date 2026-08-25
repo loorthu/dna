@@ -608,3 +608,19 @@ independent. Everything else is genuinely sequential.
    expiry is being built.
 7. **`upload()` buffers whole files in memory.** Chunked upload largely fixes this,
    but confirm in Phase 2 that the bot streams rather than accumulating.
+8. **The work queue had no notion of ownership — found in production, now fixed.**
+   `/recordings/pending` answered "what needs collecting", not "what needs collecting
+   *by you*", so every collector took every job. With one collector that is invisible.
+   With two it was a race: both mirrored the same meeting in parallel, pulling every
+   chunk twice, and the loser was left holding a partial it could never finish because
+   the winner had already archived and released the upstream copy. The outcome was
+   benign only by luck — had the other won, DNA would hold an archive on a host that is
+   not the one serving playback: a recording that exists, cannot be played, and whose
+   upstream copy is gone.
+   Resolved by routing rather than exclusion, since more than one front end is a
+   deliberate arrangement rather than a mistake. A dispatch is tagged with the side it
+   came from — inferred from its immediate peer, which is the front end's own proxy and
+   therefore the host its collector runs on — and each collector asks only for its own
+   site. A named site and the unrouted set are exclusive, so no playlist can be offered
+   to two collectors: the race is impossible by construction rather than unlikely by
+   timing. A single-collector deployment needs no configuration at all.

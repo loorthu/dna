@@ -273,7 +273,9 @@ class MongoDBStorageProvider(StorageProviderBase):
         result = await self.playlist_metadata_collection.delete_one(query)
         return result.deleted_count > 0
 
-    async def list_playlists_pending_archive(self, limit: int = 25) -> list[int]:
+    async def list_playlists_pending_archive(
+        self, limit: int = 25, site: Optional[str] = None
+    ) -> list[int]:
         # A null path matches both "absent" and "explicitly null", so a playlist that never had a
         # recording and one whose archive is still in flight look the same here — which is right:
         # the collector cannot tell them apart either, and asking is cheap (a 404 it backs off on).
@@ -296,6 +298,13 @@ class MongoDBStorageProvider(StorageProviderBase):
                     "$expr": {
                         "$ne": ["$archived_meeting_id", "$vexa_meeting_id"],
                     },
+                    # Only this collector's own work. The two forms are exclusive by
+                    # construction — a named site matches exactly itself, and an unsited
+                    # collector gets exactly the unrouted jobs — so no playlist can ever be
+                    # offered to two collectors at once. That is the fix for a real incident:
+                    # two collectors mirrored one meeting in parallel and the loser was left
+                    # with a partial it could never finish.
+                    "collector_site": site if site else None,
                 },
                 {"playlist_id": 1},
             )

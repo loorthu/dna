@@ -13,6 +13,7 @@ Configuration, all via environment:
     RECORDING_NETWORK_PATH   the archive root nginx serves  (default /net/media/dna-recordings)
     COLLECTOR_POLL_SECONDS   seconds between passes         (default 10)
     COLLECTOR_MAX_PLAYLISTS  work-queue depth per pass       (default 25)
+    COLLECTOR_SITE           which side's recordings to collect; unset = the unrouted ones
 """
 
 import asyncio
@@ -45,7 +46,9 @@ class DnaCollectorClient:
     reaches Vexa, and it holds the API key so that credential never crosses over.
     """
 
-    def __init__(self, base_url: str, token: Optional[str] = None, timeout: float = 120.0):
+    def __init__(
+        self, base_url: str, token: Optional[str] = None, timeout: float = 120.0
+    ):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         # A generous timeout: a part is a few MB over a link whose characteristics are not
         # documented anywhere, and a slow fetch that completes beats a fast one that fails.
@@ -56,8 +59,15 @@ class DnaCollectorClient:
     async def aclose(self) -> None:
         await self.client.aclose()
 
-    async def list_pending(self, limit: int) -> list[int]:
-        response = await self.client.get("/recordings/pending", params={"limit": limit})
+    async def list_pending(self, limit: int, site: Optional[str] = None) -> list[int]:
+        # `site` asks for THIS side's work only. A DNA backend serves more than one front end,
+        # and the collector beside the one that dispatched a meeting is the one that must archive
+        # it — otherwise the file lands on a host that is not the one serving playback. Omitting
+        # it asks for the unrouted jobs, which is the whole queue when only one collector runs.
+        params: dict[str, Any] = {"limit": limit}
+        if site:
+            params["site"] = site
+        response = await self.client.get("/recordings/pending", params=params)
         response.raise_for_status()
         return response.json().get("playlist_ids", [])
 
@@ -68,7 +78,9 @@ class DnaCollectorClient:
         response.raise_for_status()
         return response.json()
 
-    async def get_chunk(self, playlist_id: int, seq: int) -> tuple[bytes, Optional[str]]:
+    async def get_chunk(
+        self, playlist_id: int, seq: int
+    ) -> tuple[bytes, Optional[str]]:
         response = await self.client.get(f"/recordings/{playlist_id}/chunks/{seq}")
         response.raise_for_status()
         return response.content, response.headers.get("x-chunk-sha256")
@@ -78,7 +90,8 @@ class DnaCollectorClient:
         response.raise_for_status()
         return response.content, {
             "start_time_utc": response.headers.get("x-audio-start-time-utc") or None,
-            "video_start_time_utc": response.headers.get("x-video-start-time-utc") or None,
+            "video_start_time_utc": response.headers.get("x-video-start-time-utc")
+            or None,
         }
 
     async def record_archive(
@@ -118,7 +131,9 @@ def resolve_ffmpeg() -> str:
         import imageio_ffmpeg
 
         return imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception as e:  # pragma: no cover - a broken install, surfaced loudly at startup
+    except (
+        Exception
+    ) as e:  # pragma: no cover - a broken install, surfaced loudly at startup
         logger.warning("Bundled ffmpeg unavailable (%s) — falling back to PATH", e)
         return "ffmpeg"
 
@@ -155,6 +170,7 @@ async def run_forever() -> None:
     archive = os.environ.get("RECORDING_NETWORK_PATH", "/net/media/dna-recordings")
     interval = float(os.environ.get("COLLECTOR_POLL_SECONDS", "10"))
     max_playlists = int(os.environ.get("COLLECTOR_MAX_PLAYLISTS", "25"))
+    site = os.environ.get("COLLECTOR_SITE") or None
 
     os.makedirs(staging, exist_ok=True)
     _require_writable(staging, "COLLECTOR_STAGING_DIR")
@@ -179,8 +195,12 @@ async def run_forever() -> None:
         loop.add_signal_handler(sig, request_stop)
 
     logger.info(
-        "Collector up: DNA at %s, staging %s, archiving to %s, every %.0fs",
-        base_url, staging, archive, interval,
+        "Collector up: DNA at %s, staging %s, archiving to %s, every %.0fs, site=%s",
+        base_url,
+        staging,
+        archive,
+        interval,
+        site or "(unrouted)",
     )
     # Playlists that have nothing to collect (a meeting that was never recorded) stay in the work
     # queue forever, so their 404s are logged once and then only counted. Without this the log is
@@ -189,7 +209,7 @@ async def run_forever() -> None:
 
     while not stopping.is_set():
         try:
-            pending = await client.list_pending(max_playlists)
+            pending = await client.list_pending(max_playlists, site=site)
         except Exception as e:
             logger.warning("Could not read the work queue (%s) — retrying", e)
             pending = []
@@ -205,14 +225,17 @@ async def run_forever() -> None:
                 elif result.get("appended"):
                     logger.info(
                         "Playlist %s: +%d part(s), %d held, %.1f MB staged",
-                        playlist_id, result["appended"], result["parts"],
+                        playlist_id,
+                        result["appended"],
+                        result["parts"],
                         result["bytes"] / 1_048_576,
                     )
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     if playlist_id not in quiet:
                         logger.info(
-                            "Playlist %s: no recording to collect yet — quietening", playlist_id
+                            "Playlist %s: no recording to collect yet — quietening",
+                            playlist_id,
                         )
                         quiet.add(playlist_id)
                 else:

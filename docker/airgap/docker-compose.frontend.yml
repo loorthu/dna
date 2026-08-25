@@ -85,6 +85,11 @@ services:
       - COLLECTOR_STAGING_DIR=/staging
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
       - COLLECTOR_POLL_SECONDS=${COLLECTOR_POLL_SECONDS:-10}
+      # Which side's recordings this collector archives. A DNA backend serves more than one
+      # front end, and each has its own collector; the one beside the front end that dispatched
+      # a meeting is the one that must archive it, or the file lands on a host that is not the
+      # one serving playback. Leave empty when only one collector exists anywhere.
+      - COLLECTOR_SITE=${COLLECTOR_SITE:-}
     volumes:
       # Staging is a NAMED volume, not a bind or a tmpfs: a half-mirrored meeting has to
       # survive a container restart, which is the whole point of the resume logic.
