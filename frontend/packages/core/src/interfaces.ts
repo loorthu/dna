@@ -255,6 +255,8 @@ export interface DispatchBotRequest {
   passcode?: string;
   bot_name?: string;
   language?: string;
+  /** Record the meeting's video as well as transcribing it. Opt-in, per meeting. */
+  recording_enabled?: boolean;
 }
 
 export interface BotStatus {
@@ -274,6 +276,14 @@ export interface BotSession {
   language?: string;
   created_at: string;
   updated_at: string;
+  /**
+   * Whether this meeting is being recorded, as Vexa RESOLVED it — not as it was requested.
+   * A deployment that ignores the request must not leave the UI claiming a recording exists.
+   */
+  recording_enabled?: boolean;
+  /** Whether arriving transcript segments are being stored (false with no version in review). */
+  saving_segments?: boolean;
+  warnings?: string[];
 }
 
 export interface TranscriptSegment {

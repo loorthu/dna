@@ -41,8 +41,14 @@ class TranscriptionProviderBase:
         passcode: Optional[str] = None,
         bot_name: Optional[str] = None,
         language: Optional[str] = None,
+        recording_enabled: bool = False,
     ) -> "BotSession":
-        """Dispatch a bot to join a meeting and start transcription."""
+        """Dispatch a bot to join a meeting and start transcription.
+
+        ``recording_enabled`` asks for the meeting's video too. It defaults to False and is
+        passed on explicitly, so whether a meeting is recorded is decided by the person starting
+        the bot rather than by a default on whichever host the provider talks to.
+        """
         raise NotImplementedError()
 
     async def stop_bot(self, platform: "Platform", meeting_id: str) -> bool:

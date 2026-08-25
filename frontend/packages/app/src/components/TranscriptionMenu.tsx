@@ -7,6 +7,7 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  Circle,
   Radio,
   Pause,
   Play,
@@ -25,6 +26,15 @@ interface TranscriptionMenuProps {
   playlistId: number | null;
   collapsed?: boolean;
 }
+
+/**
+ * Whether "Record this meeting" starts ticked.
+ *
+ * A facility-level default, hardcoded until there is somewhere to configure it per facility or
+ * per show. Kept as a named constant rather than inlined so that when that setting arrives, this
+ * is the single place it feeds.
+ */
+const DEFAULT_RECORD_MEETING = true;
 
 const pulse = keyframes`
   0%, 100% { opacity: 1; }
@@ -120,6 +130,45 @@ const InputGroup = styled.div`
   display: flex;
   flex-direction: column;
   gap: 8px;
+`;
+
+const RecordToggle = styled.label`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: ${({ theme }) => theme.colors.text.secondary};
+  cursor: pointer;
+
+  input {
+    margin-top: 2px;
+    cursor: pointer;
+  }
+`;
+
+const RecordHint = styled.span`
+  display: block;
+  font-size: 11px;
+  color: ${({ theme }) => theme.colors.text.muted};
+`;
+
+/* Shown while a bot is live, from what Vexa RESOLVED rather than what was asked for. The
+   checkbox is off by default and not remembered, so "I forgot to tick it" is the expected
+   mistake — this makes it visible in seconds instead of at the end of the meeting. */
+const RecordingBadge = styled.span<{ $on: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: ${({ theme }) => theme.radii.sm};
+  color: ${({ theme, $on }) =>
+    $on ? theme.colors.status.error : theme.colors.text.muted};
+  background: ${({ $on }) =>
+    $on ? 'rgba(239, 68, 68, 0.12)' : 'transparent'};
+  border: 1px solid
+    ${({ theme, $on }) =>
+      $on ? 'rgba(239, 68, 68, 0.3)' : theme.colors.border.default};
 `;
 
 const ButtonRow = styled.div`
@@ -305,6 +354,14 @@ export function TranscriptionMenu({
 }: TranscriptionMenuProps) {
   const [meetingUrl, setMeetingUrl] = useState('');
   const [passcode, setPasscode] = useState('');
+  // The facility default, as a constant for now. This is the seam a per-facility or per-show
+  // setting plugs into later — the checkbox reads its initial state from here and nothing else,
+  // so that change is one line plus wherever the value comes from.
+  //
+  // The API's own default stays FALSE deliberately: a caller that says nothing gets no
+  // recording, and the UI always says something. That is what keeps the decision here rather
+  // than in a default on the Vexa host.
+  const [recordMeeting, setRecordMeeting] = useState(DEFAULT_RECORD_MEETING);
   const [isOpen, setIsOpen] = useState(false);
   const theme = useTheme();
 
@@ -336,6 +393,14 @@ export function TranscriptionMenu({
   // Segments are stored against the version in review. With none set the bot joins and Vexa
   // transcribes, and every segment is discarded on arrival — indistinguishable from a meeting
   // where nobody spoke, which is exactly how a whole meeting's transcript was lost.
+  // What Vexa resolved, not what the checkbox said — a deployment that ignored the request must
+  // not leave this badge claiming a recording is being made.
+  const isRecording = session?.recording_enabled === true;
+  const recordingTitle = isRecording
+    ? 'This meeting is being recorded; the video is archived when it ends.'
+    : 'Not recording — only the transcript is kept. Stop the bot and start it again with ' +
+      '"Record this meeting" ticked if you need the video.';
+
   const hasVersionInReview = (metadata?.in_review ?? null) !== null;
   const isDiscardingSegments = isActive && !hasVersionInReview;
   // Said BEFORE the button is pressed as well as after. Forgetting to mark a version is the
@@ -377,13 +442,13 @@ export function TranscriptionMenu({
     if (!meetingUrl.trim()) return;
 
     try {
-      await dispatchBot(meetingUrl, passcode || undefined);
+      await dispatchBot(meetingUrl, passcode || undefined, recordMeeting);
       setMeetingUrl('');
       setPasscode('');
     } catch {
       // Error is handled by the hook
     }
-  }, [meetingUrl, passcode, dispatchBot]);
+  }, [meetingUrl, passcode, recordMeeting, dispatchBot]);
 
   const handleStop = useCallback(async () => {
     try {
@@ -466,6 +531,16 @@ export function TranscriptionMenu({
               <StatusIndicator $status={currentStatus} />
               {getStatusIcon(currentStatus)}
               <StatusText>{getStatusLabel(currentStatus, isPaused)}</StatusText>
+              <RecordingBadge $on={isRecording} title={recordingTitle}>
+                {isRecording ? (
+                  <>
+                    <Circle size={8} fill="currentColor" />
+                    REC
+                  </>
+                ) : (
+                  'no recording'
+                )}
+              </RecordingBadge>
             </StatusRow>
           )}
 
@@ -512,6 +587,21 @@ export function TranscriptionMenu({
                   disabled={isDispatching}
                 />
               )}
+              <RecordToggle>
+                <input
+                  type="checkbox"
+                  checked={recordMeeting}
+                  onChange={(e) => setRecordMeeting(e.target.checked)}
+                  disabled={isDispatching || !playlistId}
+                />
+                <span>
+                  Record this meeting
+                  <RecordHint>
+                    Keeps the video as well as the transcript. Untick to
+                    transcribe only.
+                  </RecordHint>
+                </span>
+              </RecordToggle>
             </InputGroup>
           )}
 

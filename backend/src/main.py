@@ -1729,6 +1729,7 @@ async def dispatch_bot(
             bot_name=request.bot_name,
             language=request.language,
             authenticated=request.authenticated,
+            recording_enabled=request.recording_enabled,
         )
 
         await storage_provider.upsert_playlist_metadata(

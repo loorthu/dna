@@ -89,11 +89,17 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
         bot_name: Optional[str] = None,
         language: Optional[str] = None,
         authenticated: bool = True,
+        recording_enabled: bool = False,
     ) -> BotSession:
         """Dispatch a bot to join a meeting and start transcription."""
         payload = {
             "platform": platform.value,
             "native_meeting_id": meeting_id,
+            # Sent unconditionally, including when False. Omitting it makes Vexa fall back to
+            # RECORDING_ENABLED on ITS host — so whether a DNA meeting was recorded would be
+            # decided by a setting on another machine that nobody looking at DNA can see, and
+            # would change under us if that host were reconfigured.
+            "recording_enabled": recording_enabled,
         }
 
         if passcode:
@@ -110,6 +116,10 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
 
         data = response.json()
         vexa_meeting_id = data.get("meeting_id") or data.get("id")
+        # What Vexa ACTUALLY decided, not what we asked for. It echoes the resolved flags, and a
+        # deployment that ignores the request — an older image, say — would otherwise leave the
+        # UI confidently reporting a recording that is not being made.
+        granted = (data.get("data") or {}).get("recording_enabled")
 
         return BotSession(
             platform=platform,
@@ -119,6 +129,9 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
             vexa_meeting_id=vexa_meeting_id,
             bot_name=bot_name,
             language=language,
+            recording_enabled=(
+                bool(granted) if granted is not None else recording_enabled
+            ),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
         )

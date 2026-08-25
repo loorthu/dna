@@ -930,3 +930,81 @@ class TestVexaProviderRecordings:
 
         with pytest.raises(httpx.HTTPStatusError):
             await vexa_provider.list_recording_chunks(42, 7)
+
+
+class TestRecordingIsAskedForNotAssumed:
+    """Whether a meeting is recorded is DNA's decision to state, not Vexa's to default.
+
+    Omitting `recording_enabled` makes Vexa fall back to RECORDING_ENABLED on its own host — so
+    a meeting's fate would be decided by a setting on another machine, invisible from DNA and
+    liable to change under us. It is therefore always sent, including when False.
+    """
+
+    @staticmethod
+    def _client(vexa_provider, response_json):
+        response = mock.MagicMock()
+        response.json.return_value = response_json
+        response.raise_for_status = mock.MagicMock()
+        client = mock.AsyncMock()
+        client.post.return_value = response
+        vexa_provider._client = client
+        return client
+
+    async def test_false_is_sent_explicitly_rather_than_omitted(self, vexa_provider):
+        client = self._client(vexa_provider, {"meeting_id": 1})
+
+        await vexa_provider.dispatch_bot(
+            platform=Platform.GOOGLE_MEET, meeting_id="m", playlist_id=1
+        )
+
+        payload = client.post.await_args.kwargs["json"]
+        assert payload["recording_enabled"] is False, (
+            "omitting it hands the decision to a deployment default on the Vexa host"
+        )
+
+    async def test_true_is_passed_through(self, vexa_provider):
+        client = self._client(vexa_provider, {"meeting_id": 1})
+
+        await vexa_provider.dispatch_bot(
+            platform=Platform.GOOGLE_MEET,
+            meeting_id="m",
+            playlist_id=1,
+            recording_enabled=True,
+        )
+
+        assert client.post.await_args.kwargs["json"]["recording_enabled"] is True
+
+    async def test_the_session_reports_what_vexa_resolved_not_what_was_asked(
+        self, vexa_provider
+    ):
+        """A deployment that ignores the request must not leave the UI claiming a recording.
+
+        Vexa echoes the flags it actually resolved; that echo wins over the request.
+        """
+        self._client(
+            vexa_provider,
+            {"meeting_id": 1, "data": {"recording_enabled": False}},
+        )
+
+        session = await vexa_provider.dispatch_bot(
+            platform=Platform.GOOGLE_MEET,
+            meeting_id="m",
+            playlist_id=1,
+            recording_enabled=True,  # asked for
+        )
+
+        assert session.recording_enabled is False  # but not granted
+
+    async def test_falls_back_to_the_request_when_vexa_does_not_echo(
+        self, vexa_provider
+    ):
+        self._client(vexa_provider, {"meeting_id": 1})
+
+        session = await vexa_provider.dispatch_bot(
+            platform=Platform.GOOGLE_MEET,
+            meeting_id="m",
+            playlist_id=1,
+            recording_enabled=True,
+        )
+
+        assert session.recording_enabled is True

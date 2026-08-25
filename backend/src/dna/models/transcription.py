@@ -47,6 +47,13 @@ class DispatchBotRequest(BaseModel):
         default=True,
         description="Join as authenticated user via active browser_session",
     )
+    recording_enabled: bool = Field(
+        default=False,
+        description="Record the meeting's video as well as transcribing it. Opt-in per meeting: "
+        "a recording is a few hundred MB and a copy of the room, so it is asked for rather than "
+        "assumed. ALWAYS sent to Vexa, never omitted — leaving it out would hand the decision to "
+        "a deployment default on the Vexa host, which is a setting nobody looking at DNA can see.",
+    )
 
 
 class BotStatus(BaseModel):
@@ -78,6 +85,12 @@ class BotSession(BaseModel):
     language: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    recording_enabled: bool = Field(
+        default=False,
+        description="Whether this meeting is being RECORDED, as resolved by Vexa rather than as "
+        "requested — a deployment that ignored the request must not leave the caller believing "
+        "a recording is being made.",
+    )
     saving_segments: bool = Field(
         default=True,
         description="Whether arriving segments are being stored. False when the playlist has no "

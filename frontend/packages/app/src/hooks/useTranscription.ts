@@ -60,7 +60,11 @@ export interface UseTranscriptionReturn {
   isStopping: boolean;
   isLoadingStatus: boolean;
   error: Error | null;
-  dispatchBot: (meetingUrl: string, passcode?: string) => Promise<BotSession>;
+  dispatchBot: (
+    meetingUrl: string,
+    passcode?: string,
+    recordingEnabled?: boolean
+  ) => Promise<BotSession>;
   stopBot: () => Promise<void>;
   clearSession: () => void;
 }
@@ -269,7 +273,11 @@ export function useTranscription({
   });
 
   const dispatchBot = useCallback(
-    async (meetingUrl: string, passcode?: string): Promise<BotSession> => {
+    async (
+      meetingUrl: string,
+      passcode?: string,
+      recordingEnabled = false
+    ): Promise<BotSession> => {
       if (!playlistId) {
         throw new Error('No playlist selected');
       }
@@ -284,6 +292,9 @@ export function useTranscription({
         meeting_id: parsed.meetingId,
         playlist_id: playlistId,
         passcode,
+        // Always stated, never left out: omitting it lets a default on the Vexa host decide
+        // whether this meeting is recorded, which is a setting nobody here can see.
+        recording_enabled: recordingEnabled,
       };
 
       return dispatchMutation.mutateAsync(request);
