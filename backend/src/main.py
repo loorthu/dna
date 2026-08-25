@@ -89,6 +89,7 @@ from dna.storage_providers.storage_provider_base import (
 )
 from dna.transcription_providers.transcription_provider_base import (
     TranscriptionProviderBase,
+    TranscriptionUpstreamError,
     get_transcription_provider,
 )
 from dna.transcription_service import TranscriptionService, get_transcription_service
@@ -1782,6 +1783,12 @@ async def dispatch_bot(
         )
 
         return session
+    except TranscriptionUpstreamError as e:
+        # Pass the transcription service's own status and message through. Flattening every
+        # refusal into 400 threw away the only part anyone could act on: dispatching a second bot
+        # into a meeting that already has one is a 409 with "already has an active bot", and it
+        # was arriving as a 400 carrying an HTTP client's description of the status code.
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

@@ -19,6 +19,21 @@ if TYPE_CHECKING:
 EventCallback = Callable[[str, dict[str, Any]], Coroutine[Any, Any, None]]
 
 
+class TranscriptionUpstreamError(Exception):
+    """The transcription service refused the request, and said why.
+
+    Carries the upstream's own status and message so the caller can pass both on instead of
+    flattening every failure into one code. The distinction is the whole point: "a bot is already
+    in this meeting" is a conflict the person can act on, and it used to arrive as a generic 400
+    wrapping an HTTP client's string — which named the status in prose and the cause not at all.
+    """
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
 class TranscriptionProviderBase:
     """Abstract base class for transcription providers."""
 

@@ -109,6 +109,7 @@ class TestDispatchBot:
         mock_response = mock.MagicMock()
         mock_response.json.return_value = {"meeting_id": 12345}
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.post.return_value = mock_response
@@ -140,6 +141,7 @@ class TestDispatchBot:
         mock_response = mock.MagicMock()
         mock_response.json.return_value = {"id": 99999}
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.post.return_value = mock_response
@@ -215,6 +217,7 @@ class TestGetBotStatus:
             ]
         }
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.get.return_value = mock_response
@@ -236,6 +239,7 @@ class TestGetBotStatus:
         mock_response = mock.MagicMock()
         mock_response.json.return_value = {"meetings": []}
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.get.return_value = mock_response
@@ -276,6 +280,7 @@ class TestGetBotStatus:
                 ]
             }
             mock_response.raise_for_status = mock.MagicMock()
+            mock_response.is_error = False
 
             mock_client = mock.AsyncMock()
             mock_client.get.return_value = mock_response
@@ -345,6 +350,7 @@ class TestGetTranscript:
             "duration": 120.5,
         }
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.get.return_value = mock_response
@@ -374,6 +380,7 @@ class TestGetTranscript:
             "language": "en",
         }
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.get.return_value = mock_response
@@ -406,6 +413,7 @@ class TestGetActiveBots:
             ]
         }
         mock_response.raise_for_status = mock.MagicMock()
+        mock_response.is_error = False
 
         mock_client = mock.AsyncMock()
         mock_client.get.return_value = mock_response
@@ -945,6 +953,7 @@ class TestRecordingIsAskedForNotAssumed:
         response = mock.MagicMock()
         response.json.return_value = response_json
         response.raise_for_status = mock.MagicMock()
+        response.is_error = False
         client = mock.AsyncMock()
         client.post.return_value = response
         vexa_provider._client = client
@@ -958,9 +967,9 @@ class TestRecordingIsAskedForNotAssumed:
         )
 
         payload = client.post.await_args.kwargs["json"]
-        assert payload["recording_enabled"] is False, (
-            "omitting it hands the decision to a deployment default on the Vexa host"
-        )
+        assert (
+            payload["recording_enabled"] is False
+        ), "omitting it hands the decision to a deployment default on the Vexa host"
 
     async def test_true_is_passed_through(self, vexa_provider):
         client = self._client(vexa_provider, {"meeting_id": 1})

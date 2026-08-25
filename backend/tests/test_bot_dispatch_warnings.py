@@ -22,6 +22,9 @@ from main import (
 
 from dna.models.playlist_metadata import PlaylistMetadata
 from dna.models.transcription import BotSession, BotStatus, BotStatusEnum, Platform
+from dna.transcription_providers.transcription_provider_base import (
+    TranscriptionUpstreamError,
+)
 
 DISPATCH = {
     "platform": "google_meet",
@@ -154,3 +157,63 @@ class TestDispatchWarnsWhenNothingIsKept:
         assert body["saving_segments"] is None, "unknown, not assumed"
         assert body["warnings"] == []
         mock_storage.get_playlist_metadata.assert_not_awaited()
+
+
+class TestUpstreamRefusalsArePassedOn:
+    """Vexa's status and message survive the trip to the caller.
+
+    Every refusal used to arrive as 400 with `str(exception)` — for a duplicate dispatch that read
+    "Client error '409 Conflict' for url 'http://.../bots'", which describes the transport and not
+    the problem. It cost a real debugging session: two dispatches were refused during a meeting
+    that already had a bot, and nothing said so.
+    """
+
+    @pytest.fixture
+    def client(self):
+        return TestClient(app)
+
+    @pytest.fixture
+    def mock_storage(self):
+        s = mock.AsyncMock()
+        s.get_playlist_metadata.return_value = _metadata(in_review=101)
+        return s
+
+    @pytest.fixture
+    def override(self, mock_storage):
+        provider = mock.AsyncMock()
+        app.dependency_overrides[get_storage_provider_cached] = lambda: mock_storage
+        app.dependency_overrides[get_transcription_provider_cached] = lambda: provider
+        app.dependency_overrides[get_transcription_service_cached] = (
+            lambda: mock.AsyncMock()
+        )
+        yield provider
+        app.dependency_overrides.clear()
+
+    def test_a_duplicate_dispatch_stays_a_409_with_its_reason(self, client, override):
+        override.dispatch_bot.side_effect = TranscriptionUpstreamError(
+            409, "Meeting google_meet/abc-defg-hij already has an active bot"
+        )
+
+        response = client.post("/transcription/bot", json=DISPATCH)
+
+        assert response.status_code == 409, "not flattened to 400"
+        assert "already has an active bot" in response.json()["detail"]
+
+    def test_a_validation_refusal_keeps_its_422(self, client, override):
+        override.dispatch_bot.side_effect = TranscriptionUpstreamError(
+            422, "automatic_leave has unknown field(s): nonsense"
+        )
+
+        response = client.post("/transcription/bot", json=DISPATCH)
+
+        assert response.status_code == 422
+        assert "unknown field" in response.json()["detail"]
+
+    def test_anything_else_still_becomes_400(self, client, override):
+        """A transport failure has no upstream status to report, and must not invent one."""
+        override.dispatch_bot.side_effect = RuntimeError("connection refused")
+
+        response = client.post("/transcription/bot", json=DISPATCH)
+
+        assert response.status_code == 400
+        assert "connection refused" in response.json()["detail"]

@@ -25,6 +25,7 @@ from dna.models.transcription import (
 from dna.transcription_providers.transcription_provider_base import (
     EventCallback,
     TranscriptionProviderBase,
+    TranscriptionUpstreamError,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,27 @@ VEXA_STATUS_MAP: dict[str, str] = {
     "completed": "completed",
     "ended": "completed",
 }
+
+
+def _detail_from(response: httpx.Response) -> str:
+    """Vexa's own explanation, in preference to a description of the HTTP status.
+
+    Its errors carry a FastAPI-style ``{"detail": ...}``. Reaching for that is what turns
+    "Client error '409 Conflict' for url 'http://.../bots'" — which describes the transport and
+    not the problem — into "a bot is already in this meeting", which someone can act on.
+    """
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+    if isinstance(body, dict):
+        detail = body.get("detail") or body.get("message") or body.get("error")
+        if isinstance(detail, str) and detail.strip():
+            return detail
+        if detail is not None:
+            return json.dumps(detail)
+    text = (response.text or "").strip()
+    return text[:500] if text else f"upstream returned {response.status_code}"
 
 
 class VexaTranscriptionProvider(TranscriptionProviderBase):
@@ -112,7 +134,10 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
             payload["authenticated"] = True
 
         response = await self.client.post("/bots", json=payload)
-        response.raise_for_status()
+        if response.is_error:
+            raise TranscriptionUpstreamError(
+                response.status_code, _detail_from(response)
+            )
 
         data = response.json()
         vexa_meeting_id = data.get("meeting_id") or data.get("id")
