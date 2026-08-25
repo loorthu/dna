@@ -21,6 +21,6 @@ echo "==> Loading images from $BUNDLE ..."
 gunzip -c "$BUNDLE" | docker load
 
 echo ""
-docker images | grep -E "dna-(backend|frontend)|mongo" || true
+docker images | grep -E "dna-(backend|frontend|collector)|mongo" || true
 echo ""
 echo "Next:  ./docker/airgap/up.sh $TAG"

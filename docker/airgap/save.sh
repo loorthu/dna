@@ -15,7 +15,10 @@ TAG="${1:-${DNA_TAG:-airgap}}"
 DIST="$SCRIPT_DIR/dist"
 mkdir -p "$DIST"
 
-IMAGES=( "dna-backend:$TAG" "dna-frontend:$TAG" "mongo:7" )
+# dna-collector rides along: it is built by the same compose file as the frontend, so a host that
+# builds gets it for free — but a host that TRANSFERS would otherwise arrive without the one
+# service that does the recording work, and discover it only when a meeting failed to be collected.
+IMAGES=( "dna-backend:$TAG" "dna-frontend:$TAG" "dna-collector:$TAG" "mongo:7" )
 
 echo "==> Images to save:"
 printf '      %s\n' "${IMAGES[@]}"
