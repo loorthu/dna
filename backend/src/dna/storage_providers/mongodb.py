@@ -281,6 +281,13 @@ class MongoDBStorageProvider(StorageProviderBase):
             self.playlist_metadata_collection.find(
                 {
                     "vexa_meeting_id": {"$ne": None},
+                    # A meeting that was never recorded has no archive coming, ever. Without this
+                    # it satisfies "has a meeting, has no archive" permanently: the collector asks
+                    # it for a chunk index every poll, forever, and — since the queue is capped —
+                    # a backlog of never-recorded meetings can crowd out real work.
+                    # `$ne: False` deliberately keeps null/absent: a meeting dispatched before
+                    # this was recorded is unknown, not known-absent.
+                    "recording_enabled": {"$ne": False},
                     # Eligible while the archive on record is not THIS meeting's. Asking
                     # "is there any archive" instead made a playlist look done forever, so a
                     # second meeting on it was never collected. `$ne` on two fields needs $expr;

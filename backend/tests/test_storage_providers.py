@@ -1110,6 +1110,11 @@ class TestPendingArchiveQuery:
             "archive' made a playlist that hosted a second meeting look done forever, so the "
             "second recording was never collected"
         )
+        assert query["recording_enabled"] == {"$ne": False}, (
+            "a meeting that was never recorded has no archive coming, ever — leaving it in the "
+            "queue means polling it forever, and the queue is capped, so enough of them crowd "
+            "out real work. $ne:False keeps null/absent, which is 'unknown', not 'known absent'"
+        )
         assert "recording_network_path" not in query, (
             "the presence of a path says a recording was archived once — not that THIS meeting's "
             "was, which is the question the queue has to ask"

@@ -230,3 +230,43 @@ class TestMediaUrl:
 
     def test_serves_from_the_nginx_prefix(self):
         assert media_url_for("/anywhere/at/all/file.mp4") == "/recordings/file.mp4"
+
+
+class TestAMeetingThatWasNotRecorded:
+    """Recording off is a fact, not something to rediscover on every poll.
+
+    It is recorded at dispatch, so nothing downstream has to ask Vexa about media it was told not
+    to make. These tests pin the ABSENCE of that work: they would pass just as happily if the
+    round trips came back, which is why each asserts the provider was never called.
+    """
+
+    async def test_the_cut_list_answers_without_asking_vexa(self, storage, provider):
+        storage.get_playlist_metadata.return_value = _metadata(
+            recording_enabled=False, recording_network_path=None
+        )
+        svc = RecordingCutsService(provider, storage)
+
+        result = await svc.build(PLAYLIST_ID)
+
+        assert result["status"] == "no_recording"
+        assert result["media_url"] is None
+        provider.list_recordings.assert_not_awaited()
+        provider.list_recording_chunks.assert_not_awaited()
+
+    async def test_an_unknown_flag_still_asks(self, storage, provider):
+        """None means "dispatched before this was recorded" — unknown, not known-absent.
+
+        Treating it as off would strand any meeting recorded before the flag existed.
+        """
+        storage.get_playlist_metadata.return_value = _metadata(
+            recording_enabled=None, recording_network_path=None
+        )
+        provider.list_recordings.return_value = [
+            {"id": 1, "media_files": [{"id": 2, "type": "video"}]}
+        ]
+        provider.get_recording_master.return_value = {"media_file_id": 2}
+        provider.list_recording_chunks.return_value = {"chunks": [], "complete": True}
+        svc = RecordingCutsService(provider, storage)
+
+        assert (await svc.build(PLAYLIST_ID))["status"] == "archiving"
+        provider.list_recordings.assert_awaited()

@@ -29,6 +29,16 @@ class PlaylistMetadataUpdate(BaseModel):
         "Used when starting a new transcription session.",
     )
     # ── recording (the meeting's media, produced by the bot and archived by the collector) ──
+    recording_enabled: Optional[bool] = Field(
+        default=None,
+        description="Whether the CURRENT meeting is being recorded, as Vexa resolved it at "
+        "dispatch. Written in the same upsert as vexa_meeting_id, so it always describes that "
+        "meeting rather than some earlier one.\n\n"
+        "False switches the whole recording path off for this playlist: it leaves the collector's "
+        "queue, the media relay reports nothing to relay, and the cut list answers without asking "
+        "Vexa. None means unknown — a meeting dispatched before this was recorded — and is "
+        "treated as 'might have one', which is the old behaviour.",
+    )
     vexa_recording_id: Optional[int] = Field(
         default=None, description="Vexa recording holding this meeting's media"
     )
@@ -96,6 +106,7 @@ class PlaylistMetadata(BaseModel):
         description="Timestamp when transcription was last resumed. "
         "Segments with start time before this are discarded.",
     )
+    recording_enabled: Optional[bool] = None
     vexa_recording_id: Optional[int] = None
     recording_media_file_id: Optional[int] = None
     recording_start_time_utc: Optional[str] = None

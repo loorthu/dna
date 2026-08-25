@@ -1738,6 +1738,11 @@ async def dispatch_bot(
                 meeting_id=request.meeting_id,
                 platform=request.platform.value,
                 vexa_meeting_id=session.vexa_meeting_id,
+                # What Vexa RESOLVED, not what was requested — and written alongside the meeting
+                # id it describes. A meeting that is not being recorded switches the whole
+                # recording path off for this playlist rather than leaving the collector to
+                # rediscover, once every poll and forever, that there is nothing to fetch.
+                recording_enabled=session.recording_enabled,
                 transcription_paused=False,
                 clear_resumed_at=True,
             ),

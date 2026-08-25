@@ -59,6 +59,12 @@ class RecordingCutsService:
         if metadata is None or metadata.vexa_meeting_id is None:
             return self._empty("no_recording", playlist_id)
 
+        # Recording was turned off for this meeting, so the answer is known without asking
+        # anything: there is no media, and there is no point deciding between "still recording"
+        # and "still archiving" for a recording that was never started.
+        if metadata.recording_enabled is False:
+            return self._empty("no_recording", playlist_id)
+
         network_path = metadata.recording_network_path
         if not network_path:
             # No archive yet. Whether that is "still recording" or "waiting on the collector"

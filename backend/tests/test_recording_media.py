@@ -490,3 +490,60 @@ async def test_get_audio_404s_when_the_recording_has_no_audio_stream(storage, pr
 
     with pytest.raises(RecordingNotFound, match="no audio media file"):
         await svc.get_audio(PLAYLIST_ID)
+
+
+class TestAMeetingThatWasNotRecorded:
+    """Every relay endpoint funnels through resolve(), so one branch retires the whole media path.
+
+    The point is the work NOT done: no Vexa round trip to ask whether a recording it was told not
+    to make exists, and no 404 for the caller to interpret as "not ready yet".
+    """
+
+    async def test_resolve_refuses_without_asking_vexa(self, storage, provider):
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(recording_enabled=False)
+        )
+        svc = RecordingMediaService(provider, storage)
+
+        with pytest.raises(RecordingNotFound, match="was not recorded"):
+            await svc.resolve(PLAYLIST_ID)
+
+        provider.list_recordings.assert_not_awaited()
+        provider.get_recording_master.assert_not_awaited()
+
+    async def test_the_chunk_index_is_not_served(self, storage, provider):
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(recording_enabled=False)
+        )
+        svc = RecordingMediaService(provider, storage)
+
+        with pytest.raises(RecordingNotFound):
+            await svc.list_chunks(PLAYLIST_ID, after=-1)
+
+        provider.list_recording_chunks.assert_not_awaited()
+
+    async def test_the_delete_guard_still_refuses_rather_than_erroring_oddly(
+        self, storage, provider
+    ):
+        """Nothing to purge, and nothing upstream should be touched on the way to saying so."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(recording_enabled=False)
+        )
+        svc = RecordingMediaService(provider, storage)
+
+        with pytest.raises(RecordingNotFound):
+            await svc.delete_upstream(PLAYLIST_ID)
+
+        provider.delete_recording.assert_not_awaited()
+
+    async def test_recording_on_is_unaffected(self, storage, provider):
+        """The switch must only fire on an explicit False, never on True or unknown."""
+        for flag in (True, None):
+            storage.get_playlist_metadata = AsyncMock(
+                return_value=_metadata(recording_enabled=flag)
+            )
+            svc = RecordingMediaService(provider, storage)
+
+            ids = await svc.resolve(PLAYLIST_ID)
+
+            assert ids["recording_id"] == RECORDING_ID

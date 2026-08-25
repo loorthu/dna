@@ -58,6 +58,16 @@ class RecordingMediaService:
         if metadata is None:
             raise RecordingNotFound(f"No metadata for playlist {playlist_id}")
 
+        # Not recorded, by request. Answer from what we already know rather than asking Vexa
+        # whether a recording it was told not to make exists — every relay endpoint funnels
+        # through here, so this one branch takes the whole media path out of service for this
+        # meeting: no round trips, no polling, no 404s to interpret.
+        if metadata.recording_enabled is False:
+            raise RecordingNotFound(
+                f"Playlist {playlist_id}'s meeting was not recorded (recording was turned off "
+                f"when the bot was dispatched)"
+            )
+
         recording_id = metadata.vexa_recording_id
         media_file_id = metadata.recording_media_file_id
         # The cache is only good for the meeting it was resolved against. A playlist whose
