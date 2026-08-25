@@ -166,7 +166,11 @@ class RecordingArchiveRequest(BaseModel):
     """
 
     network_path: str = Field(
-        ..., description="Absolute path of the archived media on the shared filesystem"
+        ...,
+        description="Filename of the archived media on the share. An absolute path is accepted "
+        "and reduced to its basename: DNA needs to know the copy exists and what it is called, "
+        "not where the archiving host keeps it — that host is across the airgap and holds the "
+        "only copy, so its layout should not be recorded here.",
     )
     sha256: str = Field(..., description="sha256 of the archived file")
     recording_id: Optional[int] = Field(

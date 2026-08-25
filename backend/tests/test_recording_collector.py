@@ -337,7 +337,12 @@ async def test_the_full_handover_happens_in_the_only_safe_order(tmp_path):
     assert client.calls.index("archive") < client.calls.index(
         "delete"
     ), "the archive must be recorded BEFORE the upstream copy is released"
-    archived_path, archived_hash = client.archived[0]
+    archived_name, archived_hash = client.archived[0]
+    assert archived_name == os.path.basename(collector.archive_path(1, REC)), (
+        "DNA is told the file's NAME, not where this host keeps it — the archiving host is "
+        "across the airgap and its layout is nobody else's business"
+    )
+    archived_path = collector.archive_path(1, REC)
     assert os.path.exists(archived_path)
     assert hashlib.sha256(open(archived_path, "rb").read()).hexdigest() == archived_hash
     assert result["audio_delay_ms"] == 1500
@@ -412,7 +417,7 @@ async def test_a_missing_audio_master_degrades_to_video_only(tmp_path):
 
     assert result["status"] == "archived"
     assert result["audio_delay_source"] == "no-audio"
-    assert open(client.archived[0][0], "rb").read() == b"AAAABBBB"
+    assert open(collector.archive_path(1, REC), "rb").read() == b"AAAABBBB"
     assert client.deleted == [1]
 
 
@@ -446,14 +451,14 @@ async def test_a_second_recording_on_the_same_playlist_gets_its_own_archive(tmp_
     first.recording_id = 1001
     collector = make_collector(tmp_path, first)
     await collector.poll_once(1)
-    first_archive = first.archived[0][0]
+    first_archive = collector.archive_path(1, 1001)
 
     # Same playlist and the same staging/archive dirs, a different meeting's recording.
     second = FakeClient([b"BBBBBB"], complete=True)
     second.recording_id = 2002
     collector.client = second
     await collector.poll_once(1)
-    second_archive = second.archived[0][0]
+    second_archive = collector.archive_path(1, 2002)
 
     assert first_archive != second_archive, "each recording needs its own archive path"
     assert os.path.exists(first_archive), "the first archive must not be destroyed"

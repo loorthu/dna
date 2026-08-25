@@ -256,7 +256,8 @@ async def test_record_archive_persists_path_and_hash(storage, provider):
     )
 
     update = storage.upsert_playlist_metadata.await_args.args[1]
-    assert update.recording_network_path == "/net/media/dna/460115.mp4"
+    # The name, not the path — see TestTheArchivingHostsLayoutStaysOnThatHost.
+    assert update.recording_network_path == "460115.mp4"
     assert update.recording_sha256 == "abc123def456"
     assert result["recording_id"] == RECORDING_ID
 
@@ -547,3 +548,58 @@ class TestAMeetingThatWasNotRecorded:
             ids = await svc.resolve(PLAYLIST_ID)
 
             assert ids["recording_id"] == RECORDING_ID
+
+
+class TestTheArchivingHostsLayoutStaysOnThatHost:
+    """Only the filename crosses the airgap.
+
+    DNA needs two things about the archive: that it exists (the delete guard) and what it is
+    called (the player's URL). Where the archiving host keeps it is local knowledge — and that
+    host is across the gap holding the only copy of the media, so recording its filesystem layout
+    in a database on the internet side bought nothing and described a secure share.
+    """
+
+    async def test_an_absolute_path_is_reduced_to_its_filename(self, storage, provider):
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.record_archive(
+            PLAYLIST_ID, "/secure/share/dna-recordings/playlist-42-rec7.mp4", "hash"
+        )
+
+        update = storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.recording_network_path == "playlist-42-rec7.mp4"
+        assert "/secure/share" not in (update.recording_network_path or "")
+
+    async def test_a_bare_filename_is_left_alone(self, storage, provider):
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.record_archive(PLAYLIST_ID, "playlist-42-rec7.mp4", "hash")
+
+        update = storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.recording_network_path == "playlist-42-rec7.mp4"
+
+    async def test_normalising_happens_here_not_in_the_caller(self, storage, provider):
+        """An older collector still sending a path must not be able to reintroduce the leak."""
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.record_archive(PLAYLIST_ID, "/usr/tmp/dna-recordings/x.mp4", "hash")
+
+        stored = storage.upsert_playlist_metadata.await_args.args[1]
+        assert stored.recording_network_path == "x.mp4"
+
+    async def test_the_delete_guard_still_opens_on_a_filename(self, storage, provider):
+        """The guard turns on the archive EXISTING, which a filename establishes as well as a path."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_network_path="playlist-42-rec7.mp4",
+                recording_sha256="hash",
+            )
+        )
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.delete_upstream(PLAYLIST_ID)
+
+        provider.delete_recording.assert_awaited_once_with(RECORDING_ID)

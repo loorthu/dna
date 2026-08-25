@@ -569,8 +569,15 @@ class RecordingCollector:
                 f"not {digest} — refusing to record it or release upstream"
             )
 
+        # The FILENAME, not the path. DNA needs to know a durable copy exists and what it is
+        # called; where this host keeps it is local knowledge, and this side of the airgap holds
+        # the only copy of the media. The full path stays in the local state file below, which is
+        # where the resume logic needs it.
         await self.client.record_archive(
-            playlist_id, destination, digest, recording_id=recording_id
+            playlist_id,
+            os.path.basename(destination),
+            digest,
+            recording_id=recording_id,
         )
         state.archived_path, state.archived_sha256 = destination, digest
         state.complete = True

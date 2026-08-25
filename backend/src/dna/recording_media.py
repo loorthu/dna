@@ -18,6 +18,7 @@ transcription completes, so an eager resolution at that moment usually finds not
 """
 
 import logging
+import os
 from typing import Any, Optional
 
 from dna.models.playlist_metadata import PlaylistMetadataUpdate
@@ -227,7 +228,16 @@ class RecordingMediaService:
         for older callers, but when given it must match what this playlist currently resolves to:
         a disagreement means the collector and DNA are looking at different recordings, and
         recording the archive anyway would mark the wrong meeting as collected.
+
+        Only the FILENAME is kept. What this side needs to know is that a durable copy exists (the
+        delete guard) and what it is called (the player's URL) — never where the archiving host
+        keeps it. That host is on the other side of the airgap and holds the only copy of the
+        media; its filesystem layout is its own business, and storing it here put a description of
+        the secure share in a database on the internet-side host for no functional gain. Callers
+        may still send an absolute path — normalising here rather than trusting them means an
+        older collector cannot reintroduce the leak.
         """
+        network_path = os.path.basename(network_path)
         metadata = await self.storage.get_playlist_metadata(playlist_id)
         ids = await self.resolve(playlist_id)
         if recording_id is not None and recording_id != ids["recording_id"]:

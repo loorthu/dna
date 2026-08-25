@@ -55,8 +55,11 @@ class PlaylistMetadataUpdate(BaseModel):
     )
     recording_network_path: Optional[str] = Field(
         default=None,
-        description="Where the collector archived the assembled file. Its presence is what "
-        "permits deleting the upstream copy.",
+        description="The archived file's NAME on the share — not its path, despite the field's "
+        "name, which predates the change and is kept to avoid migrating live records. Its "
+        "presence is what permits deleting the upstream copy; the player turns it into a URL "
+        "under /recordings/. Rows written before this may still hold a full path, which reads "
+        "back the same way because only the basename was ever used.",
     )
     recording_sha256: Optional[str] = Field(
         default=None,
