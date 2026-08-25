@@ -32,13 +32,13 @@ AIRGAPPED PROD HOST                    │  INTERNET-SIDE HOST
   browser                              │
     │ plays  ┌──────────────────────┐  │
     ├───────►│ nginx :8081          │  │
-    │        │  /recordings/ → /net │  │   ┌─────────────┐    ┌───────┐
+    │        │  /recordings/ →share │  │   ┌─────────────┐    ┌───────┐
     │  /api/ │  /api/, /ws  ────────┼──┼──►│ DNA backend │◄───│ Vexa  │
     └───────►└──────────────────────┘  │   │   :8000     │    │:18056 │
              ┌──────────────────────┐  │   └─────────────┘    └───────┘
              │ collector (new)      │  │          ▲               ▲
              │  pulls chunks ───────┼──┼──────────┘               │
-             │  writes /net/media/… │  │                     bot uploads
+             │  writes the share    │  │                     bot uploads
              │  POSTs path + hash ──┼──┼──────────┘          chunks live
              └──────────────────────┘  │
 ```
@@ -63,7 +63,7 @@ The collector is a new service on the prod host using that same link.
 | Shot → clip mapping | DNA's persisted session timeline (segments stamped `in_review`) |
 | Clipping | Virtual cuts — offsets into one file, no rendering |
 | Transcript sync | Out of scope for v1 — playback only |
-| Where Vexa changes land | Fork `loorthu/vexa`, branch `bot-authentication-v2`, gate-clean |
+| Where Vexa changes land | The Vexa fork, branch `bot-authentication-v2`, gate-clean |
 
 **Branches** — both named `meeting-recording-playback`, cut from the current work:
 DNA from `follow-along` (`ab6d556`), Vexa from `fork/bot-authentication-v2` (`dd9c17ff`).
@@ -432,7 +432,7 @@ enforces this server-side too (D2), so the rule holds even if the collector is b
 
 **nginx.** Add a location serving the recordings root:
 ```nginx
-location ^~ /recordings/ { alias /net/media/dna-recordings/; }
+location ^~ /recordings/ { alias ${RECORDING_NETWORK_PATH}/; }
 ```
 Native Range support, no proxy hop, no auth ticket, and seeking is free. Also set
 `client_max_body_size` explicitly (F6) — the default 1 MB is fine for the metadata
@@ -496,10 +496,14 @@ Vexa's own docs concede the live recording loop was **never validated end to end
 testing and ends with a check that can fail. Do not start a phase until the previous
 one's check is green.
 
-> **Status: phases 1–5 are DONE and verified against live Google Meet recordings.**
-> Phase 6 is next, but see "Resuming on the DMZ machine" at the end of this file —
-> the recommendation is to move to the real hosts BEFORE building phase 6, because
-> phase 6's core assumption cannot be tested on a single laptop.
+> **Status: phases 1–6 are DONE and verified against live Google Meet recordings** —
+> the cut list's offsets were checked by cutting the archived file at them and hearing
+> the words the transcript said were spoken there. Phase 7 (the view) is not built.
+>
+> Phase 6 rests on the recording's own start clock agreeing with the clock the transcript
+> timestamps come from. Where the bot and meeting-api run on separate hosts that is an
+> assumption to verify rather than inherit; site-specific deployment notes live outside
+> this plan.
 
 ### Phase 1 — Does screencast capture actually work?  ✅ DONE
 *Assumption under test: CDP screencast records the real meeting under CDP attach, and
@@ -546,7 +550,7 @@ D1 (provider methods), D2 (chunk pass-through + archive/delete), D3 (metadata fi
 **Check:** curl the DNA endpoints from the prod host; confirm `DELETE` is **refused**
 until an archive is recorded.
 
-### Phase 5 — Does the airgap loop close?  ✅ DONE (on a laptop — see the handoff)
+### Phase 5 — Does the airgap loop close?  ✅ DONE
 *Assumption under test: the collector can assemble, mux, verify and archive
 unattended, and survive a restart.*
 
@@ -556,7 +560,7 @@ The collector service, nginx location, ffmpeg in the collector image.
 collector mid-meeting and confirm it resumes rather than restarts; confirm the final
 hash matches, the file is at the network path, and the upstream copy is gone.
 
-### Phase 6 — Do the cuts land on the right shot?  ⬅ NEXT
+### Phase 6 — Do the cuts land on the right shot?  ✅ DONE
 *Assumption under test: `segment_wall_time - recording_t0` is a correct video offset.*
 
 D4 (port the cut-list builder), D5 (cut-list endpoint).
@@ -565,7 +569,7 @@ D4 (port the cut-list builder), D5 (cut-list endpoint).
 and confirm the audio matches the text. **This is the assumption the whole feature
 rests on** — a few seconds of error puts clips on the wrong shot.
 
-### Phase 7 — The view
+### Phase 7 — The view  ⬅ NEXT
 D6 (types + hook), D7 (player + tab + flag).
 
 **Check:** a review with several versions toggled in review; each version's Recording
@@ -604,117 +608,3 @@ independent. Everything else is genuinely sequential.
    expiry is being built.
 7. **`upload()` buffers whole files in memory.** Chunked upload largely fixes this,
    but confirm in Phase 2 that the bot streams rather than accumulating.
-
----
-
-# Resuming on the DMZ machine
-
-Phases 1–5 are built, committed and verified — but **verified on one laptop**, where
-every host shares a clock, a filesystem and a loopback network. That is exactly the
-environment in which this design's hardest failure modes cannot appear. Hence the
-recommendation: **stand this up on the real hosts before building phase 6.**
-
-## Why prod before phase 6, not after
-
-Phase 6 computes `video_in = segment_wall_time − recording_t0`. `recording_t0` is the
-bot's own clock on the Vexa host; the segment timestamps come from meeting-api. On one
-laptop those are the same clock, so **Risk 5 (clock skew) is invisible by construction**
-and a green phase 6 here would prove nothing about prod. Build it where the clocks can
-actually disagree, or expect to verify it twice.
-
-Risk 3 is also still open. The collector was designed for a slow, intermittent link —
-resumable, per-part, verified — and has never met one. Everything measured so far ran
-over loopback.
-
-## What was NOT verifiable from the laptop
-
-Roughly in order of how likely each is to bite:
-
-1. **`_move`'s copy fallback is the production path.** In `recording_collector.py`,
-   staging and the archive were one filesystem locally, so `os.replace` always
-   succeeded. On prod the archive is a network mount, `os.replace` raises `EXDEV`, and
-   the `shutil.copyfile` branch runs. It is the path that will always execute in
-   production and the only one in the flow with just a unit test behind it.
-2. **Does Artifactory mirror Debian?** The whole `imageio-ffmpeg`-instead-of-apt
-   decision was made because that could not be checked from outside. If Artifactory
-   *does* carry a deb mirror, apt was available all along and the wheel is merely a
-   smaller, equally valid choice. Either way the collector image now has to prove it
-   builds on prod (`PIP_INDEX_URL` → Artifactory) or be carried in via
-   `save.sh`/`load.sh`.
-3. **Mount permissions and path identity.** `RECORDING_NETWORK_PATH` is used *inside*
-   the collector, *inside* nginx, and is recorded in Mongo as the file's location. All
-   three must be the same string. The collector writes as root in-container; nginx must
-   be able to read what it wrote.
-4. **Link characteristics** — bandwidth and stability for ~200–400 MB per meeting.
-5. **Clock agreement** between the Vexa host and meeting-api (see above).
-
-## Suggested order
-
-1. **Look before assuming** — establish what is actually running on each host.
-2. **Deploy the internet side first.** The collector is inert until the backend it
-   calls has `/recordings/pending` and `/recordings/{playlist_id}/audio`. That means
-   the DNA backend on the DMZ box, plus the rebuilt Vexa bot image (it carries both the
-   audio-anchor and leave-when-alone fixes).
-3. **Stand up the collector on the airgapped host** against the real mount, and find
-   out whether it builds there or must be transferred.
-4. **One live meeting end to end,** measuring the link while it runs.
-5. **Then phase 6**, against real clocks.
-
-Steps 2 and 3 are where surprises are expected, and they are far cheaper to hit now
-than with two more phases stacked on top.
-
-## Deploying — the short version
-
-Operational detail (image build order, the four places the VPN breaks TLS, how to run
-the tests, the live test loop) is in `meeting_recording_playback.notes.md`. The
-essentials:
-
-- **DNA backend** bind-mounts `./src`, so a code change needs only
-  `docker restart dna-backend`. Use *restart*, not recreate — a recreate drops the
-  baked-in `VEXA_API_KEY` unless it is in `docker/airgap/.env` (it is now).
-- **Collector image** — `docker compose build` cannot pass `--build-context`, so build
-  it with `docker build` (exact invocation in the notes). On prod, point
-  `PIP_INDEX_URL`/`PIP_TRUSTED_HOST` at Artifactory.
-- **`RECORDING_NETWORK_PATH`** must be set in `docker/airgap/.env` to the real mount
-  before anything starts. It defaults to `./recordings`, which is fine for a laptop and
-  wrong for prod.
-- The collector talks to the backend **directly**, not through this host's nginx: it is
-  a server-side client, so there is no single-origin requirement and no reason to add a
-  proxy hop to several hundred MB per meeting.
-
-## Known-failing checks that predate this work
-
-Neither was introduced here; both are the owner's call.
-
-- DNA `--cov-fail-under=90` fails. It was 87.41% before phase 5 and is 89% after. The
-  gap is `email_service.py` at 0% (116 statements), unrelated to recordings.
-- DNA `black --check` fails on `email_service.py`, `models/transcription.py` and
-  `prodtrack_providers/shotgrid.py` — formatting drift from earlier commits.
-  Reformatting them was deliberately reverted to keep the phase 5 diff focused.
-
-## What phase 5 actually measured
-
-- **The A/V offset is not a constant.** Two runs of identical code measured 1428 ms and
-  123 ms. Any hardcoded or once-measured offset would have been wrong on one of them —
-  which is why the bot now stamps both streams' start clocks and the collector pads by
-  the difference.
-- **The frame pacer holds.** 275.65 s of video against 275.4 s of wall clock, +0.09%
-  over 4m35s including a long static stretch — the condition where screencast starves
-  and video time could silently decouple.
-- **Resume is exact.** A collection interrupted at 7 of 9 parts, with stray bytes
-  appended to simulate a torn write, archived a file byte-for-byte identical to an
-  uninterrupted run.
-
-## A bug found along the way
-
-The bot was leaving any meeting with exactly one other person in it, after ~2 minutes
-(`fcf6457e` in the Vexa fork). It is unrelated to recording, but it truncated the first
-live phase 5 test to 2m16s, and a dailies review with one supervisor would have hit it
-every time. The count is of *other* participants and was read as counting everyone, so
-1 meant "only me". Confirmed against the live Meet DOM, not inferred: the bot's own
-tile carries no `data-participant-id` at all.
-
-Worth carrying forward as a habit, not just a fix — **every test of that monitor
-injected the count as a number**, so the timer's arithmetic was thoroughly covered
-while what the number *meant* was never asserted. The monitor was well tested and still
-wrong. Five of the bugs this work has found were invisible to unit tests.
