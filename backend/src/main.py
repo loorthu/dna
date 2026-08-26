@@ -186,6 +186,21 @@ tags_metadata = [
 
 DISABLE_DOCS = os.getenv("DISABLE_DOCS", "false").lower() == "true"
 
+# Nothing configured logging, so the root logger sat at its WARNING default and every
+# `logger.info(...)` in the dna package was discarded before reaching the container log. The lines
+# describing what the service is DOING — which meeting it subscribed to, which recording it linked,
+# which playlist it cleaned up after — were written and thrown away, while only complaints
+# survived. Diagnosing anything therefore meant reasoning from silence, and silence had two
+# indistinguishable causes: the code did not run, or it ran and could not say so.
+#
+# `force=True` because uvicorn installs its own handlers first; without it this call is a no-op and
+# the defaults stand. LOG_LEVEL matches the knob the collector already uses.
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    force=True,
+)
+
 app = FastAPI(
     title=API_TITLE,
     description=API_DESCRIPTION,
