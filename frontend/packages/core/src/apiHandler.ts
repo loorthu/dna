@@ -16,6 +16,7 @@ import {
   StopBotParams,
   GetBotStatusParams,
   GetTranscriptParams,
+  GetRecordingCutsParams,
   GetSegmentsParams,
   GetUserSettingsParams,
   UpsertUserSettingsParams,
@@ -36,6 +37,7 @@ import {
   BotSession,
   BotStatus,
   Transcript,
+  PlaylistRecordingCuts,
   StoredSegment,
   UserSettings,
   SearchEntitiesParams,
@@ -249,6 +251,20 @@ class ApiHandler {
     );
   }
 
+  /**
+   * Where each version was discussed in the meeting recording, plus the media URL to play.
+   *
+   * One call rather than several: the player needs the media, the anchor and the spans together,
+   * and `status` distinguishes the several ways there can be nothing to play yet.
+   */
+  async getRecordingCuts(
+    params: GetRecordingCutsParams
+  ): Promise<PlaylistRecordingCuts> {
+    return this.get<PlaylistRecordingCuts>(
+      `/recordings/cuts/${params.playlistId}`
+    );
+  }
+
   async getUserSettings(params: GetUserSettingsParams): Promise<UserSettings> {
     return this.get<UserSettings>(
       `/users/${encodeURIComponent(params.userEmail)}/settings`
@@ -323,7 +339,10 @@ class ApiHandler {
   }
 
   async emailNotes(params: EmailNotesParams): Promise<void> {
-    await this.post<void>(`/playlists/${params.playlistId}/email-notes`, params.request);
+    await this.post<void>(
+      `/playlists/${params.playlistId}/email-notes`,
+      params.request
+    );
   }
 
   async getQCChecks(params: GetQCChecksParams): Promise<NoteQCCheck[]> {
@@ -364,7 +383,9 @@ class ApiHandler {
     return body.results;
   }
 
-  async uploadAttachment(file: File): Promise<{ id: string; filename: string }> {
+  async uploadAttachment(
+    file: File
+  ): Promise<{ id: string; filename: string }> {
     const formData = new FormData();
     formData.append('file', file);
     const response = await this.axiosInstance.postForm<{

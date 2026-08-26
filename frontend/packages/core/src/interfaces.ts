@@ -339,6 +339,60 @@ export interface StoredSegment {
   updated_at: string;
 }
 
+/**
+ * One span of the meeting recording that discussed a version — an in/out pair, not a rendered
+ * clip. Nothing is cut: the player seeks a single file to `video_in_seconds` and stops at
+ * `video_out_seconds`.
+ */
+export interface RecordingCut {
+  video_in_seconds: number;
+  video_out_seconds: number;
+  transcript_segment_ids: string[];
+}
+
+export interface VersionCuts {
+  version_id: number;
+  /** Stable hash of this version's cut list — the same inputs always produce the same value. */
+  body_hash: string;
+  cuts: RecordingCut[];
+}
+
+/**
+ * Everything the player needs for one playlist, in one call.
+ *
+ * `status` is the load-bearing field. Four situations produce an empty `versions` array and each
+ * wants a different thing said to the viewer, so they must not be collapsed into "no cuts":
+ *
+ *   ready         media and spans are available
+ *   pending       the meeting is being recorded right now — come back when it ends
+ *   archiving     recorded; the collector has not finished taking custody — come back shortly
+ *   no_recording  never recorded, or recording was turned off — nothing is coming
+ *   no_segments   recorded, but nothing was said against these versions
+ */
+export type RecordingCutsStatus =
+  | 'ready'
+  | 'pending'
+  | 'archiving'
+  | 'no_recording'
+  | 'no_segments';
+
+export interface PlaylistRecordingCuts {
+  playlist_id: number;
+  status: RecordingCutsStatus;
+  /** Served by nginx off the share; null until an archive exists. */
+  media_url: string | null;
+  duration_seconds: number | null;
+  /** The recorder's own clock at its first frame — the zero every offset is measured from. */
+  recording_t0: string | null;
+  /** Which anchor produced it: a cut list built on the wrong zero looks exactly like a right one. */
+  recording_t0_source: string | null;
+  versions: VersionCuts[];
+}
+
+export interface GetRecordingCutsParams {
+  playlistId: number;
+}
+
 export interface GetSegmentsParams {
   playlistId: number;
   versionId: number;
