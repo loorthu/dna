@@ -30,9 +30,18 @@ export interface BotStatusEventPayload {
   platform: string;
   meeting_id: string;
   playlist_id?: number;
-  status: string;
+  /**
+   * Absent on advisory frames. The backend also uses this event to report what it noticed about a
+   * bot that is already running, at a point where it does not know the bot's current status — a
+   * frame without one says nothing about the status and must not be read as a change to it.
+   */
+  status?: string;
   message?: string;
   recovered?: boolean;
+  vexa_meeting_id?: number;
+  /** Whether arriving segments are being stored — false with no version in review. */
+  saving_segments?: boolean;
+  warnings?: string[];
 }
 
 export type EventCallback<T = unknown> = (event: DNAEvent<T>) => void;

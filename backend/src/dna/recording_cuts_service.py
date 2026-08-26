@@ -6,19 +6,25 @@ spans is a pure replay of stored-segment timestamps (`video_segment_publish`); t
 part that has to look things up and, more importantly, decide what to say when there is nothing to
 play yet.
 
-WHY THE STATUS ENUM CARRIES THE WEIGHT. Four situations produce an empty cut list, and they want
-four different things from the person looking at the screen:
+WHY THE STATUS ENUM CARRIES THE WEIGHT. Five situations produce an empty cut list, and they want
+five different things from the person looking at the screen:
 
-    no_recording  the meeting was never recorded         — nothing is coming; stop waiting
+    no_meeting    no bot has ever run on this playlist   — nothing has happened yet
+    no_recording  a meeting ran with recording off       — nothing is coming; stop waiting
     pending       it is being recorded right now         — come back when the meeting ends
     archiving     recorded, the collector has not finished — come back in a minute
     no_segments   recorded and archived, but this playlist has no transcript
                                                           — the meeting happened, nothing was said
                                                             against these versions
 
-Collapsing those into "no cuts" makes all four render as a blank box, and a blank box is
+Collapsing those into "no cuts" makes them all render as a blank box, and a blank box is
 indistinguishable from a bug. Reporting which one it is costs one enum and saves the person
 guessing whether the system is broken or simply not finished.
+
+`no_meeting` is split out from `no_recording` because it is the state every playlist is in before
+its bot is dispatched — which is when the panel first asks. Answering "this meeting was not
+recorded" there tells someone who is about to record a meeting that their recording will not
+happen, and it is the only one of the five that stops being true while the tab is open.
 """
 
 import logging
@@ -57,7 +63,10 @@ class RecordingCutsService:
     async def build(self, playlist_id: int) -> dict[str, Any]:
         metadata = await self.storage.get_playlist_metadata(playlist_id)
         if metadata is None or metadata.vexa_meeting_id is None:
-            return self._empty("no_recording", playlist_id)
+            # No bot has run here. Distinct from "not recorded": this is the state the playlist is
+            # in every time the panel first opens, and it stops being true the moment a bot is
+            # dispatched — so it must not read as a verdict on a meeting that has not happened.
+            return self._empty("no_meeting", playlist_id)
 
         # Recording was turned off for this meeting, so the answer is known without asking
         # anything: there is no media, and there is no point deciding between "still recording"

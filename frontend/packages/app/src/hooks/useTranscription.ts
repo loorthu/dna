@@ -49,6 +49,71 @@ export function parseMeetingUrl(url: string): ParsedMeetingUrl | null {
   return null;
 }
 
+const ACTIVE_STATUSES: BotStatusEnum[] = [
+  'joining',
+  'waiting_room',
+  'in_call',
+  'transcribing',
+];
+
+function isActiveStatus(statusValue: BotStatusEnum | undefined): boolean {
+  return statusValue !== undefined && ACTIVE_STATUSES.includes(statusValue);
+}
+
+/**
+ * The session a `bot.status_changed` frame leaves behind, or `null` to keep the one we have.
+ *
+ * Exported so the rule can be tested as a rule — the alternative is asserting it through a hook
+ * that needs an event client, a query client and two contexts to exist first.
+ *
+ * The load-bearing part is that a frame may carry NO status. The backend reuses this event to
+ * report what it noticed about a bot that is already running — segments being discarded, for one —
+ * from a place that does not know the bot's current status. Writing that absent status through set
+ * `session.status` to undefined, which reads as "not active", and the Stop button vanished from a
+ * live meeting the moment the discard warning fired.
+ */
+export function nextSessionForStatusEvent(
+  session: BotSession | null,
+  payload: BotStatusEventPayload,
+  playlistId: number
+): BotSession | null {
+  const newStatus = payload.status as BotStatusEnum | undefined;
+
+  const advisory: Partial<BotSession> = {};
+  if (payload.saving_segments !== undefined) {
+    advisory.saving_segments = payload.saving_segments;
+  }
+  if (payload.warnings !== undefined) {
+    advisory.warnings = payload.warnings;
+  }
+
+  if (session) {
+    return {
+      ...session,
+      ...advisory,
+      ...(newStatus ? { status: newStatus } : {}),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  // No session yet: only a frame that says the bot is live can start one. An advisory frame
+  // cannot — it has no status to judge, and inventing one would put a Stop button in front of a
+  // bot that may already be gone.
+  if (isActiveStatus(newStatus)) {
+    return {
+      platform: payload.platform as Platform,
+      meeting_id: payload.meeting_id,
+      playlist_id: payload.playlist_id ?? playlistId,
+      status: newStatus as BotStatusEnum,
+      ...advisory,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+  }
+
+  return null;
+}
+
 export interface UseTranscriptionOptions {
   playlistId: number | null;
 }
@@ -86,12 +151,6 @@ export function useTranscription({
   const meetingPlatform =
     session?.platform ?? (metadata?.platform as Platform | null);
   const meetingId = session?.meeting_id ?? metadata?.meeting_id;
-
-  const isActiveStatus = (statusValue: BotStatusEnum): boolean => {
-    return ['joining', 'waiting_room', 'in_call', 'transcribing'].includes(
-      statusValue
-    );
-  };
 
   const shouldFetchInitialStatus = !!(
     meetingPlatform &&
@@ -189,24 +248,14 @@ export function useTranscription({
         return;
       }
 
-      const newStatus = payload.status as BotStatusEnum;
+      const newStatus = payload.status as BotStatusEnum | undefined;
 
-      if (session) {
-        setSession({
-          ...session,
-          status: newStatus,
-          updated_at: new Date().toISOString(),
-        });
-      } else if (isActiveStatus(newStatus)) {
-        setSession({
-          platform: payload.platform as Platform,
-          meeting_id: payload.meeting_id,
-          playlist_id: payload.playlist_id ?? playlistId,
-          status: newStatus,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
-      }
+      const next = nextSessionForStatusEvent(session, payload, playlistId);
+      if (next) setSession(next);
+
+      // An advisory frame says nothing about the status, so it must not write one into the status
+      // cache either — that cache is what the UI falls back on when there is no session.
+      if (!newStatus) return;
 
       queryClient.setQueryData<BotStatus>(
         ['botStatus', payload.platform, payload.meeting_id],

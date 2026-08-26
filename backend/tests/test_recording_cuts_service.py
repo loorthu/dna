@@ -118,18 +118,36 @@ class TestTheReadyAnswer:
         assert result["versions"][0]["body_hash"] != result["versions"][1]["body_hash"]
 
 
-class TestTheFourWaysThereIsNothingToPlay:
-    async def test_no_meeting_is_no_recording(self, storage, provider):
+class TestTheFiveWaysThereIsNothingToPlay:
+    async def test_a_playlist_with_no_meeting_yet_is_no_meeting(self, storage, provider):
+        """NOT `no_recording`.
+
+        This is the state every playlist is in before its bot is dispatched, which is when the
+        panel first asks. Answering `no_recording` there told someone who was about to record a
+        meeting that their recording would not happen — and the client, reading it as settled,
+        never asked again for the rest of the meeting.
+        """
         storage.get_playlist_metadata.return_value = _metadata(vexa_meeting_id=None)
         svc = RecordingCutsService(provider, storage)
 
         result = await svc.build(PLAYLIST_ID)
 
-        assert result["status"] == "no_recording"
+        assert result["status"] == "no_meeting"
         assert result["media_url"] is None
 
-    async def test_no_metadata_at_all_is_no_recording(self, storage, provider):
+    async def test_no_metadata_at_all_is_no_meeting(self, storage, provider):
         storage.get_playlist_metadata.return_value = None
+        svc = RecordingCutsService(provider, storage)
+
+        assert (await svc.build(PLAYLIST_ID))["status"] == "no_meeting"
+
+    async def test_a_meeting_that_ran_unrecorded_is_no_recording(
+        self, storage, provider
+    ):
+        """The other half of the split: a meeting DID happen, with recording turned off."""
+        storage.get_playlist_metadata.return_value = _metadata(
+            vexa_meeting_id=38, recording_enabled=False, recording_network_path=None
+        )
         svc = RecordingCutsService(provider, storage)
 
         assert (await svc.build(PLAYLIST_ID))["status"] == "no_recording"

@@ -220,6 +220,12 @@ export interface PlaylistMetadata {
   meeting_id: string | null;
   platform: Platform | null;
   transcription_paused: boolean;
+  /**
+   * Vexa's id for the meeting the bot last ran on this playlist, or null before the first
+   * dispatch. It identifies WHICH meeting, so it changes on every dispatch — which is what tells
+   * a cached recording answer that it is about a meeting nobody is asking about any more.
+   */
+  vexa_meeting_id?: number | null;
 }
 
 export interface PlaylistMetadataUpdate {
@@ -379,6 +385,9 @@ export type RecordingCutsStatus =
   | 'ready'
   | 'pending'
   | 'archiving'
+  /** No bot has ever run on this playlist — the state it is in before the first dispatch. */
+  | 'no_meeting'
+  /** A meeting ran with recording turned off. */
   | 'no_recording'
   | 'no_segments';
 
