@@ -447,12 +447,40 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
             return
 
         if msg_type == "meeting.status":
+            # Vexa sends status in TWO shapes on the same socket, because two publishers write it:
+            #
+            #   per-meeting  {"meeting": {"id","platform","native_id"}, "payload": {"status"}}
+            #   user-scoped  {"meeting_id", "native", "status", "when"}
+            #
+            # Only the first was read. Every frame observed in practice is the second, so every
+            # status event was dropped: the key came out as ":" and matched no subscription. The
+            # bot joined and the UI never heard, the meeting ended and nothing cleaned up after it
+            # — no error anywhere, because a status nobody can attribute looks exactly like a
+            # status for a meeting we are not watching.
+            internal_id = meeting_info.get("id", data.get("meeting_id"))
+            native_id = meeting_info.get("native_id") or data.get("native") or ""
             platform = meeting_info.get("platform", "")
-            native_id = meeting_info.get("native_id", "")
-            internal_id = meeting_info.get("id")
-            meeting_key = f"{platform}:{native_id}"
 
-            if internal_id is not None and meeting_key not in [":", ""]:
+            # The flat frame names no platform, so the id is the only way back to a subscription.
+            # `_meeting_id_to_key` exists for exactly this and is what the transcript branch uses.
+            meeting_key = ""
+            if platform and native_id:
+                meeting_key = f"{platform}:{native_id}"
+            elif internal_id is not None:
+                meeting_key = self._meeting_id_to_key.get(internal_id, "")
+            if not meeting_key and native_id:
+                # Last resort: match on the native id alone. A meeting room is unique across
+                # platforms in practice, and reporting the status late is better than not at all.
+                meeting_key = next(
+                    (
+                        k
+                        for k in self._subscribed_meetings
+                        if k.endswith(f":{native_id}")
+                    ),
+                    "",
+                )
+
+            if internal_id is not None and meeting_key and meeting_key != ":":
                 if internal_id not in self._meeting_id_to_key:
                     self._meeting_id_to_key[internal_id] = meeting_key
                     logger.info(
@@ -463,18 +491,35 @@ class VexaTranscriptionProvider(TranscriptionProviderBase):
 
             callback = self._subscribed_meetings.get(meeting_key)
             if callback is None:
+                # Terminal frames often arrive more than once, and unsubscribing happens on the
+                # first — so a second one legitimately matches nothing. Warning about that trains
+                # people to ignore the warning, which matters because the SAME line is how an
+                # unattributable status would announce itself.
+                terminal = (
+                    data.get("payload", {}).get("status") or data.get("status") or ""
+                ).lower() in ("completed", "ended", "failed", "stopped")
+                logger.log(
+                    logging.DEBUG if terminal else logging.WARNING,
+                    "Dropping a %s status for meeting %s/%s — no subscription matches it",
+                    data.get("payload", {}).get("status") or data.get("status"),
+                    internal_id,
+                    native_id or "?",
+                )
                 return
 
-            payload = data.get("payload", {})
-            raw_status = payload.get("status", "").lower()
+            # Status lives under `payload` in one shape and at the top level in the other.
+            raw_status = (
+                data.get("payload", {}).get("status") or data.get("status") or ""
+            ).lower()
             mapped_status = VEXA_STATUS_MAP.get(raw_status, raw_status)
+            key_platform, _, key_native = meeting_key.partition(":")
             await callback(
                 "bot.status_changed",
                 {
-                    "platform": platform,
-                    "meeting_id": native_id,
+                    "platform": platform or key_platform,
+                    "meeting_id": native_id or key_native,
                     "status": mapped_status,
-                    "timestamp": data.get("ts"),
+                    "timestamp": data.get("ts") or data.get("when"),
                 },
             )
         else:

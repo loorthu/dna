@@ -1017,3 +1017,133 @@ class TestRecordingIsAskedForNotAssumed:
         )
 
         assert session.recording_enabled is True
+
+
+class TestStatusFramesInBothShapes:
+    """Vexa writes meeting.status from two publishers, in two shapes, on the same socket.
+
+    Only the per-meeting shape was read, and every frame seen in practice is the other one — so
+    every bot status was dropped: the key came out as ":" and matched no subscription. The bot
+    joined and the UI never heard; the meeting ended and the completion handler never ran, so
+    subscriptions leaked, playlist mappings leaked, and the in-review mark was never cleared.
+    Nothing errored: an unattributable status is indistinguishable from one we are not watching.
+
+    The frames below are copied verbatim from the live socket on 2026-08-26.
+    """
+
+    @pytest.fixture
+    def subscribed(self, vexa_provider):
+        seen = []
+
+        async def callback(event_type, payload):
+            seen.append((event_type, payload))
+
+        vexa_provider._subscribed_meetings["google_meet:duv-anrv-ztp"] = callback
+        return vexa_provider, seen
+
+    @pytest.mark.asyncio
+    async def test_the_flat_user_scoped_frame_is_delivered(self, subscribed):
+        """The shape actually observed — no `meeting` object, status at the top level."""
+        provider, seen = subscribed
+        provider._meeting_id_to_key[36] = "google_meet:duv-anrv-ztp"
+
+        await provider._handle_ws_message(
+            {
+                "type": "meeting.status",
+                "meeting_id": 36,
+                "native": "duv-anrv-ztp",
+                "status": "active",
+                "when": "2026-08-26T01:08:21.163346+00:00",
+            }
+        )
+
+        assert seen == [
+            (
+                "bot.status_changed",
+                {
+                    "platform": "google_meet",
+                    "meeting_id": "duv-anrv-ztp",
+                    "status": "in_call",
+                    "timestamp": "2026-08-26T01:08:21.163346+00:00",
+                },
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_per_meeting_frame_still_works(self, subscribed):
+        provider, seen = subscribed
+
+        await provider._handle_ws_message(
+            {
+                "type": "meeting.status",
+                "meeting": {
+                    "id": 36,
+                    "platform": "google_meet",
+                    "native_id": "duv-anrv-ztp",
+                },
+                "payload": {"status": "completed"},
+                "ts": "2026-08-26T01:20:00Z",
+            }
+        )
+
+        assert seen[0][1]["status"] == "completed"
+        assert seen[0][1]["meeting_id"] == "duv-anrv-ztp"
+
+    @pytest.mark.asyncio
+    async def test_a_flat_frame_resolves_by_native_id_without_a_prior_mapping(
+        self, subscribed
+    ):
+        """The id map is populated by earlier frames; a restart mid-meeting empties it.
+
+        Losing the terminal status because the process restarted is exactly the case that leaves
+        a subscription leaked and a mark uncleared, so the native id is worth falling back to.
+        """
+        provider, seen = subscribed
+
+        await provider._handle_ws_message(
+            {
+                "type": "meeting.status",
+                "meeting_id": 99,
+                "native": "duv-anrv-ztp",
+                "status": "completed",
+            }
+        )
+
+        assert seen[0][1]["status"] == "completed"
+        assert seen[0][1]["platform"] == "google_meet"
+
+    @pytest.mark.asyncio
+    async def test_a_status_for_someone_elses_meeting_is_still_ignored(
+        self, subscribed
+    ):
+        """The socket also carries the whole user's meetings — not all of them are ours."""
+        provider, seen = subscribed
+
+        await provider._handle_ws_message(
+            {
+                "type": "meeting.status",
+                "meeting_id": 12345,
+                "native": "not-our-room",
+                "status": "active",
+            }
+        )
+
+        assert seen == []
+
+    @pytest.mark.asyncio
+    async def test_the_terminal_status_reaches_the_callback(self, subscribed):
+        """The one that matters: it drives unsubscribe, mapping cleanup and the in-review clear."""
+        provider, seen = subscribed
+        provider._meeting_id_to_key[36] = "google_meet:duv-anrv-ztp"
+
+        for status in ("stopping", "completed"):
+            await provider._handle_ws_message(
+                {
+                    "type": "meeting.status",
+                    "meeting_id": 36,
+                    "native": "duv-anrv-ztp",
+                    "status": status,
+                }
+            )
+
+        assert [p["status"] for _, p in seen] == ["stopping", "completed"]
