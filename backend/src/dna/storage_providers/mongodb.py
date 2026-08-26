@@ -235,7 +235,8 @@ class MongoDBStorageProvider(StorageProviderBase):
         update_fields = {
             k: v
             for k, v in data.model_dump().items()
-            if v is not None and k not in ("clear_resumed_at", "clear_recording_link")
+            if v is not None
+            and k not in ("clear_resumed_at", "clear_recording_link", "clear_in_review")
         }
 
         unset_fields: dict[str, Any] = {}
@@ -247,6 +248,9 @@ class MongoDBStorageProvider(StorageProviderBase):
             # archived_meeting_id / archived_recording_id deliberately stay: they record what
             # was archived, which outlives the upstream copy being purged.
             unset_fields["recording_link_meeting_id"] = ""
+
+        if data.clear_in_review:
+            unset_fields["in_review"] = ""
 
         if data.clear_resumed_at:
             unset_fields["transcription_resumed_at"] = ""

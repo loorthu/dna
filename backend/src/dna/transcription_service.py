@@ -2,9 +2,10 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from dna.events import EventPublisher, EventType, get_event_publisher
+from dna.models.playlist_metadata import PlaylistMetadataUpdate
 from dna.models.stored_segment import StoredSegmentCreate
 from dna.storage_providers.storage_provider_base import (
     StorageProviderBase,
@@ -340,6 +341,33 @@ class TranscriptionService:
             }
         )
 
+    async def _clear_in_review(self, playlist_id: Optional[int]) -> None:
+        """Unset the in-review mark now the meeting it belonged to has ended.
+
+        Best-effort on purpose: the meeting IS over, and failing to tidy up afterwards must not
+        raise through the completion handler and skip the unsubscribes that follow it. The cost of
+        missing one is the stale-mark behaviour this exists to fix, which is visible; the cost of
+        raising here is a leaked subscription, which is not.
+        """
+        if playlist_id is None or self.storage_provider is None:
+            return
+        try:
+            await self.storage_provider.upsert_playlist_metadata(
+                playlist_id, PlaylistMetadataUpdate(clear_in_review=True)
+            )
+            logger.info(
+                "Playlist %s: meeting ended — cleared the in-review mark so the next session "
+                "states its own",
+                playlist_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "Playlist %s: could not clear the in-review mark (%s) — the next meeting may "
+                "attribute segments to this one's version until it is set again",
+                playlist_id,
+                e,
+            )
+
     async def on_transcription_completed(self, payload: dict[str, Any]) -> None:
         """Handle transcription completion."""
         logger.info("Transcription completed: %s", payload)
@@ -349,6 +377,15 @@ class TranscriptionService:
 
         if platform and meeting_id:
             meeting_key = f"{platform}:{meeting_id}"
+
+            # BEFORE the mapping below is discarded — it is how the playlist is known.
+            #
+            # The in-review mark says where arriving segments belong. Once the meeting is over it
+            # belongs to nothing, and leaving it set means the NEXT meeting on this playlist
+            # attributes its opening remarks to a version from the last one, silently and with
+            # every indicator reporting health. Clearing it also re-arms the dispatch warning, so
+            # a new session states which version it is about rather than inheriting an answer.
+            await self._clear_in_review(self._meeting_to_playlist.get(meeting_key))
 
             if meeting_key in self._subscribed_meetings:
                 self._subscribed_meetings.discard(meeting_key)

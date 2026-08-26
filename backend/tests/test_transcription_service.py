@@ -916,3 +916,86 @@ class TestTranscriptionServiceLifecycle:
         mock_transcription_provider.close.assert_called_once()
         assert len(service._subscribed_meetings) == 0
         assert len(service._meeting_to_playlist) == 0
+
+
+class TestTheInReviewMarkIsClearedWhenTheMeetingEnds:
+    """The mark says where ARRIVING segments belong, so it should not outlive the meeting.
+
+    Left set, the next session on the same playlist attributes its opening remarks to a version
+    from the last one — silently, with every indicator reporting health. Clearing it also re-arms
+    the dispatch warning, so a new session states which version it is about.
+    """
+
+    @pytest.fixture
+    def service_ready(
+        self,
+        mock_transcription_provider,
+        mock_storage_provider,
+        mock_event_publisher,
+    ):
+        return TranscriptionService(
+            transcription_provider=mock_transcription_provider,
+            storage_provider=mock_storage_provider,
+            event_publisher=mock_event_publisher,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_completed_meeting_clears_the_mark(
+        self, service_ready, mock_storage_provider
+    ):
+        service_ready._meeting_to_playlist["google_meet:abc"] = 42
+
+        await service_ready.on_transcription_completed(
+            {"platform": "google_meet", "meeting_id": "abc"}
+        )
+
+        update = mock_storage_provider.upsert_playlist_metadata.await_args.args[1]
+        assert update.clear_in_review is True
+        assert mock_storage_provider.upsert_playlist_metadata.await_args.args[0] == 42
+
+    @pytest.mark.asyncio
+    async def test_it_reads_the_playlist_before_the_mapping_is_discarded(
+        self, service_ready, mock_storage_provider
+    ):
+        """The same handler deletes the meeting→playlist mapping. Order matters: read first.
+
+        Clearing after the delete would look correct and quietly do nothing at all.
+        """
+        service_ready._meeting_to_playlist["google_meet:abc"] = 42
+
+        await service_ready.on_transcription_completed(
+            {"platform": "google_meet", "meeting_id": "abc"}
+        )
+
+        mock_storage_provider.upsert_playlist_metadata.assert_awaited_once()
+        assert "google_meet:abc" not in service_ready._meeting_to_playlist
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_meeting_clears_nothing(
+        self, service_ready, mock_storage_provider
+    ):
+        """No mapping means no playlist to act on — and guessing one could clear someone else's."""
+        await service_ready.on_transcription_completed(
+            {"platform": "google_meet", "meeting_id": "never-seen"}
+        )
+
+        mock_storage_provider.upsert_playlist_metadata.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_storage_failure_does_not_skip_the_unsubscribes(
+        self, service_ready, mock_storage_provider, mock_transcription_provider
+    ):
+        """The meeting is already over; tidying up must not raise past the cleanup that follows.
+
+        A missed mark is visible behaviour. A leaked subscription is not.
+        """
+        service_ready._meeting_to_playlist["google_meet:abc"] = 42
+        mock_storage_provider.upsert_playlist_metadata.side_effect = RuntimeError(
+            "mongo down"
+        )
+
+        await service_ready.on_transcription_completed(
+            {"platform": "google_meet", "meeting_id": "abc"}
+        )
+
+        mock_transcription_provider.unsubscribe_from_meeting.assert_awaited_once()

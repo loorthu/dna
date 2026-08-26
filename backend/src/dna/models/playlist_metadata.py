@@ -28,6 +28,14 @@ class PlaylistMetadataUpdate(BaseModel):
         description="If True, clears transcription_resumed_at. "
         "Used when starting a new transcription session.",
     )
+    clear_in_review: bool = Field(
+        default=False,
+        description="If True, unsets in_review. A flag rather than a None assignment because the "
+        "upsert reads None as 'leave unchanged'. Used when a meeting ends: the mark says where "
+        "arriving segments belong, and once the meeting is over it belongs to nothing — leaving "
+        "it set silently attributes the NEXT meeting's opening remarks to a version from the "
+        "last one.",
+    )
     # ── recording (the meeting's media, produced by the bot and archived by the collector) ──
     collector_site: Optional[str] = Field(
         default=None,
