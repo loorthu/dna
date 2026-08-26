@@ -1271,10 +1271,34 @@ class TestShotgridProviderGetPlaylistsForProject:
                 "project",
                 "created_at",
                 "updated_at",
+                "versions",
             ],
             order=[{"field_name": "created_at", "direction": "desc"}],
             limit=RECENT_PLAYLIST_LIMIT,
         )
+
+    def test_get_playlists_for_project_counts_versions_without_carrying_them(
+        self, shotgrid_provider
+    ):
+        """Each playlist reports how many versions it holds, but the version links
+        themselves are dropped — the picker only needs the number."""
+        shotgrid_provider.sg.find.return_value = [
+            {
+                "id": 10,
+                "code": "Dailies Review",
+                "versions": [
+                    {"type": "Version", "id": 1, "name": "shot_010_v001"},
+                    {"type": "Version", "id": 2, "name": "shot_020_v001"},
+                ],
+            },
+            {"id": 20, "code": "Empty Review", "versions": []},
+            {"id": 30, "code": "Null Review", "versions": None},
+        ]
+
+        results = shotgrid_provider.get_playlists_for_project(1)
+
+        assert [p.version_count for p in results] == [2, 0, 0]
+        assert all(p.versions == [] for p in results)
 
     def test_get_playlists_for_project_raises_error_when_not_connected(self):
         """Test that get_playlists_for_project raises error when not connected."""

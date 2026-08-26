@@ -443,6 +443,22 @@ def test_get_playlists_for_project(mock_provider):
     assert playlists[0].id == 400
 
 
+def test_get_playlists_for_project_reports_version_count(mock_db_path, mock_provider):
+    """Listed playlists say how many versions they hold, including none."""
+    conn = sqlite3.connect(mock_db_path)
+    conn.execute(
+        "INSERT INTO playlists (id, code, description, project_id, created_at, updated_at) "
+        "VALUES (401, 'empty_pl', 'desc', 1, '2024-06-02', '2024-06-02')"
+    )
+    conn.commit()
+    conn.close()
+
+    by_id = {p.id: p for p in mock_provider.get_playlists_for_project(1)}
+
+    assert by_id[400].version_count == 1
+    assert by_id[401].version_count == 0
+
+
 def test_get_playlists_for_project_recent_first_and_limited(
     mock_db_path, mock_provider
 ):

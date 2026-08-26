@@ -227,6 +227,13 @@ class Playlist(EntityBase):
     versions: list["Version"] = Field(
         default_factory=list, description="Versions in this playlist"
     )
+    version_count: Optional[int] = Field(
+        default=None,
+        description=(
+            "How many versions the playlist holds. Set when listing playlists, where the "
+            "versions themselves are too expensive to carry; None means nobody counted."
+        ),
+    )
 
     @field_validator("versions", mode="before")
     @classmethod

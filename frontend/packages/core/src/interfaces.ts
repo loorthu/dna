@@ -99,6 +99,12 @@ export interface Playlist extends EntityBase {
   created_at?: string;
   updated_at?: string;
   versions: Version[];
+  /**
+   * How many versions the playlist holds. Present when the backend lists playlists — where
+   * `versions` itself is left empty because it is too expensive to carry — and undefined
+   * anywhere nobody counted.
+   */
+  version_count?: number;
 }
 
 export interface User {

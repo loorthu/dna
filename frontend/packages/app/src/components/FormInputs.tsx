@@ -59,6 +59,16 @@ export const StyledSelectTrigger = styled(Select.Trigger)`
   }
 `;
 
+/**
+ * Secondary text inside a select item — a count or hint sitting beside the label. Its colours
+ * live in StyledSelectContent below, which paints every span inside an item and would
+ * otherwise win on specificity.
+ */
+export const SelectItemMeta = styled.span`
+  margin-left: 8px;
+  font-size: 12px;
+`;
+
 export const StyledSelectContent = styled(Select.Content)`
   &&.rt-SelectContent {
     background: ${({ theme }) => theme.colors.bg.elevated};
@@ -77,12 +87,28 @@ export const StyledSelectContent = styled(Select.Content)`
       color: ${({ theme }) => theme.colors.text.primary};
     }
 
+    ${SelectItemMeta} {
+      color: ${({ theme }) => theme.colors.text.secondary};
+    }
+
+    ${SelectItemMeta}[data-warn='true'] {
+      color: ${({ theme }) => theme.colors.status.warning};
+    }
+
     &[data-highlighted] {
       background: ${({ theme }) => theme.colors.accent.subtle};
       color: ${({ theme }) => theme.colors.accent.main};
 
       span {
         color: ${({ theme }) => theme.colors.accent.main};
+      }
+
+      ${SelectItemMeta} {
+        color: ${({ theme }) => theme.colors.text.secondary};
+      }
+
+      ${SelectItemMeta}[data-warn='true'] {
+        color: ${({ theme }) => theme.colors.status.warning};
       }
     }
   }

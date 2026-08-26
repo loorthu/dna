@@ -7,6 +7,7 @@ import { Logo } from './Logo';
 import {
   StyledSelectTrigger,
   StyledSelectContent,
+  SelectItemMeta,
 } from './FormInputs';
 import { useAuth } from '../contexts';
 
@@ -152,6 +153,16 @@ const EmptyText = styled.p`
 `;
 
 type Step = 'loading' | 'signin' | 'project' | 'playlist';
+
+/**
+ * How many versions a playlist holds, for the picker. Returns null when the backend didn't
+ * count, so an unknown number reads as silence rather than as an empty playlist.
+ */
+function versionCountLabel(count: number | undefined): string | null {
+  if (count === undefined || count === null) return null;
+  if (count === 0) return 'empty';
+  return count === 1 ? '1 version' : `${count} versions`;
+}
 
 const StyledForm = styled.form`
   display: flex;
@@ -524,14 +535,26 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
                   >
                     <StyledSelectTrigger placeholder="Choose a playlist..." />
                     <StyledSelectContent>
-                      {playlists.map((playlist) => (
-                        <Select.Item
-                          key={playlist.id}
-                          value={playlist.id.toString()}
-                        >
-                          {playlistLabel(playlist)}
-                        </Select.Item>
-                      ))}
+                      {playlists.map((playlist) => {
+                        const countLabel = versionCountLabel(
+                          playlist.version_count
+                        );
+                        return (
+                          <Select.Item
+                            key={playlist.id}
+                            value={playlist.id.toString()}
+                          >
+                            {playlistLabel(playlist)}
+                            {countLabel && (
+                              <SelectItemMeta
+                                data-warn={String(playlist.version_count === 0)}
+                              >
+                                {countLabel}
+                              </SelectItemMeta>
+                            )}
+                          </Select.Item>
+                        );
+                      })}
                     </StyledSelectContent>
                   </Select.Root>
                 </Flex>

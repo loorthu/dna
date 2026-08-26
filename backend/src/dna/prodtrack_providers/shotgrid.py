@@ -662,24 +662,41 @@ class ShotgridProvider(ProdtrackProviderBase):
             raise ValueError("Not connected to ShotGrid")
 
         # Only surface the most recently created playlists, newest first, so the
-        # login picker stays manageable on long-running shows.
+        # login picker stays manageable on long-running shows. "versions" rides
+        # along on the same query so the picker can say how many each holds.
         sg_playlists = self._sg.find(
             "Playlist",
             filters=[
                 ["project", "is", {"type": "Project", "id": project_id}],
             ],
-            fields=["id", "code", "description", "project", "created_at", "updated_at"],
+            fields=[
+                "id",
+                "code",
+                "description",
+                "project",
+                "created_at",
+                "updated_at",
+                "versions",
+            ],
             order=[{"field_name": "created_at", "direction": "desc"}],
             limit=RECENT_PLAYLIST_LIMIT,
         )
 
         entity_mapping = FIELD_MAPPING["playlist"]
-        return [
-            self._convert_sg_entity_to_dna_entity(
-                sg_playlist, entity_mapping, "playlist", resolve_links=False
+        playlists = []
+        for sg_playlist in sg_playlists:
+            version_count = len(sg_playlist.get("versions") or [])
+            # Keep only the count: the picker needs the number, not a shallow
+            # copy of every version link in every playlist on the show.
+            playlist = self._convert_sg_entity_to_dna_entity(
+                {k: v for k, v in sg_playlist.items() if k != "versions"},
+                entity_mapping,
+                "playlist",
+                resolve_links=False,
             )
-            for sg_playlist in sg_playlists
-        ]
+            playlist.version_count = version_count
+            playlists.append(playlist)
+        return playlists
 
     def get_versions_for_playlist(self, playlist_id: int) -> list[Version]:
         """Get versions for a playlist.

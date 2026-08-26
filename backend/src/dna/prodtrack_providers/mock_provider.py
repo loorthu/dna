@@ -546,12 +546,19 @@ class MockProdtrackProvider(ProdtrackProviderBase):
     def get_playlists_for_project(self, project_id: int) -> list[Playlist]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT id, code, description, project_id, created_at, updated_at "
-            "FROM playlists WHERE project_id = ? "
-            "ORDER BY created_at DESC LIMIT ?",
+            "SELECT p.id, p.code, p.description, p.project_id, p.created_at, p.updated_at, "
+            "(SELECT COUNT(*) FROM playlist_versions pv WHERE pv.playlist_id = p.id) "
+            "AS version_count "
+            "FROM playlists p WHERE p.project_id = ? "
+            "ORDER BY p.created_at DESC LIMIT ?",
             (project_id, RECENT_PLAYLIST_LIMIT),
         ).fetchall()
-        return [self._playlist_from_row(r, r["project_id"]) for r in rows]
+        playlists = []
+        for r in rows:
+            playlist = self._playlist_from_row(r, r["project_id"])
+            playlist.version_count = r["version_count"]
+            playlists.append(playlist)
+        return playlists
 
     def get_versions_for_playlist(self, playlist_id: int) -> list[Version]:
         conn = self._get_conn()
