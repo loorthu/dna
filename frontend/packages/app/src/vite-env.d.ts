@@ -8,6 +8,7 @@ interface ImportMetaEnv {
   readonly VITE_PRODTRACK_TAB_SYNC_EXTENSION_ID?: string;
   readonly VITE_PRODTRACK_TAB_SYNC_INSTALL_URL?: string;
   readonly VITE_FEATURE_FOLLOW_ALONG?: string;
+  readonly VITE_FEATURE_RECORDING_PLAYBACK?: string;
   readonly VITE_FOLLOW_ALONG_BROKER_URL?: string;
   readonly VITE_FOLLOW_ALONG_TOPIC?: string;
   readonly VITE_FOLLOW_ALONG_SESSIONS_URL?: string;

@@ -27,3 +27,4 @@ export { TranscriptPanel } from './TranscriptPanel';
 export { SettingsModal } from './SettingsModal';
 export { EntityPill } from './EntityPill/EntityPill';
 export { EntitySearchInput } from './EntitySearchInput';
+export { VirtualCutPlayer } from './VirtualCutPlayer';

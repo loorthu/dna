@@ -5,7 +5,12 @@ import { AssistantNote } from './AssistantNote';
 import { OtherNotesPanel } from './OtherNotesPanel';
 import { TranscriptPanel } from './TranscriptPanel';
 import { PromptDebugPanel } from './PromptDebugPanel';
-import { useAISuggestion } from '../hooks';
+import { VirtualCutPlayer } from './VirtualCutPlayer';
+import {
+  useAISuggestion,
+  usePlaylistMetadata,
+  useRecordingCuts,
+} from '../hooks';
 import { useHotkeyAction } from '../hotkeys';
 import { useFeatureFlags } from '../contexts';
 
@@ -70,7 +75,18 @@ export function AssistantPanel({
   userEmail,
   onInsertNote,
 }: AssistantPanelProps) {
-  const { transcriptionEnabled, aiEnabled } = useFeatureFlags();
+  const { transcriptionEnabled, aiEnabled, recordingPlaybackEnabled } =
+    useFeatureFlags();
+  // Which meeting the playlist is on. The panel usually mounts before the bot is dispatched, so
+  // the first recording answer describes a meeting that has not happened; naming the meeting in
+  // the query key is what makes the answer follow the dispatch instead of outliving it.
+  const { data: playlistMetadata } = usePlaylistMetadata(playlistId ?? null);
+
+  // Fetched only when the tab exists: with playback off this is disabled and never asks.
+  const recordingCuts = useRecordingCuts(
+    recordingPlaybackEnabled ? (playlistId ?? null) : null,
+    playlistMetadata?.vexa_meeting_id ?? null
+  );
 
   const { suggestion, prompt, context, isLoading, error, regenerate } =
     useAISuggestion({
@@ -94,21 +110,33 @@ export function AssistantPanel({
     enabled: !isLoading,
   });
 
-  if (!transcriptionEnabled && !aiEnabled) {
+  if (!transcriptionEnabled && !aiEnabled && !recordingPlaybackEnabled) {
     return null;
   }
 
-  const defaultTab = aiEnabled ? 'assistant' : 'transcript';
+  // The first tab that is actually rendered. Naming a tab that is switched off leaves Radix with
+  // no selected content — an empty panel with visible triggers — which was reachable before by
+  // turning AI off, and is easier to reach now there are three optional tabs.
+  const defaultTab = aiEnabled
+    ? 'assistant'
+    : transcriptionEnabled
+      ? 'transcript'
+      : 'recording';
 
   return (
     <PanelWrapper>
       <StyledTabsRoot defaultValue={defaultTab}>
         <StyledTabsList>
           {aiEnabled && (
-            <StyledTabsTrigger value="assistant">AI Assistant</StyledTabsTrigger>
+            <StyledTabsTrigger value="assistant">
+              AI Assistant
+            </StyledTabsTrigger>
           )}
           {transcriptionEnabled && (
             <StyledTabsTrigger value="transcript">Transcript</StyledTabsTrigger>
+          )}
+          {recordingPlaybackEnabled && (
+            <StyledTabsTrigger value="recording">Recording</StyledTabsTrigger>
           )}
           {SHOW_OTHER_NOTES_TAB && (
             <StyledTabsTrigger value="other">
@@ -136,6 +164,17 @@ export function AssistantPanel({
           <StyledTabsContent value="transcript">
             <TranscriptPanel
               playlistId={playlistId ?? null}
+              versionId={versionId ?? null}
+            />
+          </StyledTabsContent>
+        )}
+
+        {recordingPlaybackEnabled && (
+          <StyledTabsContent value="recording">
+            <VirtualCutPlayer
+              data={recordingCuts.data}
+              isLoading={recordingCuts.isLoading}
+              error={recordingCuts.error}
               versionId={versionId ?? null}
             />
           </StyledTabsContent>
