@@ -89,11 +89,35 @@ class TranscriptionService:
                     )
                     continue
 
-                metadata = (
-                    await self.storage_provider.get_playlist_metadata_by_meeting_id(
-                        native_meeting_id
+                # Resolve by the VEXA meeting id, which names one meeting. The room name does not:
+                # it is reused across playlists, so looking a live meeting up by it returns an
+                # arbitrary one of them — and everything downstream then acts on the wrong
+                # playlist. Observed doing exactly that: a meeting on one playlist was recovered
+                # as another, and the completion handler cleared the in-review mark belonging to a
+                # playlist whose own meeting had ended hours earlier.
+                vexa_id = bot.get("id") or bot.get("meeting_id")
+                metadata = None
+                if vexa_id is not None:
+                    metadata = await self.storage_provider.get_playlist_metadata_by_vexa_meeting_id(
+                        vexa_id
                     )
-                )
+                if metadata is None:
+                    # No Vexa id, or no playlist claims it. Falling back to the room name is a
+                    # guess, so say so rather than letting a wrong answer look like a right one.
+                    metadata = (
+                        await self.storage_provider.get_playlist_metadata_by_meeting_id(
+                            native_meeting_id
+                        )
+                    )
+                    if metadata is not None:
+                        logger.warning(
+                            "Meeting %s (vexa id %s) matched no playlist directly; falling back "
+                            "to the room name and guessing playlist %s — segments and cleanup "
+                            "for this meeting may belong elsewhere",
+                            native_meeting_id,
+                            vexa_id,
+                            metadata.playlist_id,
+                        )
                 if metadata is None:
                     logger.warning(
                         "No playlist metadata found for meeting %s, skipping",

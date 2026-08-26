@@ -28,6 +28,10 @@ def mock_storage_provider():
     provider = AsyncMock()
     provider.get_playlist_metadata = AsyncMock()
     provider.get_playlist_metadata_by_meeting_id = AsyncMock()
+    # Default None so recovery falls through to the room lookup, as it did before this method
+    # existed. An AsyncMock left unset returns a truthy mock, which would make every test take
+    # the new path and quietly assert against a mock instead of the metadata it set up.
+    provider.get_playlist_metadata_by_vexa_meeting_id = AsyncMock(return_value=None)
     provider.upsert_segment = AsyncMock()
     return provider
 
@@ -999,3 +1003,89 @@ class TestTheInReviewMarkIsClearedWhenTheMeetingEnds:
         )
 
         mock_transcription_provider.unsubscribe_from_meeting.assert_awaited_once()
+
+
+class TestRecoveringALiveMeetingAfterARestart:
+    """A meeting ROOM does not identify a playlist — the Vexa meeting does.
+
+    Five playlists here share one Meet room. Recovering a live meeting by room name returned an
+    arbitrary one of them, and everything downstream then acted on the wrong playlist: observed
+    clearing the in-review mark of a playlist whose own meeting had ended hours earlier, and the
+    same mapping decides where arriving segments are stored.
+    """
+
+    @pytest.fixture
+    def service_ready(
+        self,
+        mock_transcription_provider,
+        mock_storage_provider,
+        mock_event_publisher,
+    ):
+        return TranscriptionService(
+            transcription_provider=mock_transcription_provider,
+            storage_provider=mock_storage_provider,
+            event_publisher=mock_event_publisher,
+        )
+
+    @staticmethod
+    def _meta(playlist_id, vexa_meeting_id):
+        return PlaylistMetadata(
+            _id="m",
+            playlist_id=playlist_id,
+            meeting_id="duv-anrv-ztp",
+            vexa_meeting_id=vexa_meeting_id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_playlist_is_resolved_by_the_vexa_meeting_not_the_room(
+        self, service_ready, mock_storage_provider, mock_transcription_provider
+    ):
+        mock_transcription_provider.get_active_bots.return_value = [
+            {
+                "platform": "google_meet",
+                "native_meeting_id": "duv-anrv-ztp",
+                "status": "active",
+                "id": 36,
+            }
+        ]
+        # The room lookup would hand back a different, older playlist.
+        mock_storage_provider.get_playlist_metadata_by_meeting_id.return_value = (
+            self._meta(461016, 20)
+        )
+        mock_storage_provider.get_playlist_metadata_by_vexa_meeting_id.return_value = (
+            self._meta(461954, 36)
+        )
+
+        await service_ready.resubscribe_to_active_meetings()
+
+        assert service_ready._meeting_to_playlist["google_meet:duv-anrv-ztp"] == 461954
+        mock_storage_provider.get_playlist_metadata_by_vexa_meeting_id.assert_awaited_once_with(
+            36
+        )
+        mock_storage_provider.get_playlist_metadata_by_meeting_id.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_it_falls_back_to_the_room_and_says_it_is_guessing(
+        self, service_ready, mock_storage_provider, mock_transcription_provider, caplog
+    ):
+        """A meeting no playlist claims is still better recovered than dropped — but it is a guess."""
+        mock_transcription_provider.get_active_bots.return_value = [
+            {
+                "platform": "google_meet",
+                "native_meeting_id": "duv-anrv-ztp",
+                "status": "active",
+                "id": 99,
+            }
+        ]
+        mock_storage_provider.get_playlist_metadata_by_vexa_meeting_id.return_value = (
+            None
+        )
+        mock_storage_provider.get_playlist_metadata_by_meeting_id.return_value = (
+            self._meta(461016, 20)
+        )
+
+        with caplog.at_level("WARNING"):
+            await service_ready.resubscribe_to_active_meetings()
+
+        assert service_ready._meeting_to_playlist["google_meet:duv-anrv-ztp"] == 461016
+        assert "guessing playlist 461016" in caplog.text

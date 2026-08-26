@@ -218,9 +218,32 @@ class MongoDBStorageProvider(StorageProviderBase):
             return PlaylistMetadata(**doc)
         return None
 
+    async def get_playlist_metadata_by_vexa_meeting_id(
+        self, vexa_meeting_id: int
+    ) -> Optional[PlaylistMetadata]:
+        """The one playlist that dispatched this Vexa meeting.
+
+        A meeting ROOM is reused across playlists — five here share one — so looking up by native
+        meeting id returns an arbitrary one of them. A Vexa meeting id identifies a single meeting,
+        and exactly one playlist asked for it.
+        """
+        doc = await self.playlist_metadata_collection.find_one(
+            {"vexa_meeting_id": vexa_meeting_id}
+        )
+        if doc:
+            doc["_id"] = str(doc["_id"])
+            return PlaylistMetadata(**doc)
+        return None
+
     async def get_playlist_metadata_by_meeting_id(
         self, meeting_id: str
     ) -> Optional[PlaylistMetadata]:
+        """A playlist using this meeting ROOM — ANY of them, if several do.
+
+        Prefer `get_playlist_metadata_by_vexa_meeting_id` wherever the Vexa meeting is known.
+        Recovering a live meeting through this one attributed a meeting to the wrong playlist and
+        cleaned up its state instead.
+        """
         query = {"meeting_id": meeting_id}
         doc = await self.playlist_metadata_collection.find_one(query)
         if doc:

@@ -69,6 +69,17 @@ class StorageProviderBase:
         """Get playlist metadata by playlist ID."""
         raise NotImplementedError()
 
+    async def get_playlist_metadata_by_vexa_meeting_id(
+        self, vexa_meeting_id: int
+    ) -> Optional["PlaylistMetadata"]:
+        """The playlist for a specific Vexa meeting.
+
+        Unambiguous, unlike the lookup by native meeting id below: a meeting ROOM is reused across
+        playlists, so that one returns an arbitrary match among them. A Vexa meeting is one
+        meeting, and only one playlist dispatched it.
+        """
+        raise NotImplementedError()
+
     async def get_playlist_metadata_by_meeting_id(
         self, meeting_id: str
     ) -> Optional["PlaylistMetadata"]:
