@@ -18,6 +18,7 @@ import os
 import pytest
 
 from dna.recording_collector import (
+    CollectionFailed,
     CollectorError,
     CollectorState,
     MuxFailed,
@@ -598,3 +599,93 @@ def test_state_round_trips_through_the_file_format():
     assert restored == state
     assert restored.next_seq == 2
     assert restored.bytes_written == 30
+
+
+@pytest.mark.asyncio
+async def test_a_recording_change_mid_pass_abandons_the_pass(tmp_path):
+    """The playlist moved to another recording while this pass was mirroring the previous one.
+
+    Appending across that boundary splices two meetings into one file, and per-part hashes cannot
+    catch it: every part of the new recording verifies correctly against its own index. The pass
+    is abandoned so the next one picks the new recording up cleanly under its own state file.
+    """
+    client = FakeClient([b"AAAA", b"BBBB"], complete=False)
+    collector = make_collector(tmp_path, client)
+    await collector.poll_once(1)  # mirrors recording REC
+
+    state = collector.load_state(1, REC)
+    assert state.recording_id == REC
+    client.recording_id = 9999  # upstream is now serving a different recording
+
+    with pytest.raises(CollectionFailed, match="abandoning this pass"):
+        await collector.ingest_new_parts(state)
+
+    assert client.deleted == [], "upstream must survive an abandoned pass"
+
+
+def test_the_abandoned_pass_is_an_ordinary_retry_not_an_unexpected_failure(tmp_path):
+    """The collector loop catches CollectorError and logs one line; anything else logs a
+    traceback under "unexpected failure". A recording change mid-pass is expected and handled, so
+    it must not arrive as the latter — which is what an undefined exception name would produce.
+    """
+    assert issubclass(CollectionFailed, CollectorError)
+
+
+@pytest.mark.asyncio
+async def test_an_unnamed_recording_falls_back_to_the_playlist_name(tmp_path):
+    """When the index reports no recording id there is nothing to scope the archive by, so the
+    name falls back to the playlist alone — the pre-scoping shape, which two meetings on one
+    playlist would both claim.
+
+    That collision is survivable rather than safe: the overwrite refusal catches the second one
+    and the upstream copy stays put. Asserted here so the fallback's consequence is on the record
+    rather than discovered the next time a deployment stops sending recording ids.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    client.recording_id = None
+    collector = make_collector(tmp_path, client)
+
+    await collector.poll_once(1)
+
+    unscoped = collector.archive_path(1, None)
+    assert unscoped.endswith("playlist-1.mp4"), "no recording id, no scoping"
+    assert os.path.exists(unscoped)
+
+    # A second meeting on the same playlist, equally unnamed, claims the same path. Staging is
+    # cleared first because that too is scoped by the recording nobody named — the second meeting
+    # would otherwise resume the first one's byte stream, which is the same collision one step
+    # earlier.
+    for path in (
+        collector.state_path(1, None),
+        collector.video_path(1, None),
+        collector.audio_path(1, None),
+    ):
+        if os.path.exists(path):
+            os.remove(path)
+    second = FakeClient([b"BBBBBB"], complete=True)
+    second.recording_id = None
+    collector.client = second
+    with pytest.raises(CollectorError, match="refusing to overwrite"):
+        await collector.poll_once(1)
+
+    assert open(unscoped, "rb").read().startswith(b"AAAA"), "the first archive survives"
+    assert second.deleted == [], "upstream must survive a refused archive"
+
+
+@pytest.mark.asyncio
+async def test_a_state_with_no_recording_learns_it_from_the_index(tmp_path):
+    """Identity has to arrive from somewhere before it can be checked.
+
+    A state built before the index was read has no recording id, so the first pass takes the one
+    the index reports and stamps it on. From then on the mismatch guard has something to compare
+    against — without this the guard can never fire, because one side is always None.
+    """
+    client = FakeClient([b"AAAA"], complete=False)
+    collector = make_collector(tmp_path, client)
+
+    state = CollectorState(playlist_id=1)
+    assert state.recording_id is None
+
+    await collector.ingest_new_parts(state)
+
+    assert state.recording_id == REC

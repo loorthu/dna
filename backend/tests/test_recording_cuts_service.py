@@ -1,10 +1,10 @@
 """The playback answer for a playlist, and the several ways there can be nothing to play.
 
 The cut arithmetic itself is covered in test_video_segment_publish.py. What matters here is the
-part that costs a person their afternoon when it is wrong: telling apart "never recorded", "being
-recorded now", "recorded but not collected yet" and "recorded, nothing said against these
-versions". All four produce an empty cut list, and collapsing them renders all four as the same
-blank box — which is indistinguishable from a bug.
+part that costs a person their afternoon when it is wrong: telling apart "no meeting yet", "ran
+unrecorded", "being recorded now", "recorded but not collected yet" and "recorded, nothing said
+against these versions". All five produce an empty cut list, and collapsing them renders all five
+as the same blank box — which is indistinguishable from a bug.
 """
 
 from unittest.mock import AsyncMock
@@ -13,7 +13,11 @@ import pytest
 
 from dna.models.playlist_metadata import PlaylistMetadata
 from dna.models.stored_segment import StoredSegment
-from dna.recording_cuts_service import RecordingCutsService, media_url_for
+from dna.recording_cuts_service import (
+    RecordingCutsService,
+    media_url_for,
+    recording_playback_enabled,
+)
 from dna.recording_media import RecordingNotFound
 
 PLAYLIST_ID = 461350
@@ -119,7 +123,9 @@ class TestTheReadyAnswer:
 
 
 class TestTheFiveWaysThereIsNothingToPlay:
-    async def test_a_playlist_with_no_meeting_yet_is_no_meeting(self, storage, provider):
+    async def test_a_playlist_with_no_meeting_yet_is_no_meeting(
+        self, storage, provider
+    ):
         """NOT `no_recording`.
 
         This is the state every playlist is in before its bot is dispatched, which is when the
@@ -288,3 +294,22 @@ class TestAMeetingThatWasNotRecorded:
 
         assert (await svc.build(PLAYLIST_ID))["status"] == "archiving"
         provider.list_recordings.assert_awaited()
+
+
+class TestTheFlagThatGatesTheFeature:
+    """One env read, but it decides whether the endpoint exists at all — a typo here disables
+    playback everywhere with no error to notice."""
+
+    def test_off_unless_explicitly_turned_on(self, monkeypatch):
+        monkeypatch.delenv("DNA_ENABLE_RECORDING_PLAYBACK", raising=False)
+        assert recording_playback_enabled() is False
+
+    def test_on_however_true_is_spelled(self, monkeypatch):
+        for spelling in ("true", "True", "TRUE"):
+            monkeypatch.setenv("DNA_ENABLE_RECORDING_PLAYBACK", spelling)
+            assert recording_playback_enabled() is True
+
+    def test_anything_else_is_off(self, monkeypatch):
+        for spelling in ("false", "1", "yes", ""):
+            monkeypatch.setenv("DNA_ENABLE_RECORDING_PLAYBACK", spelling)
+            assert recording_playback_enabled() is False

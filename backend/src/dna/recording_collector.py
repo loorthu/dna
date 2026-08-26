@@ -43,6 +43,14 @@ class MuxFailed(CollectorError):
     """ffmpeg refused to combine the two streams."""
 
 
+class CollectionFailed(CollectorError):
+    """This pass cannot continue, but nothing is wrong that a later pass will not resolve.
+
+    A CollectorError like any other — the upstream copy is intact and the next poll retries. It
+    is named apart from its parent only so the log says which kind of "try again" this was.
+    """
+
+
 # ── the state a restart is reconstructed from ───────────────────────────────────────────────────
 
 
