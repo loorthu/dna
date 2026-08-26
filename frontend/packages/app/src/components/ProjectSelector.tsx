@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { Button, Flex, Select, Spinner } from '@radix-ui/themes';
-import { Playlist, Project } from '@dna/core';
+import { Playlist, playlistLabel, Project } from '@dna/core';
 import { useGetProjectsForUser, useGetPlaylistsForProject } from '../api';
 import { Logo } from './Logo';
 import {
@@ -529,7 +529,7 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
                           key={playlist.id}
                           value={playlist.id.toString()}
                         >
-                          {playlist.code || `Playlist ${playlist.id}`}
+                          {playlistLabel(playlist)}
                         </Select.Item>
                       ))}
                     </StyledSelectContent>

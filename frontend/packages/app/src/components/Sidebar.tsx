@@ -32,6 +32,8 @@ interface SidebarProps {
   onCollapsedChange: (collapsed: boolean) => void;
   onReplacePlaylist?: () => void;
   playlistId: number | null;
+  /** What to call the playlist on screen — see `playlistLabel`. */
+  playlistTitle?: string;
   selectedVersionId?: number | null;
   /** Version the followed review session is showing. Marked, never selected. */
   followedVersionId?: number | null;
@@ -95,6 +97,42 @@ const CollapseButton = styled.button`
     width: 20px;
     height: 20px;
   }
+`;
+
+// Which playlist this is. It sits directly above the version list because that list, the
+// transcription controls and "Change Playlist" all act on this one playlist, and none of them say
+// so — once the picker closes, nothing on screen names what is being reviewed.
+const PlaylistTitleBar = styled.div`
+  padding: 10px 16px;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+`;
+
+const PlaylistTitleLabel = styled.span`
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: ${({ theme }) => theme.colors.text.muted};
+`;
+
+const PlaylistTitleText = styled.span`
+  font-size: 13px;
+  font-weight: 600;
+  font-family: ${({ theme }) => theme.fonts.sans};
+  color: ${({ theme }) => theme.colors.text.primary};
+  // Playlist names are long and end in the part that distinguishes them ("… - 08/25/26"), so the
+  // tail is worth more than the head. Two lines keep it readable in a 280px rail; the tooltip has
+  // the whole thing for anything longer.
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.35;
+  word-break: break-word;
 `;
 
 const Toolbar = styled.div`
@@ -244,6 +282,7 @@ export function Sidebar({
   onCollapsedChange,
   onReplacePlaylist,
   playlistId,
+  playlistTitle,
   selectedVersionId,
   followedVersionId,
   onVersionSelect,
@@ -460,6 +499,15 @@ export function Sidebar({
           </Tooltip>
         </HeaderActions>
       </Header>
+
+      {!collapsed && playlistTitle && (
+        <PlaylistTitleBar>
+          <PlaylistTitleLabel>Playlist</PlaylistTitleLabel>
+          <Tooltip content={playlistTitle}>
+            <PlaylistTitleText>{playlistTitle}</PlaylistTitleText>
+          </Tooltip>
+        </PlaylistTitleBar>
+      )}
 
       {collapsed ? (
         <CollapsedToolbar>

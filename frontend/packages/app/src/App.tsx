@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Playlist, Project, Version } from '@dna/core';
+import { Playlist, playlistLabel, Project, Version } from '@dna/core';
 import { Layout, ContentArea, ProjectSelector } from './components';
 import { useAuth } from './contexts';
 import { useGetVersionsForPlaylist } from './api';
@@ -45,6 +45,14 @@ function App() {
       }
     }
   }, [versions, selectedVersion, playlistMetadata]);
+
+  const playlistTitle = playlistLabel(selectedPlaylist);
+
+  // The tab title too, not just the sidebar: reviewers keep several playlists open at once, and a
+  // row of tabs all reading "DNA App" is the same "which one is this?" problem one level up.
+  useEffect(() => {
+    document.title = playlistTitle ? `${playlistTitle} · DNA` : 'DNA';
+  }, [playlistTitle]);
 
   const handleRefresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ['allDraftNotes'] });
@@ -96,6 +104,7 @@ function App() {
     <Layout
       onReplacePlaylist={handleReplacePlaylist}
       playlistId={selectedPlaylist.id}
+      playlistTitle={playlistTitle}
       selectedVersionId={selectedVersion?.id}
       followedVersionId={followedVersion?.id ?? null}
       onVersionSelect={handleVersionSelect}

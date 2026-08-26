@@ -7,6 +7,8 @@ interface LayoutProps {
   children: ReactNode;
   onReplacePlaylist?: () => void;
   playlistId: number | null;
+  /** What to call the playlist on screen — see `playlistLabel`. */
+  playlistTitle?: string;
   selectedVersionId?: number | null;
   /** Version the followed review session is showing, if any. A hint only. */
   followedVersionId?: number | null;
@@ -47,6 +49,7 @@ export function Layout({
   children,
   onReplacePlaylist,
   playlistId,
+  playlistTitle,
   selectedVersionId,
   followedVersionId,
   onVersionSelect,
@@ -75,6 +78,7 @@ export function Layout({
         onCollapsedChange={setSidebarCollapsed}
         onReplacePlaylist={onReplacePlaylist}
         playlistId={playlistId}
+        playlistTitle={playlistTitle}
         selectedVersionId={selectedVersionId}
         followedVersionId={followedVersionId}
         onVersionSelect={onVersionSelect}
