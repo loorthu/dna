@@ -79,7 +79,12 @@ class RecordingCutsService:
             # No archive yet. Whether that is "still recording" or "waiting on the collector"
             # is answered by the upstream recording: it exists and is incomplete while the bot
             # is still uploading, and complete once the collector's turn has come.
-            return self._empty(await self._unarchived_status(playlist_id), playlist_id)
+            return self._empty(
+                await self._unarchived_status(
+                    playlist_id, was_requested=metadata.recording_enabled is True
+                ),
+                playlist_id,
+            )
 
         segments = await self.storage.get_segments_for_playlist(playlist_id)
         if not segments:
@@ -144,7 +149,7 @@ class RecordingCutsService:
             ],
         }
 
-    async def _unarchived_status(self, playlist_id: int) -> str:
+    async def _unarchived_status(self, playlist_id: int, was_requested: bool) -> str:
         """`pending` while the recording is still being made, `archiving` once it is not.
 
         Asked of the upstream index rather than inferred from the meeting's status, because the
@@ -155,7 +160,12 @@ class RecordingCutsService:
         try:
             index = await media.list_chunks(playlist_id, after=-1)
         except RecordingNotFound:
-            return "no_recording"
+            # Nothing upstream YET. For a meeting dispatched with recording on, that is what the
+            # first seconds look like — the bot has joined and the recorder has not registered
+            # anything — and answering `no_recording` there is terminal: the client stops asking,
+            # and the tab spends the whole meeting saying the meeting was not recorded while it
+            # is being recorded. Only when nobody asked for a recording does absent mean absent.
+            return "pending" if was_requested else "no_recording"
         # Upstream unreachable is not evidence that a recording never existed: saying
         # `no_recording` would tell the viewer to stop waiting for something still on its way.
         except Exception as e:

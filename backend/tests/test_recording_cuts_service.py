@@ -217,11 +217,32 @@ class TestTheFiveWaysThereIsNothingToPlay:
 
         assert (await svc.build(PLAYLIST_ID))["status"] == "archiving"
 
-    async def test_a_missing_upstream_recording_is_no_recording(
+    async def test_nothing_upstream_yet_is_pending_when_recording_was_asked_for(
         self, storage, provider
     ):
+        """The first seconds of a recorded meeting: the bot has joined, the recorder has not
+        registered anything yet.
+
+        NOT `no_recording`. That answer is terminal — the client stops asking — so a meeting being
+        recorded right now spent its whole duration telling the viewer it was not being recorded,
+        next to a checkbox they had ticked.
+        """
         storage.get_playlist_metadata.return_value = _metadata(
-            recording_network_path=None
+            recording_enabled=True, recording_network_path=None
+        )
+        provider.list_recordings.return_value = []  # -> RecordingNotFound
+        svc = RecordingCutsService(provider, storage)
+
+        assert (await svc.build(PLAYLIST_ID))["status"] == "pending"
+
+    async def test_nothing_upstream_and_nobody_asked_is_no_recording(
+        self, storage, provider
+    ):
+        """A meeting from before the flag was recorded either way. Nothing is coming, and saying
+        `pending` would leave the client polling for something that will never arrive.
+        """
+        storage.get_playlist_metadata.return_value = _metadata(
+            recording_enabled=None, recording_network_path=None
         )
         provider.list_recordings.return_value = []  # -> RecordingNotFound
         svc = RecordingCutsService(provider, storage)
