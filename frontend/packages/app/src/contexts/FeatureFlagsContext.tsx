@@ -11,7 +11,6 @@ const TRANSCRIPTION_KEY = 'dna-transcription-enabled';
 const AI_KEY = 'dna-ai-enabled';
 const IN_REVIEW_KEY = 'dna-in-review-enabled';
 const FOLLOW_ALONG_KEY = 'dna-follow-along-enabled';
-const RECORDING_PLAYBACK_KEY = 'dna-recording-playback-enabled';
 
 function readEnvOverride(envValue: string | undefined): boolean | null {
   if (envValue === 'true') return true;
@@ -27,16 +26,8 @@ const ENV_AI = readEnvOverride(import.meta.env.VITE_FEATURE_AI);
 const ENV_FOLLOW_ALONG = readEnvOverride(
   import.meta.env.VITE_FEATURE_FOLLOW_ALONG
 );
-const ENV_RECORDING_PLAYBACK = readEnvOverride(
-  import.meta.env.VITE_FEATURE_RECORDING_PLAYBACK
-);
-
 interface FeatureFlagsContextValue {
   transcriptionEnabled: boolean;
-  recordingPlaybackEnabled: boolean;
-  recordingPlaybackLocked: boolean;
-  recordingPlaybackLockReason: string | null;
-  setRecordingPlaybackEnabled: (enabled: boolean) => void;
   aiEnabled: boolean;
   inReviewEnabled: boolean;
   followAlongEnabled: boolean;
@@ -75,15 +66,6 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     return stored === null ? true : stored === 'true';
   });
 
-  // Recording playback: OFF by default, unlike the rest. It shows a video of the meeting, which
-  // is a bigger thing to turn on by accident than a transcript pane, and it is useless without a
-  // deployment that records and collects.
-  const [recordingPlaybackBase, setRecordingPlaybackState] = useState(() => {
-    if (ENV_RECORDING_PLAYBACK !== null) return ENV_RECORDING_PLAYBACK;
-    const stored = localStorage.getItem(RECORDING_PLAYBACK_KEY);
-    return stored === null ? false : stored === 'true';
-  });
-
   // Follow Along stands apart from the russian-doll chain below: it moves only
   // the local selection and needs nothing from the transcription pipeline.
   const [followAlongEnabled, setFollowAlongState] = useState(() => {
@@ -97,14 +79,6 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
   // enabling a parent (via UI toggle or env override) forces its children on.
   const transcriptionEnabled = transcriptionBase || aiEnabled;
   const inReviewEnabled = inReviewBase || transcriptionEnabled;
-
-  // Playback DEPENDS on transcription rather than forcing it, so this chains with && where the
-  // others use ||. The cut list is built from stored segments: with transcription off there are
-  // none, and the tab could only ever say "nothing was said against this version" — which reads
-  // as a broken feature rather than a disabled one. Turning transcription on does NOT turn
-  // playback on; a video of the room is opt-in.
-  const recordingPlaybackEnabled =
-    recordingPlaybackBase && transcriptionEnabled;
 
   const setTranscriptionEnabled = useCallback((enabled: boolean) => {
     if (ENV_TRANSCRIPTION !== null) return;
@@ -124,12 +98,6 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     setInReviewState(enabled);
   }, []);
 
-  const setRecordingPlaybackEnabled = useCallback((enabled: boolean) => {
-    if (ENV_RECORDING_PLAYBACK !== null) return;
-    localStorage.setItem(RECORDING_PLAYBACK_KEY, String(enabled));
-    setRecordingPlaybackState(enabled);
-  }, []);
-
   const setFollowAlongEnabled = useCallback((enabled: boolean) => {
     if (ENV_FOLLOW_ALONG !== null) return;
     localStorage.setItem(FOLLOW_ALONG_KEY, String(enabled));
@@ -143,16 +111,6 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
         aiEnabled,
         inReviewEnabled,
         followAlongEnabled,
-        recordingPlaybackEnabled,
-        recordingPlaybackLocked:
-          ENV_RECORDING_PLAYBACK !== null || !transcriptionEnabled,
-        recordingPlaybackLockReason:
-          ENV_RECORDING_PLAYBACK !== null
-            ? 'pipeline'
-            : !transcriptionEnabled
-              ? 'transcription'
-              : null,
-        setRecordingPlaybackEnabled,
         transcriptionLocked: ENV_TRANSCRIPTION !== null || aiEnabled,
         aiLocked: ENV_AI !== null,
         inReviewLocked: ENV_IN_REVIEW !== null || transcriptionEnabled,

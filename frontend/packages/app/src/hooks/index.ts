@@ -32,6 +32,7 @@ export {
 } from './useDNAEvents';
 export type { TranscriptEventPayload } from './useDNAEvents';
 
+export { useCapabilities } from './useCapabilities';
 export { useRecordingCuts } from './useRecordingCuts';
 export { useSegments } from './useSegments';
 export type { UseSegmentsOptions, UseSegmentsResult } from './useSegments';

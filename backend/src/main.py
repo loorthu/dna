@@ -407,6 +407,28 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get(
+    "/capabilities",
+    tags=["Health"],
+    summary="What this deployment supports",
+    description=(
+        "Optional pipelines this deployment is configured for. The front end asks once at "
+        "start-up and hides the features that are not here."
+    ),
+    response_description="A flag per optional pipeline",
+)
+async def capabilities() -> dict[str, bool]:
+    """What the front end may offer, decided by the deployment that has the pipeline.
+
+    Whether meeting recordings can be played back is a fact about this installation — it needs a
+    recorder, a collector and a share — and the back end is the side that knows. Mirroring it into
+    a second front-end build flag meant two settings that had to agree, and a deployment where
+    they disagreed showed either a tab whose every request 404s or no tab at all for recordings
+    that exist. Asking removes the second setting rather than documenting it.
+    """
+    return {"recording_playback": recording_playback_enabled()}
+
+
 @app.post(
     "/test/broadcast-transcript",
     tags=["Testing"],

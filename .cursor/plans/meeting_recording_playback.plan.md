@@ -468,9 +468,21 @@ playlist id, with `refetchInterval` only while `status` is `pending`/`archiving`
 - Multiple cuts: a Radix `SegmentedControl` — "Clip 1 / 2 / 3" with durations.
 - Empty states driven by `status`, including "still being archived".
 
-**Flag:** `VITE_FEATURE_RECORDING_PLAYBACK` → `recordingPlaybackEnabled`, chained
-under `transcriptionEnabled` the way `inReviewEnabled` already is (no cuts without
-persisted segments). Add to `SettingsModal.tsx` and `vite-env.d.ts`.
+**Gating.** Not a user preference — the tab shows what a meeting already produced, so
+there is nothing for a viewer to opt into. Two facts decide it, and neither belongs in
+a settings window:
+
+- the deployment has the pipeline — a recorder, a collector and a share. Only the back
+  end knows, so it says so at `GET /capabilities`, gated by
+  `DNA_ENABLE_RECORDING_PLAYBACK`, and the front end asks once at start-up;
+- transcription is on, since the spans come from stored segments and without them the
+  tab could only ever say nothing was said against this version.
+
+A first pass had a third switch: a client build flag plus a Settings toggle, off by
+default. It was added for symmetry with the flags already in `FeatureFlagsContext`,
+not for a need — and it produced a meeting that was recorded, archived and then hidden
+behind a control nobody had been told about, next to a "Record this meeting" checkbox
+that was already on. One fact, one place that knows it.
 
 ## D8 — Tests
 

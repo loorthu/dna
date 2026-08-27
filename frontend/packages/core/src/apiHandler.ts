@@ -16,6 +16,7 @@ import {
   StopBotParams,
   GetBotStatusParams,
   GetTranscriptParams,
+  DeploymentCapabilities,
   GetRecordingCutsParams,
   GetSegmentsParams,
   GetUserSettingsParams,
@@ -263,6 +264,16 @@ class ApiHandler {
     return this.get<PlaylistRecordingCuts>(
       `/recordings/cuts/${params.playlistId}`
     );
+  }
+
+  /**
+   * Which optional pipelines this deployment is configured for.
+   *
+   * Asked rather than mirrored into a build flag: the back end is the side that knows whether a
+   * recorder, collector and share exist, and two settings that have to agree eventually do not.
+   */
+  async getCapabilities(): Promise<DeploymentCapabilities> {
+    return this.get<DeploymentCapabilities>('/capabilities');
   }
 
   async getUserSettings(params: GetUserSettingsParams): Promise<UserSettings> {

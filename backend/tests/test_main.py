@@ -33,6 +33,43 @@ def test_health():
     assert data["status"] == "healthy"
 
 
+class TestCapabilities:
+    """What the front end may offer, decided by the side that has the pipeline.
+
+    The front end used to carry its own copy of this as a build flag and a settings toggle. Three
+    settings for one fact is how a meeting came to be recorded, archived, and then hidden.
+    """
+
+    def test_recording_playback_is_advertised_when_configured(self, monkeypatch):
+        monkeypatch.setenv("DNA_ENABLE_RECORDING_PLAYBACK", "true")
+
+        response = client.get("/capabilities")
+
+        assert response.status_code == 200
+        assert response.json()["recording_playback"] is True
+
+    def test_recording_playback_is_withheld_when_not_configured(self, monkeypatch):
+        monkeypatch.delenv("DNA_ENABLE_RECORDING_PLAYBACK", raising=False)
+
+        response = client.get("/capabilities")
+
+        assert response.status_code == 200
+        assert response.json()["recording_playback"] is False
+
+    def test_it_agrees_with_the_endpoint_it_describes(self, monkeypatch):
+        """The claim and the thing claimed must not drift apart: advertising playback while the
+        cut list 404s is worse than not advertising it, because the tab appears and fails."""
+        monkeypatch.delenv("DNA_ENABLE_RECORDING_PLAYBACK", raising=False)
+
+        assert client.get("/capabilities").json()["recording_playback"] is False
+        assert client.get("/recordings/cuts/1").status_code == 404
+
+        monkeypatch.setenv("DNA_ENABLE_RECORDING_PLAYBACK", "true")
+
+        assert client.get("/capabilities").json()["recording_playback"] is True
+        assert client.get("/recordings/cuts/1").status_code != 404
+
+
 class TestCreateNoteEndpoint:
     """Tests for POST /note endpoint."""
 

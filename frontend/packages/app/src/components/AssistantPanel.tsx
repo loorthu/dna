@@ -8,6 +8,7 @@ import { PromptDebugPanel } from './PromptDebugPanel';
 import { VirtualCutPlayer } from './VirtualCutPlayer';
 import {
   useAISuggestion,
+  useCapabilities,
   usePlaylistMetadata,
   useRecordingCuts,
 } from '../hooks';
@@ -75,8 +76,16 @@ export function AssistantPanel({
   userEmail,
   onInsertNote,
 }: AssistantPanelProps) {
-  const { transcriptionEnabled, aiEnabled, recordingPlaybackEnabled } =
-    useFeatureFlags();
+  const { transcriptionEnabled, aiEnabled } = useFeatureFlags();
+
+  // Two different questions, and neither is a preference. Whether this installation can play a
+  // meeting back is the deployment's answer — it needs a recorder, a collector and a share.
+  // Whether there is anything to cut on is transcription's: the spans come from stored segments,
+  // so with transcription off the tab could only ever say nothing was said against this version,
+  // which reads as broken rather than disabled.
+  const { recording_playback: deploymentPlaysRecordings } = useCapabilities();
+  const recordingPlaybackEnabled =
+    deploymentPlaysRecordings && transcriptionEnabled;
   // Which meeting the playlist is on. The panel usually mounts before the bot is dispatched, so
   // the first recording answer describes a meeting that has not happened; naming the meeting in
   // the query key is what makes the answer follow the dispatch instead of outliving it.

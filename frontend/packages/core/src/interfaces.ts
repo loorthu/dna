@@ -381,6 +381,17 @@ export interface VersionCuts {
  *   no_recording  never recorded, or recording was turned off — nothing is coming
  *   no_segments   recorded, but nothing was said against these versions
  */
+/**
+ * Which optional pipelines this deployment is configured for.
+ *
+ * The deployment decides, not the viewer: playing a meeting back needs a recorder, a collector
+ * and a share, and only the back end knows whether it has them. A front-end build flag saying the
+ * same thing was a second setting that had to agree with this one.
+ */
+export interface DeploymentCapabilities {
+  recording_playback: boolean;
+}
+
 export type RecordingCutsStatus =
   | 'ready'
   | 'pending'

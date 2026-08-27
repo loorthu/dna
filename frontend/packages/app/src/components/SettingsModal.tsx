@@ -365,10 +365,6 @@ function GeneralTab({
 }: GeneralTabProps) {
   const { mode, setMode } = useThemeMode();
   const {
-    recordingPlaybackEnabled,
-    setRecordingPlaybackEnabled,
-    recordingPlaybackLocked,
-    recordingPlaybackLockReason,
     inReviewEnabled,
     setInReviewEnabled,
     inReviewLocked,
@@ -417,32 +413,6 @@ function GeneralTab({
                 ? 'Required by Transcription — disable Transcription to change this'
                 : inReviewLocked
                   ? `${inReviewEnabled ? 'Enabled' : 'Disabled'} by pipeline configuration`
-                  : undefined
-            }
-          />
-        </AppearanceRow>
-      </Section>
-
-      <Section>
-        <SectionTitle>Meeting recording</SectionTitle>
-        <AppearanceRow>
-          <KeybindingLabel>
-            <KeybindingName>Enable recording playback</KeybindingName>
-            <KeybindingDesc>
-              Adds a Recording tab that plays the spans of the meeting where
-              each version was discussed. Needs the meeting to have been
-              recorded.
-            </KeybindingDesc>
-          </KeybindingLabel>
-          <LockableSwitch
-            checked={recordingPlaybackEnabled}
-            onCheckedChange={setRecordingPlaybackEnabled}
-            locked={recordingPlaybackLocked}
-            tooltip={
-              recordingPlaybackLockReason === 'transcription'
-                ? 'Needs Transcription — the spans come from stored transcript segments'
-                : recordingPlaybackLocked
-                  ? `${recordingPlaybackEnabled ? 'Enabled' : 'Disabled'} by pipeline configuration`
                   : undefined
             }
           />
