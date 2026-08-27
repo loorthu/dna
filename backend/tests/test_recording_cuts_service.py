@@ -28,6 +28,14 @@ DURATION = 156.4
 ARCHIVE = "/net/media/dna-recordings/playlist-461350-rec619075238345.mp4"
 
 
+# A cut is a period the version was under review, so the tests need the mark's timeline. This one
+# holds VERSION_ID for exactly the span it was spoken about in the meeting these numbers come from.
+IN_REVIEW = [
+    {"version_id": VERSION_ID, "since": "2026-08-21T21:28:40.932Z"},
+    {"version_id": None, "since": "2026-08-21T21:28:41.956Z"},
+]
+
+
 def _metadata(**over) -> PlaylistMetadata:
     base = {
         "_id": "meta",
@@ -36,6 +44,7 @@ def _metadata(**over) -> PlaylistMetadata:
         "recording_network_path": ARCHIVE,
         "recording_start_time_utc": T0,
         "recording_duration_seconds": DURATION,
+        "in_review_history": IN_REVIEW,
     }
     base.update(over)
     return PlaylistMetadata(**base)
@@ -108,6 +117,13 @@ class TestTheReadyAnswer:
         """A meeting covers several versions; each gets its own spans and its own hash."""
         other = _segment("b", "2026-08-21T21:29:00Z", "2026-08-21T21:29:05Z")
         other.version_id = 999
+        storage.get_playlist_metadata.return_value = _metadata(
+            in_review_history=IN_REVIEW[:1]
+            + [
+                {"version_id": 999, "since": "2026-08-21T21:28:50Z"},
+                {"version_id": None, "since": "2026-08-21T21:29:10Z"},
+            ]
+        )
         storage.get_segments_for_playlist.return_value = [
             _segment("a", "2026-08-21T21:28:40.932Z", "2026-08-21T21:28:41.956Z"),
             other,

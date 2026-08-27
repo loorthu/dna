@@ -19,13 +19,10 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from zoneinfo import ZoneInfo
 
-from dna.models.stored_segment import StoredSegment
+from typing import Any, Optional, Sequence
 
-# Gap between consecutive segments above which a new cut begins. A gap means
-# either Vexa was paused or a different version was in-review during that
-# interval — either way it is a cut boundary. Env-configurable; the default is
-# a starting guess to be validated against real meeting data.
-DEFAULT_SEGMENT_RUN_GAP_SECONDS = float(os.getenv("SEGMENT_RUN_GAP_SECONDS", "2.0"))
+from dna.in_review_timeline import parse_utc
+from dna.models.stored_segment import StoredSegment
 
 # Zoom names its recording folder in the host's local time, e.g.
 # "2026-05-27 06.44.49 Cameron Target's Zoom Meeting". Stored segments are UTC,
@@ -218,27 +215,63 @@ def _body_hash(version_id: int, cuts: list[VideoCut]) -> str:
     return sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def in_review_periods(
+    history: Optional[Sequence[dict[str, Any]]],
+    ends_at: datetime,
+) -> list[tuple[int, datetime, datetime]]:
+    """The spans each version held the in-review mark: ``(version_id, from, until)``.
+
+    Consecutive entries bound each other; the last one runs to ``ends_at``. Entries clearing the
+    mark (``version_id`` None) are boundaries, not periods — nothing was under review then.
+    """
+    entries = []
+    for entry in history or []:
+        since = parse_utc(entry.get("since"))
+        if since is not None:
+            entries.append((since, entry.get("version_id")))
+    entries.sort(key=lambda e: e[0])
+
+    periods: list[tuple[int, datetime, datetime]] = []
+    for index, (since, version_id) in enumerate(entries):
+        until = entries[index + 1][0] if index + 1 < len(entries) else ends_at
+        if version_id is not None and until > since:
+            periods.append((version_id, since, until))
+    return periods
+
+
 def build_video_cuts_payload(
     segments_by_version: dict[int, list[StoredSegment]],
     *,
     recording_t0: datetime,
     recording_duration_seconds: float,
-    gap_seconds: float = DEFAULT_SEGMENT_RUN_GAP_SECONDS,
+    in_review_history: Optional[Sequence[dict[str, Any]]] = None,
 ) -> list[VersionCutList]:
     """Translate stored segments into per-version video cut lists.
 
-    For each version (emitted in ascending version_id order):
-      1. Sort its segments by wall-clock start.
-      2. Group into runs, starting a new run wherever the gap from the previous
-         segment's end to the next segment's start exceeds ``gap_seconds``.
-      3. Emit one cut per run: [first.start - t0, last.end - t0) in seconds.
-      4. Drop cuts entirely outside [0, recording_duration]; clamp partial
-         overlaps to that range.
+    A cut is ONE PERIOD THE VERSION WAS UNDER REVIEW — from the moment the operator marked it to
+    the moment they moved on — not a run of uninterrupted speech. Marking a shot is the operator
+    saying "this is what we are discussing now", and it stays true through every pause in the
+    room. Coming back to a shot later is a second period and therefore a second cut, because the
+    operator said so by marking it again.
 
-    Versions whose segments all fall outside the recording are still returned,
-    with an empty ``cuts`` list, so the caller can report "nothing to publish".
+    Periods containing nothing spoken are dropped: a shot that was on screen while nobody said
+    anything has no discussion to play back.
+
+    A recording with no timeline yields no cuts. The rule this replaced grouped by a pause longer
+    than two seconds, which produced three clips for the first shot, two for the second and one
+    for the third on a meeting where the operator did the same thing each time — the pauses
+    measured 2.54s, 2.31s, 2.04s, 1.53s and 0.78s, and which side of the line a breath fell on
+    decided the answer. Guessing the boundaries from speech rhythm is worse than not answering.
+
+    Cuts entirely outside [0, recording_duration] are dropped and partial overlaps
+    clamped. Versions whose segments all fall outside the recording are still returned with an
+    empty ``cuts`` list, so the caller can report "nothing to publish".
     """
     result: list[VersionCutList] = []
+    periods = in_review_periods(
+        in_review_history,
+        ends_at=recording_t0 + timedelta(seconds=recording_duration_seconds),
+    )
 
     for version_id in sorted(segments_by_version):
         parsed = sorted(
@@ -253,29 +286,32 @@ def build_video_cuts_payload(
             key=lambda t: (t[0], t[1]),
         )
 
-        runs: list[list[tuple[datetime, datetime, str]]] = []
-        for seg in parsed:
-            if runs and (seg[0] - runs[-1][-1][1]).total_seconds() <= gap_seconds:
-                runs[-1].append(seg)
-            else:
-                runs.append([seg])
+        runs = []
+        for _, start, until in (p for p in periods if p[0] == version_id):
+            spoken = [s for s in parsed if start <= s[0] < until]
+            if spoken:
+                # The period itself, not the speech inside it: the operator was on this shot for
+                # all of it, and clipping to the talking drops the beat before someone starts and
+                # cuts the last word short when the transcript ends early.
+                runs.append((start, until, [s[2] for s in spoken]))
 
         cuts: list[VideoCut] = []
-        for run in runs:
-            video_in = (run[0][0] - recording_t0).total_seconds()
-            video_out = (run[-1][1] - recording_t0).total_seconds()
+        for run_start, run_end, segment_ids in runs:
+            video_in = (run_start - recording_t0).total_seconds()
+            video_out = (run_end - recording_t0).total_seconds()
             # Entirely outside the recording window -> no media to cut.
             if video_out <= 0 or video_in >= recording_duration_seconds:
                 continue
+            # Still a non-empty span after clamping: `in_review_periods` only emits periods where
+            # the switch follows the mark, and max/min preserve that ordering given the two
+            # checks above. A zero-length clip cannot arise here.
             video_in = max(0.0, video_in)
             video_out = min(recording_duration_seconds, video_out)
-            if video_out <= video_in:
-                continue
             cuts.append(
                 VideoCut(
                     video_in_seconds=video_in,
                     video_out_seconds=video_out,
-                    transcript_segment_ids=[s[2] for s in run],
+                    transcript_segment_ids=segment_ids,
                 )
             )
 

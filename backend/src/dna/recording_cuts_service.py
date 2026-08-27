@@ -123,6 +123,10 @@ class RecordingCutsService:
             by_version,
             recording_t0=t0,
             recording_duration_seconds=metadata.recording_duration_seconds or 0.0,
+            # A cut is a period the shot was under review, not a run of speech. The operator
+            # marking a shot is what says "this is what we are discussing"; it stays true through
+            # every pause in the room, and only they can say when it stops being true.
+            in_review_history=metadata.in_review_history,
         )
 
         return {
