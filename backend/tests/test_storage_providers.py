@@ -1134,3 +1134,109 @@ class TestPendingArchiveQuery:
     async def test_an_empty_queue_is_not_an_error(self, provider):
         self._with_docs(provider, [])
         assert await provider.list_playlists_pending_archive() == []
+
+
+class TestTheInReviewMarkKeepsItsHistory:
+    """Recording WHEN the mark moved, so a late segment can ask what was true when it was spoken.
+
+    Without it, `in_review` is a single overwritten value and a segment confirmed five seconds
+    after the words were said has no way to know the reviewer has since moved on.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        from dna.storage_providers.mongodb import MongoDBStorageProvider
+
+        return MongoDBStorageProvider()
+
+    def _wire(self, provider, existing):
+        collection = mock.MagicMock()
+        collection.find_one = mock.AsyncMock(return_value=existing)
+        collection.find_one_and_update = mock.AsyncMock(
+            return_value={"_id": "abc", "playlist_id": 1}
+        )
+        client, db = mock.MagicMock(), mock.MagicMock()
+        client.dna = db
+        db.playlist_metadata = collection
+        provider._client = client
+        return collection
+
+    def _written(self, collection):
+        return collection.find_one_and_update.call_args[0][1]["$set"].get(
+            "in_review_history"
+        )
+
+    @pytest.mark.asyncio
+    async def test_marking_a_version_records_when(self, provider):
+        collection = self._wire(provider, {"playlist_id": 1})
+
+        await provider.upsert_playlist_metadata(1, PlaylistMetadataUpdate(in_review=7))
+
+        history = self._written(collection)
+        assert [e["version_id"] for e in history] == [7]
+        assert history[0]["since"].endswith("Z")
+
+    @pytest.mark.asyncio
+    async def test_each_move_is_appended(self, provider):
+        collection = self._wire(
+            provider,
+            {
+                "playlist_id": 1,
+                "in_review": 7,
+                "in_review_history": [
+                    {"version_id": 7, "since": "2026-08-27T21:00:00Z"}
+                ],
+            },
+        )
+
+        await provider.upsert_playlist_metadata(1, PlaylistMetadataUpdate(in_review=8))
+
+        assert [e["version_id"] for e in self._written(collection)] == [7, 8]
+
+    @pytest.mark.asyncio
+    async def test_clearing_the_mark_is_recorded_too(self, provider):
+        """The meeting ends and the mark is unset. Words after that belong to no version, and the
+        timeline has to say so or the last shot keeps collecting them."""
+        collection = self._wire(
+            provider,
+            {
+                "playlist_id": 1,
+                "in_review": 8,
+                "in_review_history": [
+                    {"version_id": 8, "since": "2026-08-27T21:00:00Z"}
+                ],
+            },
+        )
+
+        await provider.upsert_playlist_metadata(
+            1, PlaylistMetadataUpdate(clear_in_review=True)
+        )
+
+        assert [e["version_id"] for e in self._written(collection)] == [8, None]
+
+    @pytest.mark.asyncio
+    async def test_a_mark_set_before_the_timeline_existed_opens_the_history(
+        self, provider
+    ):
+        """A playlist already in review when this shipped. Starting the timeline at the NEXT click
+        would claim the earlier mark never applied, and file everything said under it as unmarked.
+        Nothing records when it was set, so it is opened at the epoch."""
+        collection = self._wire(provider, {"playlist_id": 1, "in_review": 7})
+
+        await provider.upsert_playlist_metadata(1, PlaylistMetadataUpdate(in_review=8))
+
+        history = self._written(collection)
+        assert [e["version_id"] for e in history] == [7, 8]
+        assert history[0]["since"].startswith("0001-01-01")
+
+    @pytest.mark.asyncio
+    async def test_an_upsert_that_does_not_touch_the_mark_leaves_it_alone(
+        self, provider
+    ):
+        collection = self._wire(provider, {"playlist_id": 1, "in_review": 7})
+
+        await provider.upsert_playlist_metadata(
+            1, PlaylistMetadataUpdate(transcription_paused=True)
+        )
+
+        assert self._written(collection) is None

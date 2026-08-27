@@ -1089,3 +1089,157 @@ class TestRecoveringALiveMeetingAfterARestart:
 
         assert service_ready._meeting_to_playlist["google_meet:duv-anrv-ztp"] == 461016
         assert "guessing playlist 461016" in caplog.text
+
+
+class TestSegmentsAreFiledWhereTheyWereSpoken:
+    """The bug this exists to prevent, replayed from the meeting that exposed it.
+
+    Vexa confirms a segment five to seven seconds after the words are said. Reading the in-review
+    mark at arrival filed everything said just before a reviewer moved on under the shot they moved
+    to: on playlist 462598 (2026-08-27), "Scout 42" belonged to the first shot and landed on the
+    second, and "Scout 45." belonged to the second and landed on the third.
+    """
+
+    SHOT_1, SHOT_2, SHOT_3 = 5720411, 5722946, 5723179
+    HISTORY = [
+        {"version_id": SHOT_1, "since": "2026-08-27T21:17:37.379Z"},
+        {"version_id": SHOT_2, "since": "2026-08-27T21:18:03.308Z"},
+        {"version_id": SHOT_3, "since": "2026-08-27T21:18:19.046Z"},
+    ]
+
+    @pytest.fixture
+    def service_ready(
+        self, mock_transcription_provider, mock_storage_provider, mock_event_publisher
+    ):
+        svc = TranscriptionService(
+            transcription_provider=mock_transcription_provider,
+            storage_provider=mock_storage_provider,
+            event_publisher=mock_event_publisher,
+        )
+        svc._meeting_to_playlist["google_meet:abc-def"] = 462598
+        return svc
+
+    def _metadata(self, **over):
+        base = dict(
+            _id="meta",
+            playlist_id=462598,
+            in_review=self.SHOT_3,  # the mark now — the arrival-time answer, and the wrong one
+            in_review_history=self.HISTORY,
+            transcription_paused=False,
+        )
+        base.update(over)
+        return PlaylistMetadata(**base)
+
+    def _seg(self, segment_id, spoken_at, text):
+        return {
+            "segment_id": segment_id,
+            "text": text,
+            "speaker": "Cottalango Leon",
+            "language": "en",
+            "start_time": 0.0,
+            "end_time": 1.0,
+            "absolute_start_time": spoken_at,
+            "absolute_end_time": spoken_at,
+            "updated_at": spoken_at,
+        }
+
+    def _payload(self, confirmed):
+        return {
+            "platform": "google_meet",
+            "meeting_id": "abc-def",
+            "speaker": "Cottalango Leon",
+            "confirmed": confirmed,
+            "pending": [],
+            "ts": "2026-08-27T21:18:20.000Z",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_late_arrival_keeps_the_shot_it_was_spoken_under(
+        self, service_ready, mock_storage_provider
+    ):
+        """ "Scout 42" was said at 39.4s; the reviewer moved on at 47.5s; Vexa confirmed it after
+        that. It belongs to the first shot."""
+        mock_storage_provider.get_playlist_metadata.return_value = self._metadata(
+            in_review=self.SHOT_2
+        )
+
+        await service_ready.on_transcription_updated(
+            self._payload([self._seg("s1", "2026-08-27T21:17:55.200Z", "Scout 42")])
+        )
+
+        assert (
+            mock_storage_provider.upsert_segment.await_args.kwargs["version_id"]
+            == self.SHOT_1
+        )
+
+    @pytest.mark.asyncio
+    async def test_one_batch_can_span_two_shots(
+        self, service_ready, mock_storage_provider
+    ):
+        """A single delivery can carry words from either side of a click. Stamping the batch with
+        one version — any one version — is what put them all on the same side."""
+        mock_storage_provider.get_playlist_metadata.return_value = self._metadata()
+
+        await service_ready.on_transcription_updated(
+            self._payload(
+                [
+                    self._seg("s1", "2026-08-27T21:18:12.350Z", "Scout 45."),
+                    self._seg("s2", "2026-08-27T21:18:20.800Z", "The last one is"),
+                ]
+            )
+        )
+
+        filed = [
+            call.kwargs["version_id"]
+            for call in mock_storage_provider.upsert_segment.await_args_list
+        ]
+        assert filed == [self.SHOT_2, self.SHOT_3]
+
+    @pytest.mark.asyncio
+    async def test_speech_before_any_shot_was_marked_is_discarded(
+        self, service_ready, mock_storage_provider
+    ):
+        """Not filed under whichever shot was eventually chosen. Nobody had said which shot they
+        were looking at, so there is no honest answer — and inventing one is worse than the gap.
+        """
+        mock_storage_provider.get_playlist_metadata.return_value = self._metadata()
+
+        await service_ready.on_transcription_updated(
+            self._payload([self._seg("s0", "2026-08-27T21:17:19.400Z", "Let us see.")])
+        )
+
+        mock_storage_provider.upsert_segment.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_playlist_with_no_timeline_behaves_as_it_always_did(
+        self, service_ready, mock_storage_provider
+    ):
+        """Every playlist from before the timeline existed. They fall back to the current mark."""
+        mock_storage_provider.get_playlist_metadata.return_value = self._metadata(
+            in_review_history=[]
+        )
+
+        await service_ready.on_transcription_updated(
+            self._payload([self._seg("s1", "2026-08-27T21:17:55.200Z", "Scout 42")])
+        )
+
+        assert (
+            mock_storage_provider.upsert_segment.await_args.kwargs["version_id"]
+            == self.SHOT_3
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_live_pane_still_shows_the_current_shot(
+        self, service_ready, mock_storage_provider, mock_event_publisher
+    ):
+        """The broadcast is what the reviewer is looking at NOW; the stored attribution is the
+        record. A batch spanning two shots cannot be described by one envelope, so the envelope
+        keeps saying "current" and the pane reconciles on its next fetch."""
+        mock_storage_provider.get_playlist_metadata.return_value = self._metadata()
+
+        await service_ready.on_transcription_updated(
+            self._payload([self._seg("s1", "2026-08-27T21:17:55.200Z", "Scout 42")])
+        )
+
+        broadcast = mock_event_publisher.ws_manager.broadcast.await_args.args[0]
+        assert broadcast["version_id"] == self.SHOT_3

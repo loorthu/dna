@@ -4,7 +4,7 @@ Pydantic models for playlist metadata stored in the storage provider.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -116,6 +116,14 @@ class PlaylistMetadata(BaseModel):
     id: str = Field(alias="_id")
     playlist_id: int
     in_review: Optional[int] = None
+    in_review_history: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Append-only record of the in-review mark, oldest first, each entry "
+        "{version_id, since}. A segment is attributed by when it was SPOKEN, and Vexa confirms "
+        "segments seconds later — so `in_review` alone cannot answer what was true when the words "
+        "were said, and everything said just before a reviewer moves on lands on the wrong shot. "
+        "A null version_id is a real entry: it records the mark being cleared.",
+    )
     meeting_id: Optional[str] = None
     platform: Optional[str] = None
     vexa_meeting_id: Optional[int] = None

@@ -10,6 +10,7 @@ from typing import Any, Optional
 from bson import ObjectId
 from pymongo import AsyncMongoClient, ReturnDocument
 
+from dna.in_review_timeline import append_to_history
 from dna.models.draft_note import DraftNote, DraftNoteUpdate
 from dna.models.playlist_metadata import PlaylistMetadata, PlaylistMetadataUpdate
 from dna.models.published_transcript import (
@@ -263,6 +264,31 @@ class MongoDBStorageProvider(StorageProviderBase):
         }
 
         unset_fields: dict[str, Any] = {}
+
+        # Record WHEN the mark moved, not just where it is now. Vexa confirms segments seconds
+        # after the words are said, so a segment arriving now may have been spoken under the
+        # previous mark; without this timeline there is no way to ask what was true back then, and
+        # everything said in the last few seconds before a reviewer moves on lands on the shot
+        # they moved to. `in_review` still holds the current mark — this is its history.
+        marks_a_version = data.in_review is not None
+        if marks_a_version or data.clear_in_review:
+            existing = await self.playlist_metadata_collection.find_one(query)
+            new_mark = None if data.clear_in_review else data.in_review
+            if not (existing or {}).get("in_review_history") and (existing or {}).get(
+                "in_review"
+            ) not in (None, new_mark):
+                # First change on a playlist that already had a mark: the timeline would otherwise
+                # start midway and claim the earlier mark never applied. Nothing records when it
+                # was set, so it is opened at the epoch — "since before anything we can ask about".
+                update_fields["in_review_history"] = append_to_history(
+                    [], existing["in_review"], datetime.min.replace(tzinfo=timezone.utc)
+                )
+            update_fields["in_review_history"] = append_to_history(
+                update_fields.get("in_review_history")
+                or (existing or {}).get("in_review_history"),
+                new_mark,
+                datetime.now(timezone.utc),
+            )
 
         if data.clear_recording_link:
             unset_fields["vexa_recording_id"] = ""

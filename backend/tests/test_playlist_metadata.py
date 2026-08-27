@@ -280,7 +280,10 @@ class TestMongoDBPlaylistMetadataProvider:
     def mock_collection(self):
         """Create a mock MongoDB collection."""
         collection = mock.MagicMock()
-        collection.find_one = mock.AsyncMock()
+        # None, not a bare AsyncMock: find_one returns a document or nothing, and an unconfigured
+        # mock returns something that answers .get() with a coroutine — which reads as a document
+        # holding values right up until something tries to use one.
+        collection.find_one = mock.AsyncMock(return_value=None)
         collection.find_one_and_update = mock.AsyncMock()
         collection.delete_one = mock.AsyncMock()
         return collection

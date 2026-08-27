@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from dna.events import EventPublisher, EventType, get_event_publisher
+from dna.in_review_timeline import version_in_review_at
 from dna.models.playlist_metadata import PlaylistMetadataUpdate
 from dna.models.stored_segment import StoredSegmentCreate
 from dna.storage_providers.storage_provider_base import (
@@ -303,7 +304,6 @@ class TranscriptionService:
             )
             return
 
-        version_id = metadata.in_review
         resumed_at = metadata.transcription_resumed_at
 
         for seg in confirmed:
@@ -327,6 +327,29 @@ class TranscriptionService:
                         continue
                 except ValueError:
                     pass
+
+            # Which version was in review WHEN THESE WORDS WERE SAID, not when they arrived.
+            # Vexa confirms a segment five to seven seconds after the speech ends, so reading the
+            # current mark here filed everything said just before a reviewer moved on under the
+            # shot they moved to — on a controlled test, two of three shots had their own version
+            # number attributed to the following shot.
+            version_id = version_in_review_at(
+                metadata.in_review_history,
+                absolute_start_time,
+                fallback=metadata.in_review,
+            )
+            if version_id is None:
+                # Spoken before anything was marked. The same silence as the no-mark case above,
+                # and worth the same complaint: it is invisible from outside.
+                if playlist_id not in self._warned_not_saving:
+                    self._warned_not_saving.add(playlist_id)
+                    logger.warning(
+                        "Playlist %s: discarding a segment spoken at %s — no version was in "
+                        "review at that moment. Earlier speech is not backfilled.",
+                        playlist_id,
+                        absolute_start_time,
+                    )
+                continue
 
             segment_create = StoredSegmentCreate(
                 segment_id=segment_id,
@@ -353,6 +376,12 @@ class TranscriptionService:
 
         # Broadcast the raw Vexa shape with DNA envelope fields.
         # Frontend TranscriptManager.handleMessage() consumes this directly.
+        #
+        # The CURRENT mark, deliberately, and not the per-segment attribution above: this is the
+        # live pane, and it shows the version the reviewer is looking at now. A batch can resolve
+        # to more than one version once late arrivals are attributed by speech time, and a single
+        # envelope cannot say so — what is stored is the record, and the pane reconciles with it
+        # on the next fetch.
         await self.event_publisher.ws_manager.broadcast(
             {
                 "type": "transcript",
@@ -360,7 +389,7 @@ class TranscriptionService:
                 "confirmed": confirmed,
                 "pending": pending,
                 "playlist_id": playlist_id,
-                "version_id": version_id,
+                "version_id": metadata.in_review,
                 "ts": ts,
             }
         )
