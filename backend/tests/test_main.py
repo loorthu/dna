@@ -58,7 +58,8 @@ class TestCapabilities:
 
     def test_it_agrees_with_the_endpoint_it_describes(self, monkeypatch):
         """The claim and the thing claimed must not drift apart: advertising playback while the
-        cut list 404s is worse than not advertising it, because the tab appears and fails."""
+        cut list 404s is worse than not advertising it, because the tab appears and fails.
+        """
         monkeypatch.delenv("DNA_ENABLE_RECORDING_PLAYBACK", raising=False)
 
         assert client.get("/capabilities").json()["recording_playback"] is False
