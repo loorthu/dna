@@ -19,3 +19,22 @@ services:
       # for the ShotGrid site-setup checklist the custom entity depends on.
       - DNA_ENABLE_TRANSCRIPT_PUBLISH=false
       - SHOTGRID_TRANSCRIPT_ENTITY=CustomEntity01
+      # Follow Along's external id — the backend half of the feature the
+      # VITE_FOLLOW_ALONG_* settings turn on (frontend/packages/app/.env.example).
+      # Name the production-tracking field holding the same id the review player
+      # announces for a clip; the versions a playlist loads are then matched
+      # against it. It is a custom field that does not exist on a stock ShotGrid
+      # site, so LEAVING THIS EMPTY IS THE SUPPORTED DEFAULT: unset leaves the
+      # ShotGrid query untouched and the feature simply off.
+      #
+      # Set it wrong or leave it unset with the frontend feature ON and every
+      # version comes back with no external_ref, nothing matches, and each clip
+      # change reports "Review moved off this playlist". (At SPI the field is
+      # sg_jts, a number field labelled "JTS".)
+      - PRODTRACK_VERSION_EXTERNAL_REF_FIELD=
+      # Meeting recording playback (disabled by default, like transcript
+      # publishing above). The app asks GET /capabilities once at start-up and
+      # hides the Recording tab unless this is "true" — so a deployment whose
+      # collector is archiving files correctly still shows no tab until it is
+      # set. Needs the collector running and RECORDING_NETWORK_PATH served.
+      - DNA_ENABLE_RECORDING_PLAYBACK=false

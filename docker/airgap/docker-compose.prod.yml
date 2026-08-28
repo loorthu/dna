@@ -44,6 +44,11 @@ services:
       - SHOTGRID_URL=${SHOTGRID_URL:-}
       - SHOTGRID_SCRIPT_NAME=${SHOTGRID_SCRIPT_NAME:-}
       - SHOTGRID_API_KEY=${SHOTGRID_API_KEY:-}
+      # Follow Along's external id. Undeclared here until now, which meant the
+      # setting was silently inert on this path however the env was written:
+      # compose passes only what a service declares. Empty is the supported
+      # default (feature off); see backend/example.docker-compose.local.yml.
+      - PRODTRACK_VERSION_EXTERNAL_REF_FIELD=${PRODTRACK_VERSION_EXTERNAL_REF_FIELD:-}
       # Vexa runs on another host — reached over the network (not a shared docker net).
       - VEXA_API_URL=${VEXA_API_URL:-http://160.33.19.70:18056}
       - VEXA_API_KEY=${VEXA_API_KEY:-}
