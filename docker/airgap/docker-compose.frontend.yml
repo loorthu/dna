@@ -58,7 +58,10 @@ services:
   # the share, records it in DNA and only then releases the upstream copy.
   collector:
     build:
-      context: ./collector
+      # The collector lives at the repo root, not under docker/airgap/: it is part
+      # of the recording feature rather than of this air-gapped deployment, which
+      # only wires it up. This file is the SPI-specific half.
+      context: ../../collector
       dockerfile: Dockerfile
       additional_contexts:
         # The collection logic comes from the backend package so it is the same code the
