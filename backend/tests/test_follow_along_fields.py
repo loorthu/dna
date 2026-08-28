@@ -57,8 +57,22 @@ class TestVersionExternalRefFieldMapping:
         assert BASE_VERSION_FIELDS == original
 
     def test_no_external_ref_is_requested_by_default(self):
-        """Guard for sites with no such field: the query must not ask for one."""
-        assert "external_ref" not in FIELD_MAPPING["version"]["fields"].values()
+        """Guard for sites with no such field: the query must not ask for one.
+
+        Asserted against the SHIPPED version field list with any configured entry stripped,
+        rather than against the imported constant as-is. FIELD_MAPPING is built from the
+        environment at import, so a machine that configures the field — as SPI's dev stack
+        does — legitimately has one in there; reading the constant directly asserted only how
+        the test runner happened to be configured, and failed for that reason alone.
+        """
+        base = {
+            key: value
+            for key, value in FIELD_MAPPING["version"]["fields"].items()
+            if value != "external_ref"
+        }
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            assert _version_fields_with_external_ref(base) == base
 
 
 class TestProjectCodeFieldMapping:
