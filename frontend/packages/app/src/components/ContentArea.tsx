@@ -5,7 +5,13 @@ import type { Version, SearchResult, UserSettings } from '@dna/core';
 import { VersionHeader } from './VersionHeader';
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor';
 import { AssistantPanel } from './AssistantPanel';
-import { usePlaylistMetadata, useSetInReview, useDraftNote } from '../hooks';
+import {
+  usePlaylistMetadata,
+  useSetInReview,
+  useDraftNote,
+  useBotSession,
+  isBotSessionLive,
+} from '../hooks';
 import { useHotkeyAction } from '../hotkeys';
 import { apiHandler } from '../api';
 import { useFeatureFlags } from '../contexts';
@@ -126,6 +132,13 @@ export function ContentArea({
   const hasInReview = !!inReviewVersion;
   const isCurrentVersionInReview =
     version && inReviewVersionId ? version.id === inReviewVersionId : false;
+
+  // Segments are filed against `in_review` and nothing else — a version merely sitting at the
+  // "rev" status does not save them, so this deliberately ignores the fallback above. While a bot
+  // is live with none set, everything it transcribes is discarded on arrival.
+  const botSession = useBotSession(playlistId ?? null);
+  const isDiscardingSegments =
+    isBotSessionLive(botSession) && (inReviewVersionId ?? null) === null;
 
   const handleBack = useCallback(() => {
     if (canGoBack && onVersionSelect) {
@@ -302,6 +315,7 @@ export function ContentArea({
         hasInReview={hasInReview}
         isCurrentVersionInReview={isCurrentVersionInReview}
         isSettingInReview={isSettingInReview}
+        isDiscardingSegments={isDiscardingSegments}
         onRefresh={handleRefreshClick}
       />
       <NoteEditor

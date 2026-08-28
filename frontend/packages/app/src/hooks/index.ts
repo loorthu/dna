@@ -17,7 +17,12 @@ export {
   useSetInReview,
 } from './usePlaylistMetadata';
 
-export { useTranscription, parseMeetingUrl } from './useTranscription';
+export {
+  useTranscription,
+  useBotSession,
+  isBotSessionLive,
+  parseMeetingUrl,
+} from './useTranscription';
 export type {
   ParsedMeetingUrl,
   UseTranscriptionOptions,

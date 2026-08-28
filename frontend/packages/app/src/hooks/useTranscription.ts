@@ -61,6 +61,37 @@ function isActiveStatus(statusValue: BotStatusEnum | undefined): boolean {
 }
 
 /**
+ * Where a playlist's bot session lives.
+ *
+ * It is React state in all but name — nothing fetches it, and its only writers are this file's
+ * mutations and its `bot.status_changed` subscription. It sits in the query cache rather than in
+ * `useState` so that components far from this hook can read it: the Set In Review button in the
+ * version header has to know a bot is live before it can warn that the transcript is going
+ * nowhere, and it is nowhere near the transcription menu in the tree.
+ */
+export function botSessionQueryKey(playlistId: number | null) {
+  return ['botSession', playlistId] as const;
+}
+
+export function isBotSessionLive(session: BotSession | null): boolean {
+  return isActiveStatus(session?.status);
+}
+
+/** Read-only view of the session above, for anything that must not dispatch or stop a bot. */
+export function useBotSession(playlistId: number | null): BotSession | null {
+  const { data } = useQuery<BotSession | null>({
+    queryKey: botSessionQueryKey(playlistId),
+    // Never runs: the cache is a store, not a mirror of anything on the server.
+    queryFn: () => null,
+    enabled: false,
+    initialData: null,
+    staleTime: Infinity,
+    gcTime: Infinity,
+  });
+  return data ?? null;
+}
+
+/**
  * The session a `bot.status_changed` frame leaves behind, or `null` to keep the one we have.
  *
  * Exported so the rule can be tested as a rule — the alternative is asserting it through a hook
@@ -140,7 +171,13 @@ export function useTranscription({
   const queryClient = useQueryClient();
   const eventClient = useEventClient();
   const { showToast, dismissToast } = useToast();
-  const [session, setSession] = useState<BotSession | null>(null);
+  const session = useBotSession(playlistId);
+  const setSession = useCallback(
+    (next: BotSession | null) => {
+      queryClient.setQueryData(botSessionQueryKey(playlistId), next);
+    },
+    [queryClient, playlistId]
+  );
   const [error, setError] = useState<Error | null>(null);
   const previousStatusRef = useRef<BotStatusEnum | null>(null);
   const waitingRoomToastIdRef = useRef<string | null>(null);
@@ -228,7 +265,7 @@ export function useTranscription({
         });
       }
     }
-  }, [status, session, meetingPlatform, meetingId, playlistId]);
+  }, [status, session, meetingPlatform, meetingId, playlistId, setSession]);
 
   useEffect(() => {
     if (!eventClient || !playlistId) return;
@@ -275,7 +312,15 @@ export function useTranscription({
     );
 
     return unsubscribe;
-  }, [eventClient, meetingPlatform, meetingId, playlistId, session, queryClient]);
+  }, [
+    eventClient,
+    meetingPlatform,
+    meetingId,
+    playlistId,
+    session,
+    queryClient,
+    setSession,
+  ]);
 
   const dispatchMutation = useMutation<BotSession, Error, DispatchBotRequest>({
     mutationFn: (request) => apiHandler.dispatchBot({ request }),
@@ -358,7 +403,7 @@ export function useTranscription({
   const clearSession = useCallback(() => {
     setSession(null);
     setError(null);
-  }, []);
+  }, [setSession]);
 
   return {
     session,

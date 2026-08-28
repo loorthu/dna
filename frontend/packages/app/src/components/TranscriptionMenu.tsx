@@ -403,11 +403,10 @@ export function TranscriptionMenu({
 
   const hasVersionInReview = (metadata?.in_review ?? null) !== null;
   const isDiscardingSegments = isActive && !hasVersionInReview;
-  // Said BEFORE the button is pressed as well as after. Forgetting to mark a version is the
-  // actual failure mode, and a warning that only appears once the bot is running arrives after
-  // the transcript has already started being thrown away.
-  const willDiscardSegments =
-    !isActive && !hasVersionInReview && meetingUrl.trim().length > 0;
+  // Nothing is said here BEFORE the bot is sent. The bot goes out while the meeting is still
+  // small talk and nobody has picked a shot yet, so a warning at that moment is one the user is
+  // right to ignore — and one they learn to ignore. The Set In Review button in the version
+  // header carries it instead, from the moment the bot is live until a version is marked.
 
   const isLiveButPaused =
     isPaused && ['in_call', 'transcribing'].includes(currentStatus);
@@ -551,23 +550,15 @@ export function TranscriptionMenu({
             </ErrorMessage>
           )}
 
-          {(isDiscardingSegments || willDiscardSegments) && (
+          {isDiscardingSegments && (
             <WarningMessage>
               <AlertTriangle size={14} />
-              {isDiscardingSegments ? (
-                <span>
-                  <strong>Transcript is not being saved.</strong> No version is
-                  marked In&nbsp;Review, so segments are discarded as they
-                  arrive. Mark a version In&nbsp;Review to start keeping them —
-                  speech from before that is not backfilled.
-                </span>
-              ) : (
-                <span>
-                  <strong>No version is marked In&nbsp;Review.</strong> The bot
-                  will join and transcribe, but nothing will be saved. Mark a
-                  version In&nbsp;Review first.
-                </span>
-              )}
+              <span>
+                <strong>Transcript is not being saved.</strong> No version is
+                marked In&nbsp;Review, so segments are discarded as they arrive.
+                Mark a version In&nbsp;Review to start keeping them — speech from
+                before that is not backfilled.
+              </span>
             </WarningMessage>
           )}
 

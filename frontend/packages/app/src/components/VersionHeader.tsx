@@ -1,6 +1,7 @@
-import styled, { css } from 'styled-components';
+import styled, { css, keyframes, type DefaultTheme } from 'styled-components';
 import { Tooltip } from '@radix-ui/themes';
 import {
+  AlertTriangle,
   ChevronLeft,
   Eye,
   ChevronRight,
@@ -41,6 +42,7 @@ interface VersionHeaderProps {
   hasInReview?: boolean;
   isCurrentVersionInReview?: boolean;
   isSettingInReview?: boolean;
+  isDiscardingSegments?: boolean;
 }
 
 const HeaderWrapper = styled.div`
@@ -233,36 +235,115 @@ const Thumbnail = styled.div`
   }
 `;
 
-const SetInReviewButton = styled.button<{ $isInReview?: boolean }>`
+/* The fill and the border carry the pulse, not just a halo around it. A glow spreading outside an
+   already-amber border on a dark page is the kind of motion peripheral vision misses entirely —
+   the whole button brightening is what actually registers while someone is reading notes. */
+const warnPulse = keyframes`
+  0%, 100% {
+    background-color: rgba(245, 158, 11, 0.08);
+    border-color: rgba(245, 158, 11, 0.65);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6);
+  }
+  50% {
+    background-color: rgba(245, 158, 11, 0.34);
+    border-color: rgba(245, 158, 11, 1);
+    box-shadow: 0 0 0 8px rgba(245, 158, 11, 0);
+  }
+`;
+
+interface SetInReviewTone {
+  fg: string;
+  bg: string;
+  border: string;
+  borderStyle: 'solid' | 'dashed';
+}
+
+/* Three states share this button. It is the version in review (accent, settled); a bot is live
+   with nothing in review, so the transcript is being thrown away and pressing this is the only
+   fix (warning); or it is an ordinary version nobody is reviewing (quiet, dashed). */
+function setInReviewTone(
+  theme: DefaultTheme,
+  isInReview: boolean,
+  warn: boolean
+): SetInReviewTone {
+  if (warn) {
+    return {
+      fg: theme.colors.status.warning,
+      bg: theme.colors.status.warning + '1f',
+      border: theme.colors.status.warning,
+      borderStyle: 'solid',
+    };
+  }
+  if (isInReview) {
+    return {
+      fg: theme.colors.accent.main,
+      bg: theme.colors.accent.main + '15',
+      border: theme.colors.accent.main,
+      borderStyle: 'solid',
+    };
+  }
+  return {
+    fg: theme.colors.text.secondary,
+    bg: 'transparent',
+    border: theme.colors.border.default,
+    borderStyle: 'dashed',
+  };
+}
+
+const SetInReviewButton = styled.button<{
+  $isInReview?: boolean;
+  $warn?: boolean;
+}>`
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   width: 100%;
-  padding: 8px 12px;
+  /* Padding gives back what the thicker border and the oversized triangle take, so the button
+     keeps its height inside the fixed-height thumbnail column and nothing below it shifts. */
+  padding: ${({ $warn }) => ($warn ? '6px 11px' : '8px 12px')};
   font-size: 13px;
-  font-weight: 500;
+  font-weight: ${({ $warn }) => ($warn ? 600 : 500)};
   font-family: ${({ theme }) => theme.fonts.sans};
-  color: ${({ theme, $isInReview }) =>
-    $isInReview ? theme.colors.accent.main : theme.colors.text.secondary};
-  background: ${({ theme, $isInReview }) =>
-    $isInReview ? theme.colors.accent.main + '15' : 'transparent'};
-  border: 1px ${({ $isInReview }) => ($isInReview ? 'solid' : 'dashed')}
-    ${({ theme, $isInReview }) =>
-      $isInReview ? theme.colors.accent.main : theme.colors.border.default};
+  color: ${({ theme, $isInReview, $warn }) =>
+    setInReviewTone(theme, !!$isInReview, !!$warn).fg};
+  background: ${({ theme, $isInReview, $warn }) =>
+    setInReviewTone(theme, !!$isInReview, !!$warn).bg};
+  border: ${({ $warn }) => ($warn ? '2px' : '1px')}
+    ${({ theme, $isInReview, $warn }) =>
+      setInReviewTone(theme, !!$isInReview, !!$warn).borderStyle}
+    ${({ theme, $isInReview, $warn }) =>
+      setInReviewTone(theme, !!$isInReview, !!$warn).border};
   border-radius: ${({ theme }) => theme.radii.md};
   cursor: ${({ $isInReview }) => ($isInReview ? 'default' : 'pointer')};
   transition: all ${({ theme }) => theme.transitions.fast};
+  animation: ${({ $warn }) => ($warn ? warnPulse : 'none')} 2s ease-in-out
+    infinite;
+
+  /* Someone who has asked the OS for less motion still has a transcript going nowhere. They get
+     the loud end of the pulse as a fixed colour rather than nothing at all. */
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    ${({ theme, $warn }) =>
+      $warn &&
+      css`
+        background: ${theme.colors.status.warning}3d;
+      `}
+  }
 
   &:hover:not(:disabled) {
-    background: ${({ theme, $isInReview }) =>
-      $isInReview
-        ? theme.colors.accent.main + '15'
+    background: ${({ theme, $isInReview, $warn }) =>
+      $warn || $isInReview
+        ? setInReviewTone(theme, !!$isInReview, !!$warn).bg
         : theme.colors.bg.surfaceHover};
-    color: ${({ theme, $isInReview }) =>
-      $isInReview ? theme.colors.accent.main : theme.colors.text.primary};
-    border-color: ${({ theme, $isInReview }) =>
-      $isInReview ? theme.colors.accent.main : theme.colors.border.strong};
+    color: ${({ theme, $isInReview, $warn }) =>
+      $warn || $isInReview
+        ? setInReviewTone(theme, !!$isInReview, !!$warn).fg
+        : theme.colors.text.primary};
+    border-color: ${({ theme, $isInReview, $warn }) =>
+      $warn || $isInReview
+        ? setInReviewTone(theme, !!$isInReview, !!$warn).border
+        : theme.colors.border.strong};
   }
 
   &:disabled {
@@ -400,12 +481,24 @@ export function VersionHeader({
   hasInReview = true,
   isCurrentVersionInReview = false,
   isSettingInReview = false,
+  isDiscardingSegments = false,
 }: VersionHeaderProps) {
   const { getLabel } = useHotkeyConfig();
   const { inReviewEnabled } = useFeatureFlags();
   const { statuses, isLoading: isLoadingStatuses } = useVersionStatuses({ projectId });
   const displayTitle = shotCode && versionNumber ? `${shotCode} - ` : '';
   const displayCode = versionNumber || shotCode || 'Untitled Version';
+
+  // The bot joins long before anyone starts reviewing shots, and until a version is marked the
+  // transcript it produces is dropped on arrival. Saying so here, on the button that fixes it,
+  // rather than in the dialog that sends the bot: that dialog is open minutes too early, while
+  // the meeting is still small talk and the warning reads as noise.
+  const showDiscardWarning = isDiscardingSegments && !isCurrentVersionInReview;
+  const setInReviewTooltip = showDiscardWarning
+    ? 'A bot is transcribing, but no version is marked In Review — every line is discarded as ' +
+      'it arrives. Mark this version to start keeping them; what was already said is not ' +
+      'backfilled.'
+    : `Set In Review (${getLabel('setInReview')})`;
 
   return (
     <HeaderWrapper>
@@ -465,9 +558,15 @@ export function VersionHeader({
             {thumbnailUrl && <img src={thumbnailUrl} alt={displayCode} />}
           </Thumbnail>
           {inReviewEnabled && (
-            <Tooltip content={`Set In Review (${getLabel('setInReview')})`}>
+            <Tooltip content={setInReviewTooltip}>
               <SetInReviewButton
                 $isInReview={isCurrentVersionInReview}
+                $warn={showDiscardWarning}
+                aria-label={
+                  showDiscardWarning
+                    ? 'Set In Review — transcript is not being saved'
+                    : undefined
+                }
                 onClick={onSetInReview}
                 disabled={isCurrentVersionInReview || isSettingInReview}
               >
@@ -480,7 +579,14 @@ export function VersionHeader({
                   </>
                 ) : (
                   <>
-                    <Target size={14} />
+                    {showDiscardWarning ? (
+                      // Deliberately larger than the 14px every other icon here uses. At icon
+                      // size it read as decoration next to the label and went unnoticed; at 19
+                      // it is the first thing on the button the eye lands on.
+                      <AlertTriangle size={19} strokeWidth={2.5} />
+                    ) : (
+                      <Target size={14} />
+                    )}
                     Set In Review
                   </>
                 )}

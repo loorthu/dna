@@ -52,4 +52,35 @@ describe('VersionHeader', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
+
+  it('flags Set In Review while a live bot has nowhere to file its transcript', () => {
+    render(
+      <HotkeysProvider>
+        <VersionHeader
+          shotCode="SHOT"
+          versionNumber="v001"
+          projectId={1}
+          isDiscardingSegments
+        />
+      </HotkeysProvider>
+    );
+    const button = screen.getByRole('button', {
+      name: /transcript is not being saved/i,
+    });
+    expect(button).toBeEnabled();
+  });
+
+  it('leaves Set In Review unflagged when no bot is discarding segments', () => {
+    render(
+      <HotkeysProvider>
+        <VersionHeader shotCode="SHOT" versionNumber="v001" projectId={1} />
+      </HotkeysProvider>
+    );
+    expect(
+      screen.getByRole('button', { name: /^Set In Review$/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /transcript is not being saved/i })
+    ).not.toBeInTheDocument();
+  });
 });
