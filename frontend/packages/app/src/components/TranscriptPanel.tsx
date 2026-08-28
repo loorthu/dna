@@ -2,7 +2,9 @@ import { useEffect, useRef } from 'react';
 import styled, { css } from 'styled-components';
 import { Loader2, MessageSquare, AlertCircle } from 'lucide-react';
 import { useSegments } from '../hooks';
+import { useBotSession, isBotSessionLive } from '../hooks/useTranscription';
 import { useConnectionStatus } from '../hooks/useDNAEvents';
+import { transcriptStatus, type StatusTone } from './transcriptStatus';
 
 interface TranscriptPanelProps {
   playlistId: number | null;
@@ -79,7 +81,7 @@ const StateText = styled.p`
   color: ${({ theme }) => theme.colors.text.muted};
 `;
 
-const StatusBar = styled.div<{ $isConnected: boolean }>`
+const StatusBar = styled.div`
   display: flex;
   align-items: center;
   gap: 6px;
@@ -90,12 +92,16 @@ const StatusBar = styled.div<{ $isConnected: boolean }>`
   background: ${({ theme }) => theme.colors.bg.surface};
 `;
 
-const StatusDot = styled.div<{ $isConnected: boolean }>`
+const StatusDot = styled.div<{ $tone: StatusTone }>`
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: ${({ $isConnected, theme }) =>
-    $isConnected ? theme.colors.status.success : theme.colors.status.warning};
+  background: ${({ $tone, theme }) =>
+    $tone === 'live'
+      ? theme.colors.status.success
+      : $tone === 'stale'
+        ? theme.colors.status.warning
+        : theme.colors.text.muted};
 `;
 
 function formatTime(isoString: string): string {
@@ -113,10 +119,12 @@ export function TranscriptPanel({
 }: TranscriptPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const { isConnected } = useConnectionStatus();
+  const botLive = isBotSessionLive(useBotSession(playlistId));
   const { segments, isLoading, isError, error } = useSegments({
     playlistId,
     versionId,
   });
+  const status = transcriptStatus(botLive, isConnected, segments.length);
 
   useEffect(() => {
     if (scrollRef.current && segments.length > 0) {
@@ -154,9 +162,9 @@ export function TranscriptPanel({
   if (segments.length === 0) {
     return (
       <PanelContainer>
-        <StatusBar $isConnected={isConnected}>
-          <StatusDot $isConnected={isConnected} />
-          {isConnected ? 'Connected - waiting for transcript' : 'Connecting...'}
+        <StatusBar>
+          <StatusDot $tone={status.tone} />
+          {status.label}
         </StatusBar>
         <StateContainer>
           <MessageSquare size={32} opacity={0.3} />
@@ -168,9 +176,9 @@ export function TranscriptPanel({
 
   return (
     <PanelContainer>
-      <StatusBar $isConnected={isConnected}>
-        <StatusDot $isConnected={isConnected} />
-        {isConnected ? 'Live' : 'Reconnecting...'} • {segments.length} segments
+      <StatusBar>
+        <StatusDot $tone={status.tone} />
+        {status.label}
       </StatusBar>
       <SegmentList ref={scrollRef}>
         {segments.map((segment, idx) => {
