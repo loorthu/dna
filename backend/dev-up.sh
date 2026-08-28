@@ -10,8 +10,13 @@ cd "$(dirname "$0")"
 VEXA_API_PORT=18056   # external host port (internal is 8000)
 VEXA_ADMIN_TOKEN="changeme"
 
+# docker-compose.vexa.yml DEFINES the `vexa` service; docker-compose.local.vexa.yml
+# only OVERRIDES it. Listing the override without the definition makes compose reject
+# the whole project ("service vexa has neither an image nor a build context"), so this
+# script could not start anything. dev-down.sh and the makefile always had all four.
 COMPOSE="docker compose \
   -f docker-compose.yml \
+  -f docker-compose.vexa.yml \
   -f docker-compose.local.yml \
   -f docker-compose.local.vexa.yml"
 
