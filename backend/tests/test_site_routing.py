@@ -16,9 +16,24 @@ from dna.site_routing import SITE_MAP_ENV, site_for_client
 
 
 class TestSiteForClient:
-    def test_an_unmapped_peer_is_its_own_site(self):
-        """A name is a convenience; the address routes perfectly well without one."""
+    def test_routing_off_until_configured(self):
+        """The single-collector deployment must need no configuration.
+
+        A real HTTP request always has a peer, so deriving a site from merely having one stamped
+        every job with an address while the lone collector — declaring no site — asked for the
+        unrouted queue. The two never met: recordings piled up addressed to a site nobody claimed,
+        and the only repair was pasting a literal IP into COLLECTOR_SITE.
+        """
         with mock.patch.dict("os.environ", {}, clear=True):
+            assert site_for_client("10.5.81.74") is None
+
+    def test_an_unmapped_peer_is_its_own_site_once_routing_is_on(self):
+        """A name is a convenience; the address routes perfectly well without one.
+
+        Only once the map exists, though — a front end nobody named must not fall into the
+        unrouted queue another collector is draining.
+        """
+        with mock.patch.dict("os.environ", {SITE_MAP_ENV: "10.0.0.9=other"}):
             assert site_for_client("10.5.81.74") == "10.5.81.74"
 
     def test_a_mapped_peer_gets_its_name(self):

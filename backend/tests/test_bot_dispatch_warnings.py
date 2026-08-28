@@ -249,10 +249,32 @@ class TestTheDispatchRecordsWhichSideAskedForIt:
         yield
         app.dependency_overrides.clear()
 
+    def test_nothing_is_sited_until_routing_is_configured(
+        self, client, mock_storage, override_deps
+    ):
+        """The single-collector deployment must need no configuration.
+
+        Stamping a site because a peer merely exists — which it always does — addressed every
+        recording to a site the lone unrouted collector never asked for, so nothing was ever
+        collected and the only repair was pasting a literal IP into COLLECTOR_SITE.
+        """
+        with mock.patch.dict("os.environ", {}, clear=True):
+            client.post("/transcription/bot", json=DISPATCH)
+
+        update = mock_storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.collector_site is None
+
     def test_the_dispatching_peer_is_recorded_as_the_site(
         self, client, mock_storage, override_deps
     ):
-        client.post("/transcription/bot", json=DISPATCH)
+        """Once routing is on, an unnamed front end is still its own site.
+
+        It must not fall into the unrouted queue another collector is draining.
+        """
+        with mock.patch.dict(
+            "os.environ", {"DNA_COLLECTOR_SITES": "10.0.0.9=elsewhere"}
+        ):
+            client.post("/transcription/bot", json=DISPATCH)
 
         update = mock_storage.upsert_playlist_metadata.await_args.args[1]
         assert update.collector_site == "testclient", (
