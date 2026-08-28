@@ -28,12 +28,35 @@ be reachable from the prod host (the frontend proxies to it).
 
 `docker/airgap/` builds & runs **only** the frontend (nginx + static SPA).
 
-### One-time: .env
+### One-time: two env files, layered
+
+The scripts read **two** files, upstream's first and this deployment's second.
+Compose takes the last definition of a repeated key, so `docker/airgap/.env`
+overrides only what the deployment genuinely changes and inherits the rest:
+
 ```sh
+# 1. upstream's home for VITE_* — the ASWF-documented step
+cp frontend/packages/app/.env.example frontend/packages/app/.env
+#    set VITE_FEATURE_FOLLOW_ALONG / VITE_FOLLOW_ALONG_* here, once
+
+# 2. this deployment's overrides + build mechanics
 cp docker/airgap/.env.example docker/airgap/.env
 # set BACKEND_URL=http://<backend-host>:8000  (e.g. 160.33.19.70:8000)
+#     RECORDING_NETWORK_PATH = the real share mount
 #     NPM_REGISTRY = Artifactory (to build on prod)
 ```
+
+**No credentials go in `docker/airgap/.env`.** They live where the ASWF upstream
+expects them — backend secrets inline in `backend/docker-compose.local.yml`
+(from its tracked `example.` copy), frontend config in
+`frontend/packages/app/.env`, vexa's in that repo's `deploy/compose/.env`. So a
+credential arriving from upstream has exactly one home, and no value is written
+in two places where the copies could drift.
+
+One limit worth knowing: layering shares the **value**, not the **declaration**.
+Compose passes only the build args `docker-compose.frontend.yml` lists under
+`args:`, so a brand-new `VITE_*` from upstream needs one line added there before
+it reaches the image — but never a second copy of its value.
 
 ### Build on prod (Artifactory) + run
 ```sh
@@ -50,7 +73,8 @@ On an internet machine (leave `NPM_REGISTRY` empty → public):
 
 ## Meeting recordings
 
-`docker/airgap/collector/` runs alongside the frontend and takes custody of each meeting's
+`collector/` (at the repo root — it belongs to the recording feature, not to this
+deployment, which only wires it up) runs alongside the frontend and takes custody of each meeting's
 recording: it mirrors the media out of Vexa through the DNA backend while the meeting runs, muxes
 the audio in, writes the finished MP4 to `RECORDING_NETWORK_PATH`, records it in DNA, and only
 then deletes the upstream copy. nginx serves that same path at `/recordings/`, so playback is a

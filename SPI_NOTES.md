@@ -91,8 +91,11 @@ the tests, the live test loop) is in `meeting_recording_playback.notes.md`. The
 essentials:
 
 - **DNA backend** bind-mounts `./src`, so a code change needs only
-  `docker restart dna-backend`. Use *restart*, not recreate — a recreate drops the
-  baked-in `VEXA_API_KEY` unless it is in `docker/airgap/.env` (it is now).
+  `docker restart dna-backend`. A *recreate* is safe too: `VEXA_API_KEY` and the
+  ShotGrid credentials are written inline in `backend/docker-compose.local.yml`
+  (the upstream convention — that gitignored file is a copy of the tracked
+  `example.docker-compose.local.yml`), so compose no longer depends on whatever
+  happened to be exported in the shell that first started the stack.
 - **Collector image** — `docker compose build` cannot pass `--build-context`, so build
   it with `docker build` (exact invocation in the notes). On prod, point
   `PIP_INDEX_URL`/`PIP_TRUSTED_HOST` at Artifactory.
@@ -251,10 +254,16 @@ the external `vexa-v012_vexa` network. The network join is **required**: the gat
 `127.0.0.1:18056`, which is loopback-bound and invisible to containers, so `host.docker.internal`
 does not work either.
 
-`VEXA_API_KEY` was passed as a shell variable, so it is baked into the running container and **not
-persisted**. Recreate `dna-backend` without it and every bot dispatch 400s (the provider silently
-falls back to `https://api.cloud.vexa.ai` with an empty key). Put it in `docker/airgap/.env`, which
-that compose file already reads.
+`VEXA_API_KEY` used to be passed as a shell variable, so it was baked into the running container and
+**not persisted** — recreate `dna-backend` without it and every bot dispatch 400s (the provider
+silently falls back to `https://api.cloud.vexa.ai` with an empty key). It is now written inline in
+that same `backend/docker-compose.local.yml`, so a recreate keeps it.
+
+Inline is not merely convenient, it is what `dev-up.sh` requires: `:47` greps `VEXA_API_KEY=` out of
+that file to decide whether the current token still validates, and `:70` seds a freshly minted one
+back in. Point the key at a `${VEXA_API_KEY}` interpolation instead and both halves break — the grep
+returns the literal `${VEXA_API_KEY:-}`, validation always fails, and the sed then overwrites the
+interpolation with a hardcoded token anyway.
 
 ### Live test loop
 
@@ -284,8 +293,8 @@ were found by *distrusting a green test*:
 
 ### Running the collector against the live stack
 
-`dna-backend` bind-mounts `./src`, so backend changes need only `docker restart dna-backend` — and
-a plain restart (not a recreate) keeps the baked-in `VEXA_API_KEY`.
+`dna-backend` bind-mounts `./src`, so backend changes need only `docker restart dna-backend`. A
+recreate is fine as well — `VEXA_API_KEY` lives inline in `backend/docker-compose.local.yml`.
 
 ```sh
 docker run -d --name dna-collector --network backend_default \
@@ -299,11 +308,11 @@ Build it with the CA base and public PyPI (`.env` points `PIP_INDEX_URL` at Arti
 unreachable from here). `docker compose build` cannot pass `--build-context`, so use `docker build`:
 
 ```sh
-docker build -t dna-collector:airgap -f docker/airgap/collector/Dockerfile \
+docker build -t dna-collector:airgap -f collector/Dockerfile \
   --build-arg PIP_INDEX_URL=https://pypi.org/simple \
   --build-context dna=backend/src/dna \
   --build-context python:3.11-slim=docker-image://dna-python311-ca:latest \
-  docker/airgap/collector
+  collector
 ```
 
 `dna-python311-ca` is `python:3.11-slim` with `/tmp/roots.pem` appended to its CA bundle plus
