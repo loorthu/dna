@@ -159,6 +159,13 @@ export interface DraftNoteLink {
   entity_name?: string;
 }
 
+/**
+ * Which side created the note row. A note written in DNA and one mirrored in from the production
+ * tracker are the same shape once published, so the backend records the writer at insert time.
+ * Absent on rows written before that was recorded.
+ */
+export type NoteOrigin = 'dna' | 'prodtrack';
+
 export interface DraftNote {
   _id: string;
   user_email: string;
@@ -176,6 +183,7 @@ export interface DraftNote {
   updated_at: string;
   created_at: string;
   attachment_ids: string[];
+  origin?: NoteOrigin | null;
 }
 
 export interface DraftNoteUpdate {

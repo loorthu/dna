@@ -18,7 +18,8 @@ import {
   type ExpandableSearchHandle,
 } from './ExpandableSearch';
 import { SquareButton } from './SquareButton';
-import { VersionCard, NoteStatus } from './VersionCard';
+import { VersionCard } from './VersionCard';
+import { noteStatus } from './noteStatus';
 import { TranscriptionMenu } from './TranscriptionMenu';
 import { SettingsModal } from './SettingsModal';
 import { PublishDialog } from './PublishDialog';
@@ -460,16 +461,9 @@ export function Sidebar({
                 followed={
                   followedVersionId != null && version.id === followedVersionId
                 }
-                noteStatus={((): NoteStatus | null => {
-                  const note = draftNotes?.find(
-                    (n) => n.version_id === version.id
-                  );
-                  if (!note) return null;
-                  if (note.published) return 'published';
-                  if (note.published_note_id) return 'edited';
-                  if (note.content || note.subject) return 'draft';
-                  return null;
-                })()}
+                noteStatus={noteStatus(
+                  draftNotes?.find((n) => n.version_id === version.id)
+                )}
                 onClick={() => onVersionSelect?.(version)}
               />
             </div>

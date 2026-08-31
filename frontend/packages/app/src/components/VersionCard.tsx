@@ -4,8 +4,10 @@ import styled, { type DefaultTheme } from 'styled-components';
 import { Eye } from 'lucide-react';
 import type { Version } from '@dna/core';
 import { UserAvatar } from './UserAvatar';
+// Defined with the rule that decides it, not with the card that draws it.
+import type { NoteStatus } from './noteStatus';
 
-export type NoteStatus = 'published' | 'edited' | 'draft';
+export type { NoteStatus };
 
 interface VersionCardProps {
   version: Version;

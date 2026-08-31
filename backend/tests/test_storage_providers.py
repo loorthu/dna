@@ -1046,6 +1046,96 @@ class TestMongoDBStorageProvider:
         mock_qc.find_one_and_update.assert_not_called()
 
 
+class TestWhoWroteTheNote:
+    """A note's `origin` has to survive the sync, because the badges in the sidebar read it.
+
+    Draft notes and notes mirrored in from the production tracker share a row keyed by
+    (user, playlist, version), and once published they carry the same fields. `origin` is the
+    only thing separating "someone wrote this in DNA" from "ShotGrid already had this" — and
+    ShotGrid seeds an empty note per version under the playlist owner's name, so the two really
+    do collide on one key.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        with mock.patch.dict(
+            "os.environ", {"MONGODB_URL": "mongodb://localhost:27017"}
+        ):
+            yield MongoDBStorageProvider()
+
+    @staticmethod
+    def _collection(provider, *, existing=None):
+        now = datetime.now(timezone.utc)
+        collection = mock.MagicMock()
+        collection.find_one = mock.AsyncMock(return_value=existing)
+        collection.find_one_and_update = mock.AsyncMock(
+            return_value={
+                "_id": "abc123",
+                "user_email": "user@test.com",
+                "playlist_id": 1,
+                "version_id": 2,
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        client = mock.MagicMock()
+        client.dna = mock.MagicMock()
+        client.dna.draft_notes = collection
+        provider._client = client
+        return collection
+
+    @pytest.mark.asyncio
+    async def test_a_note_written_in_dna_is_marked_as_dna(self, provider):
+        collection = self._collection(provider)
+
+        await provider.upsert_draft_note(
+            "user@test.com", 1, 2, DraftNoteUpdate(content="Needs more contrast")
+        )
+
+        update_op = collection.find_one_and_update.call_args[0][1]
+        assert update_op["$set"]["origin"] == "dna"
+
+    @pytest.mark.asyncio
+    async def test_a_note_mirrored_from_upstream_is_marked_prodtrack(self, provider):
+        collection = self._collection(provider)
+
+        await provider.upsert_published_note(
+            "user@test.com", 1, 2, DraftNoteUpdate(content="", published=True)
+        )
+
+        update_op = collection.find_one_and_update.call_args[0][1]
+        assert update_op["$setOnInsert"]["origin"] == "prodtrack"
+        # Only on insert: re-syncing a note DNA published must not disown it.
+        assert "origin" not in update_op["$set"]
+
+    @pytest.mark.asyncio
+    async def test_writing_over_a_seeded_note_claims_it_for_dna(self, provider):
+        """The playlist owner is the one ShotGrid seeds an empty note for, so their own first
+        real note lands on a row already marked `prodtrack`. It becomes theirs."""
+        now = datetime.now(timezone.utc)
+        collection = self._collection(
+            provider,
+            existing={
+                "_id": "abc123",
+                "user_email": "owner@test.com",
+                "playlist_id": 1,
+                "version_id": 2,
+                "content": "",
+                "published": True,
+                "origin": "prodtrack",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
+
+        await provider.upsert_draft_note(
+            "owner@test.com", 1, 2, DraftNoteUpdate(content="Looking good now")
+        )
+
+        update_op = collection.find_one_and_update.call_args[0][1]
+        assert update_op["$set"]["origin"] == "dna"
+
+
 class TestPendingArchiveQuery:
     """The collector's work queue.
 

@@ -9,6 +9,7 @@ from dna.models.draft_note import (
     DraftNoteCreate,
     DraftNoteLink,
     DraftNoteUpdate,
+    NoteOrigin,
 )
 from dna.models.entity import (
     ENTITY_MODELS,
@@ -114,6 +115,7 @@ __all__ = [
     "DraftNoteCreate",
     "DraftNoteLink",
     "DraftNoteUpdate",
+    "NoteOrigin",
     "PlaylistMetadata",
     "PlaylistMetadataUpdate",
     "PublishedTranscript",

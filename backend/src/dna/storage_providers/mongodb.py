@@ -156,6 +156,12 @@ class MongoDBStorageProvider(StorageProviderBase):
         }
         if "published" not in update_data:
             update_data["published"] = False
+        # Every caller of this is someone acting in DNA — writing a note, or publishing one — so
+        # the row is DNA's from here on. Set, not set-on-insert: the sync may already have made
+        # this row to mirror an upstream note (ShotGrid seeds an empty one per version, under the
+        # playlist owner's name, on the same user/playlist/version key), and a person writing
+        # over that has made it theirs. One way only; `upsert_published_note` never sets it back.
+        update_data["origin"] = "dna"
 
         update: dict[str, Any] = {
             "$set": {**update_data, "updated_at": now},
@@ -181,6 +187,9 @@ class MongoDBStorageProvider(StorageProviderBase):
             "user_email": user_email,
             "playlist_id": playlist_id,
             "version_id": version_id,
+            # A mirror of a note that already existed upstream, not something anyone wrote here.
+            # Insert only, so mirroring an upstream copy of a DNA note never disowns it.
+            "origin": "prodtrack",
         }
 
         existing = await self.draft_notes.find_one(query)

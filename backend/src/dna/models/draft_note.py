@@ -4,9 +4,16 @@ Pydantic models for draft notes stored in the storage provider.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+# Where the row came from. A draft note and a note mirrored in from the production tracker are
+# the same shape once written — both end up `published=True` with an upstream id — so whichever
+# writer created the row records itself, at insert time, and nothing rewrites it afterwards.
+# Notes seeded by ShotGrid (an empty `VFO` note per version, created when the playlist is) are
+# `prodtrack`, and the UI can tell them from work someone actually did in DNA.
+NoteOrigin = Literal["dna", "prodtrack"]
 
 
 class DraftNoteLink(BaseModel):
@@ -52,6 +59,8 @@ class DraftNote(DraftNoteBase):
     version_id: int
     updated_at: datetime
     created_at: datetime
+    # None on rows written before origin was recorded — see `NoteOrigin`.
+    origin: Optional[NoteOrigin] = None
 
 
 class DraftNoteUpdate(BaseModel):
