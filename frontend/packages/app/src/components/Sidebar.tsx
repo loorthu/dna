@@ -19,7 +19,7 @@ import {
 } from './ExpandableSearch';
 import { SquareButton } from './SquareButton';
 import { VersionCard } from './VersionCard';
-import { noteStatus } from './noteStatus';
+import { noteStatus, noteProvenance } from './noteStatus';
 import { TranscriptionMenu } from './TranscriptionMenu';
 import { SettingsModal } from './SettingsModal';
 import { PublishDialog } from './PublishDialog';
@@ -462,7 +462,9 @@ export function Sidebar({
                   followedVersionId != null && version.id === followedVersionId
                 }
                 noteStatus={noteStatus(
-                  draftNotes?.find((n) => n.version_id === version.id)
+                  noteProvenance(
+                    draftNotes?.find((n) => n.version_id === version.id)
+                  )
                 )}
                 onClick={() => onVersionSelect?.(version)}
               />

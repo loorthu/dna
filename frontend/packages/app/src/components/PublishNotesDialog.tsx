@@ -365,6 +365,7 @@ function PublishNoteRow({
                     publishedNoteId: draftNote.publishedNoteId,
                     content: draftNote.content,
                     subject: draftNote.subject,
+                    origin: draftNote.origin,
                   }
                 : null
             }

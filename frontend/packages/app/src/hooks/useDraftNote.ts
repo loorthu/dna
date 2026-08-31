@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { DraftNote, DraftNoteUpdate, SearchResult } from '@dna/core';
+import {
+  DraftNote,
+  DraftNoteUpdate,
+  NoteOrigin,
+  SearchResult,
+} from '@dna/core';
 import { apiHandler } from '../api';
 
 export interface LocalDraftNote {
@@ -14,6 +19,8 @@ export interface LocalDraftNote {
   edited: boolean;
   publishedNoteId: number | null;
   attachmentIds: string[];
+  /** Who wrote the row. Absent on rows written before it was recorded — see `noteStatus`. */
+  origin?: NoteOrigin | null;
 }
 
 export interface UseDraftNoteParams {
@@ -49,6 +56,8 @@ function createEmptyDraft(
     edited: false,
     publishedNoteId: null,
     attachmentIds: [],
+    // A draft started here is DNA's, whatever the row it eventually lands on says.
+    origin: 'dna',
   };
 }
 
@@ -84,6 +93,7 @@ export function backendToLocal(note: DraftNote): LocalDraftNote {
     edited: note.edited,
     publishedNoteId: note.published_note_id ?? null,
     attachmentIds: note.attachment_ids ?? [],
+    origin: note.origin ?? null,
   };
 }
 
@@ -270,7 +280,8 @@ export function useDraftNote({
           if (
             prev.published === serverDraft.published &&
             prev.edited === serverDraft.edited &&
-            prev.publishedNoteId === (serverDraft.published_note_id ?? null)
+            prev.publishedNoteId === (serverDraft.published_note_id ?? null) &&
+            prev.origin === (serverDraft.origin ?? null)
           ) {
             return prev;
           }
@@ -280,6 +291,7 @@ export function useDraftNote({
             published: serverDraft.published,
             edited: serverDraft.edited,
             publishedNoteId: serverDraft.published_note_id ?? null,
+            origin: serverDraft.origin ?? null,
           };
         });
       } else if (!isLoading) {

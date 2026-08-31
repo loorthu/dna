@@ -92,6 +92,7 @@ describe('backendToLocal', () => {
       edited: false,
       publishedNoteId: null,
       attachmentIds: [],
+      origin: null,
     });
   });
 });
@@ -151,6 +152,7 @@ describe('useDraftNote', () => {
       published: false,
       edited: false,
       publishedNoteId: null,
+      origin: null,
     });
   });
 
@@ -186,6 +188,7 @@ describe('useDraftNote', () => {
       published: false,
       edited: false,
       publishedNoteId: null,
+      origin: 'dna',
     });
   });
 
@@ -296,6 +299,7 @@ describe('useDraftNote', () => {
       published: false,
       edited: false,
       publishedNoteId: null,
+      origin: 'dna',
     });
 
     await waitFor(() => {

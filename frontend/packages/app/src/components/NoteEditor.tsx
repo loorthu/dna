@@ -14,6 +14,7 @@ import { NoteOptionsInline } from './NoteOptionsInline';
 import { MarkdownEditor } from './MarkdownEditor';
 import { MentionIndexProvider } from '../contexts/MentionIndexContext';
 import type { LocalDraftNote } from '../hooks';
+import { noteStatus } from './noteStatus';
 import { apiHandler } from '../api';
 
 export interface StagedAttachment {
@@ -132,7 +133,7 @@ const InlineBadgeWrap = styled.div`
 
 export type NoteDraftStatusFields = Pick<
   LocalDraftNote,
-  'published' | 'publishedNoteId' | 'content' | 'subject'
+  'published' | 'publishedNoteId' | 'content' | 'subject' | 'origin'
 >;
 
 export function NoteDraftStatusBadges({
@@ -142,30 +143,24 @@ export function NoteDraftStatusBadges({
   draft: NoteDraftStatusFields | null;
   layout?: 'title' | 'inline';
 }) {
-  if (!draft) return null;
-
-  const showPublished = draft.published;
-  const showEdited = !draft.published && Boolean(draft.publishedNoteId);
-  const showDraftBadge =
-    !draft.published &&
-    !draft.publishedNoteId &&
-    Boolean(draft.content || draft.subject);
-
-  if (!showPublished && !showEdited && !showDraftBadge) return null;
+  // Same rule as the sidebar's letters, deliberately: a note is published, edited or a draft in
+  // one place only, and the two used to disagree about ShotGrid's seeded notes.
+  const status = noteStatus(draft);
+  if (!status) return null;
 
   const compact = layout === 'inline';
 
   const badges = (
     <>
-      {showPublished && (
+      {status === 'published' && (
         <StatusBadge $compact={compact}>Published</StatusBadge>
       )}
-      {showEdited && (
+      {status === 'edited' && (
         <StatusBadge $isWarning $compact={compact}>
           Published (Edited)
         </StatusBadge>
       )}
-      {showDraftBadge && (
+      {status === 'draft' && (
         <StatusBadge $isDraft $compact={compact}>
           Draft
         </StatusBadge>
