@@ -117,6 +117,19 @@ const PlaylistTitleLabel = styled.span`
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: ${({ theme }) => theme.colors.text.muted};
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+`;
+
+// The ShotGrid id, kept next to the "Playlist" label rather than the name: it is what people
+// paste into a ticket or a URL when they need to say which playlist they mean, but it is not how
+// they read the playlist, so it stays small and out of the name's way.
+const PlaylistIdText = styled.span`
+  font-family: ${({ theme }) => theme.fonts.mono};
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 `;
 
 const PlaylistTitleText = styled.span`
@@ -502,7 +515,15 @@ export function Sidebar({
 
       {!collapsed && playlistTitle && (
         <PlaylistTitleBar>
-          <PlaylistTitleLabel>Playlist</PlaylistTitleLabel>
+          <PlaylistTitleLabel>
+            Playlist
+            {/* `playlistLabel` already falls back to "Playlist <id>" for an unnamed playlist, so
+                showing the id here too would just say it twice. */}
+            {playlistId !== null &&
+              !playlistTitle.includes(String(playlistId)) && (
+                <PlaylistIdText>#{playlistId}</PlaylistIdText>
+              )}
+          </PlaylistTitleLabel>
           <Tooltip content={playlistTitle}>
             <PlaylistTitleText>{playlistTitle}</PlaylistTitleText>
           </Tooltip>
