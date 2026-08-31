@@ -47,6 +47,10 @@ services:
       # meeting recording. Recording a given meeting is asked for per meeting, not here.
       - DNA_ENABLE_RECORDING_PLAYBACK=false
       - DNA_ENABLE_TRANSCRIPT_PUBLISH=false
+      # Lets DELETE /playlists/{id}/data forget a playlist's transcript, metadata and
+      # draft notes, so a test can be re-run from a host that has only the API. Off
+      # here: it is a testing convenience, and every other delete removes one named row.
+      - DNA_ENABLE_PLAYLIST_RESET=false
     depends_on:
       - mongo
     restart: unless-stopped

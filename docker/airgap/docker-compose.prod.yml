@@ -62,6 +62,8 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-}
       # Transcript publishing
       - DNA_ENABLE_TRANSCRIPT_PUBLISH=${DNA_ENABLE_TRANSCRIPT_PUBLISH:-false}
+      # Playlist reset, for re-running an end-to-end test (see scripts/reset-playlist-data.sh)
+      - DNA_ENABLE_PLAYLIST_RESET=${DNA_ENABLE_PLAYLIST_RESET:-false}
       - SHOTGRID_TRANSCRIPT_ENTITY=${SHOTGRID_TRANSCRIPT_ENTITY:-CustomEntity01}
       # Email
       - EMAIL_PROVIDER=${EMAIL_PROVIDER:-gmail}

@@ -276,6 +276,7 @@ The React app will be available at `http://localhost:5173`.
 | `GEMINI_TIMEOUT` | No | `30.0` | Request timeout in seconds when `LLM_PROVIDER=gemini` |
 | `GEMINI_URL` | No | `https://generativelanguage.googleapis.com/v1beta/openai/` | Override the Gemini OpenAI-compatible base URL |
 | `DNA_ENABLE_TRANSCRIPT_PUBLISH` | No | `false` | Set to `true` to enable `POST /playlists/{id}/publish-transcript`. When off, the endpoint returns 404. |
+| `DNA_ENABLE_PLAYLIST_RESET` | No | `false` | Set to `true` to enable `DELETE /playlists/{id}/data`, which clears that playlist's stored transcript, metadata and draft notes. When off, the endpoint returns 404. Used by `scripts/reset-playlist-data.sh` to reset a test from a host that can reach only the API. Never touches the production tracking system. |
 | `SHOTGRID_TRANSCRIPT_ENTITY` | No | `CustomEntity01` | ShotGrid custom entity slot used when publishing transcripts. Match whichever `CustomEntityNN` the site admin has enabled. |
 | `PYTHONUNBUFFERED` | No | `1` | Disable Python output buffering |
 

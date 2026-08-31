@@ -6,7 +6,7 @@ import shutil
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Optional, cast
+from typing import Annotated, Any, Optional, cast
 
 from fastapi import (
     Depends,
@@ -1515,6 +1515,47 @@ async def delete_playlist_metadata(
     if not deleted:
         raise HTTPException(status_code=404, detail="Playlist metadata not found")
     return True
+
+
+def _playlist_reset_enabled() -> bool:
+    return os.getenv("DNA_ENABLE_PLAYLIST_RESET", "false").lower() == "true"
+
+
+@app.delete(
+    "/playlists/{playlist_id}/data",
+    tags=["Playlist Metadata"],
+    summary="Forget everything stored about a playlist",
+    description=(
+        "Clears this playlist's segments, metadata and (unless keep_notes) draft notes, so an "
+        "end-to-end test can be re-run from scratch. Off unless DNA_ENABLE_PLAYLIST_RESET=true.\n\n"
+        "Touches only DNA's own store. The production tracking system is never contacted: the "
+        "notes and versions there are not DNA's to delete, only to mirror."
+    ),
+)
+async def reset_playlist_data(
+    playlist_id: int,
+    provider: StorageProviderDep,
+    _: CurrentUserDep,
+    keep_notes: bool = False,
+) -> dict[str, Any]:
+    """Delete a playlist's stored transcript, metadata and draft notes.
+
+    Exists because the recording host can be air-gapped from the database: everything else here
+    could be cleared by hand beside Mongo, but a collector that only reaches this API had no way
+    to reset the playlist it just recorded. One call, so a reset cannot half-finish across the
+    link and leave a transcript behind that the next test then appends to.
+
+    Gated off by default. Every other delete removes one row a person named; this removes a whole
+    playlist's history, which is worth an explicit opt-in per deployment rather than being live
+    everywhere the moment it ships.
+    """
+    if not _playlist_reset_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    deleted = await provider.delete_playlist_data(
+        playlist_id, include_notes=not keep_notes
+    )
+    return {"playlist_id": playlist_id, "deleted": deleted, "kept_notes": keep_notes}
 
 
 # -----------------------------------------------------------------------------

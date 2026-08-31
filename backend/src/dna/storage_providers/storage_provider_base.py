@@ -143,6 +143,26 @@ class StorageProviderBase:
         """
         raise NotImplementedError()
 
+    async def delete_playlist_data(
+        self, playlist_id: int, include_notes: bool = True
+    ) -> dict[str, int]:
+        """Forget everything this store holds about one playlist. Returns counts per collection.
+
+        The segments a meeting produced had no way to be removed at all: the store could upsert
+        and read them but never delete, so re-running an end-to-end test meant reaching into the
+        database by hand. That is fine beside the backend and impossible from an air-gapped host,
+        where the HTTP API is the only channel — hence one call that clears the whole playlist
+        rather than a delete per collection the caller has to remember to chain.
+
+        `include_notes` is separate because a draft note is the only one of these a person
+        authored. Segments and metadata are machine-produced and always regenerable from a new
+        meeting; an unpublished note is not.
+
+        Deliberately scoped to this store. The production tracking system holds notes DNA only
+        mirrors, and nothing here may reach into it.
+        """
+        raise NotImplementedError()
+
     async def get_user_settings(self, user_email: str) -> Optional["UserSettings"]:
         """Get user settings by email."""
         raise NotImplementedError()

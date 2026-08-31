@@ -437,6 +437,24 @@ class MongoDBStorageProvider(StorageProviderBase):
             results.append(StoredSegment(**doc))
         return results
 
+    async def delete_playlist_data(
+        self, playlist_id: int, include_notes: bool = True
+    ) -> dict[str, int]:
+        """Delete a playlist's segments, metadata and (optionally) draft notes."""
+        query = {"playlist_id": playlist_id}
+        deleted = {
+            "segments": (await self.segments_collection.delete_many(query)).deleted_count,
+            "playlist_metadata": (
+                await self.playlist_metadata_collection.delete_many(query)
+            ).deleted_count,
+            "draft_notes": 0,
+        }
+        if include_notes:
+            deleted["draft_notes"] = (
+                await self.draft_notes.delete_many(query)
+            ).deleted_count
+        return deleted
+
     async def get_user_settings(self, user_email: str) -> Optional[UserSettings]:
         """Get user settings by email."""
         query = {"user_email": user_email}

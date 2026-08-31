@@ -38,3 +38,9 @@ services:
       # collector is archiving files correctly still shows no tab until it is
       # set. Needs the collector running and RECORDING_NETWORK_PATH served.
       - DNA_ENABLE_RECORDING_PLAYBACK=false
+      # Turns on DELETE /playlists/{id}/data, which clears one playlist's stored
+      # transcript, metadata and draft notes. scripts/reset-playlist-data.sh uses it to
+      # reset a test from the recording host, whose only route here is this API. Leave
+      # false outside a test deployment: it is the one delete that takes a whole
+      # playlist's history rather than a single row someone named.
+      - DNA_ENABLE_PLAYLIST_RESET=false
