@@ -39,6 +39,19 @@ export type { TranscriptEventPayload } from './useDNAEvents';
 
 export { useCapabilities } from './useCapabilities';
 export { useRecordingCuts } from './useRecordingCuts';
+export {
+  useRecordingReadiness,
+  recordingReadiness,
+  interpretMediaProbe,
+} from './useRecordingReadiness';
+export type {
+  MediaProbe,
+  ReadinessCheck,
+  ReadinessCheckId,
+  ReadinessInputs,
+  ReadinessState,
+  RecordingReadiness,
+} from './useRecordingReadiness';
 export { useSegments } from './useSegments';
 export type { UseSegmentsOptions, UseSegmentsResult } from './useSegments';
 

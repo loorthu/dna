@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Button,
   Callout,
@@ -9,6 +9,8 @@ import {
 } from '@radix-ui/themes';
 import { Info } from 'lucide-react';
 import { useEmailNotes } from '../hooks/useEmailNotes';
+import { useRecordingReadiness } from '../hooks/useRecordingReadiness';
+import { RecordingReadinessPanel } from './RecordingReadiness';
 
 interface EmailNotesDialogProps {
   open: boolean;
@@ -27,13 +29,19 @@ export function EmailNotesDialog({
   const [cc, setCc] = useState('');
   const [subject, setSubject] = useState('');
   const [sent, setSent] = useState(false);
+  // Deliberate, per-opening consent to send ahead of the checks. It resets with the dialog: an
+  // override belongs to the send it was given for, not to the playlist.
+  const [overrideReadiness, setOverrideReadiness] = useState(false);
 
   const { mutateAsync, isPending, isError, error, reset } = useEmailNotes();
+  const readiness = useRecordingReadiness(playlistId);
+  const held = readiness.blocking && !overrideReadiness;
 
   useEffect(() => {
     if (open) {
       reset();
       setSent(false);
+      setOverrideReadiness(false);
     }
   }, [open, reset]);
 
@@ -72,6 +80,7 @@ export function EmailNotesDialog({
           </Flex>
         ) : (
           <Flex direction="column" gap="3">
+            <RecordingReadinessPanel readiness={readiness} />
             <label>
               <Text size="2" weight="medium" mb="1" as="div">To</Text>
               <TextField.Root
@@ -106,18 +115,38 @@ export function EmailNotesDialog({
               </Callout.Root>
             )}
 
-            <Flex justify="end" gap="2" mt="2">
-              <Dialog.Close>
-                <Button variant="soft" color="gray" disabled={isPending}>
-                  Cancel
+            <Flex direction="column" gap="2" mt="2">
+              <Flex justify="end" gap="2">
+                <Dialog.Close>
+                  <Button variant="soft" color="gray" disabled={isPending}>
+                    Cancel
+                  </Button>
+                </Dialog.Close>
+                <Button
+                  disabled={isPending || !to.trim() || held}
+                  onClick={() => void handleSend()}
+                >
+                  {isPending ? 'Sending…' : 'Send'}
                 </Button>
-              </Dialog.Close>
-              <Button
-                disabled={isPending || !to.trim()}
-                onClick={() => void handleSend()}
-              >
-                {isPending ? 'Sending…' : 'Send'}
-              </Button>
+              </Flex>
+              {/*
+                The escape hatch, and the reason the gate can be strict without being a trap.
+                Waiting is the right default — the meeting is still landing — but the decision to
+                send anyway belongs to the person, who can see above exactly what is outstanding.
+              */}
+              {held && (
+                <Flex justify="end">
+                  <Button
+                    variant="ghost"
+                    color="gray"
+                    size="1"
+                    disabled={isPending || !to.trim()}
+                    onClick={() => setOverrideReadiness(true)}
+                  >
+                    Send anyway ({readiness.passed} of {readiness.total} ready)
+                  </Button>
+                </Flex>
+              )}
             </Flex>
           </Flex>
         )}
