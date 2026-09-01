@@ -149,6 +149,25 @@ export interface GetVersionsForPlaylistParams {
   playlistId: number;
 }
 
+export interface AddVersionsToPlaylistParams {
+  playlistId: number;
+  /** The versions to add, by the id the review tool announces for them (the JTS at SPI). */
+  jts: number[];
+}
+
+/** What became of one requested id. Some of a pasted list land and some do not. */
+export interface AddVersionOutcome {
+  jts: number;
+  status: 'added' | 'already_in_playlist' | 'not_found';
+  version_id?: number | null;
+  version_name?: string | null;
+}
+
+export interface AddVersionsToPlaylistResponse {
+  outcomes: AddVersionOutcome[];
+  added_count: number;
+}
+
 export interface GetUserByEmailParams {
   userEmail: string;
 }

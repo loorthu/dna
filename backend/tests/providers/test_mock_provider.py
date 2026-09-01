@@ -506,6 +506,57 @@ def test_get_versions_for_playlist_empty(mock_provider):
     assert versions == []
 
 
+def _seed_second_version(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """INSERT INTO versions (id, name, description, status, user_id, created_at, updated_at, movie_path, frame_path, thumbnail, project_id, entity_type, entity_id, task_id) VALUES (301, 'v_002', 'Second version', 'rev', 10, '2024-01-03T00:00:00', '2024-01-04T00:00:00', NULL, NULL, NULL, 1, 'Shot', 100, 200)"""
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_add_versions_to_playlist_appends_after_the_seeded_ones(mock_db_path):
+    _seed_second_version(mock_db_path)
+    provider = MockProdtrackProvider(db_path=mock_db_path)
+
+    assert provider.add_versions_to_playlist(400, [301]) == [301]
+    assert [v.id for v in provider.get_versions_for_playlist(400)] == [300, 301]
+
+
+def test_add_versions_to_playlist_leaves_the_read_only_database_alone(mock_db_path):
+    """The addition lives in the process, not in the fixture every developer shares."""
+    _seed_second_version(mock_db_path)
+    provider = MockProdtrackProvider(db_path=mock_db_path)
+    provider.add_versions_to_playlist(400, [301])
+
+    fresh = MockProdtrackProvider(db_path=mock_db_path)
+    assert [v.id for v in fresh.get_versions_for_playlist(400)] == [300]
+
+
+def test_add_versions_to_playlist_skips_one_already_there(mock_provider):
+    assert mock_provider.add_versions_to_playlist(400, [300]) == []
+    assert len(mock_provider.get_versions_for_playlist(400)) == 1
+
+
+def test_add_versions_to_playlist_skips_one_added_a_moment_ago(mock_db_path):
+    _seed_second_version(mock_db_path)
+    provider = MockProdtrackProvider(db_path=mock_db_path)
+    provider.add_versions_to_playlist(400, [301])
+
+    assert provider.add_versions_to_playlist(400, [301]) == []
+    assert len(provider.get_versions_for_playlist(400)) == 2
+
+
+def test_add_versions_to_playlist_rejects_an_unknown_version(mock_provider):
+    with pytest.raises(ValueError, match="version 999"):
+        mock_provider.add_versions_to_playlist(400, [999])
+
+
+def test_add_versions_to_playlist_rejects_an_unknown_playlist(mock_provider):
+    with pytest.raises(ValueError, match="Playlist not found: 999"):
+        mock_provider.add_versions_to_playlist(999, [300])
+
+
 def test_get_version_statuses(mock_provider):
     statuses = mock_provider.get_version_statuses(project_id=1)
     assert len(statuses) >= 1

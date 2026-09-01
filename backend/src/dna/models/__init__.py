@@ -45,6 +45,9 @@ from dna.models.qc_check import (
     RunQCChecksResponse,
 )
 from dna.models.requests import (
+    AddVersionOutcome,
+    AddVersionsToPlaylistRequest,
+    AddVersionsToPlaylistResponse,
     CreateNoteRequest,
     EmailNotesRequest,
     EntityLink,
@@ -106,6 +109,9 @@ __all__ = [
     "DNAEntity",
     "ENTITY_MODELS",
     "EntityLink",
+    "AddVersionOutcome",
+    "AddVersionsToPlaylistRequest",
+    "AddVersionsToPlaylistResponse",
     "CreateNoteRequest",
     "FilterCondition",
     "FindRequest",

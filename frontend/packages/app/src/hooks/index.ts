@@ -71,4 +71,11 @@ export type {
 
 export { usePlaylistDraftNotes } from './usePlaylistDraftNotes';
 
+export {
+  useAddVersionsToPlaylist,
+  parseJtsNumbers,
+  summariseAddOutcomes,
+} from './useAddVersion';
+export type { AddVersionsSummary } from './useAddVersion';
+
 export { useVideoSeek } from './useVideoSeek';

@@ -25,6 +25,45 @@ class CreateNoteRequest(BaseModel):
     )
 
 
+class AddVersionsToPlaylistRequest(BaseModel):
+    """Request model for appending versions to a playlist, by external review id."""
+
+    jts: list[int] = Field(
+        min_length=1,
+        max_length=200,
+        description=(
+            "The versions to add, by the id the review tool announces for them — the JTS at "
+            "SPI, whichever field PRODTRACK_VERSION_EXTERNAL_REF_FIELD names elsewhere. A list, "
+            "because a review is assembled from a list of them pasted in one go; they are "
+            "appended in the order given, and repeats are ignored."
+        ),
+    )
+
+
+class AddVersionOutcome(BaseModel):
+    """What became of one requested id. Some of a pasted list land and some do not."""
+
+    jts: int = Field(description="The external review id that was asked for")
+    status: str = Field(
+        description="added | already_in_playlist | not_found",
+    )
+    version_id: Optional[int] = Field(
+        default=None, description="The version it resolved to, when it resolved to one"
+    )
+    version_name: Optional[str] = Field(
+        default=None, description="That version's name, so the answer is legible"
+    )
+
+
+class AddVersionsToPlaylistResponse(BaseModel):
+    """Response model for appending versions to a playlist."""
+
+    outcomes: list[AddVersionOutcome] = Field(
+        description="One per requested id, in the order they were given"
+    )
+    added_count: int = Field(description="How many versions the playlist gained")
+
+
 class FilterCondition(BaseModel):
     """A single filter condition for entity queries."""
 

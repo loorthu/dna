@@ -7,7 +7,6 @@ import {
   Upload,
   Loader2,
   AlertCircle,
-  Plus,
 } from 'lucide-react';
 import { Button, Tooltip } from '@radix-ui/themes';
 import {
@@ -30,6 +29,7 @@ import { noteStatus, noteProvenance } from './noteStatus';
 import { TranscriptionMenu } from './TranscriptionMenu';
 import { SettingsModal } from './SettingsModal';
 import { PublishDialog } from './PublishDialog';
+import { AddVersionsInput } from './AddVersionsInput';
 import {
   useGetVersionsForPlaylist,
   useGetUserByEmail,
@@ -118,17 +118,22 @@ const CollapseButton = styled.button`
 // Which playlist this is. It sits directly above the version list because that list, the
 // transcription controls and the playlist menu all act on this one playlist, and none of them say
 // so — once the picker closes, nothing on screen names what is being reviewed.
+// One value for the space above the name and the space below it, so the name sits centred between
+// the actions and the rule rather than crowded up against one of them.
+const TITLE_BAR_SPACING = '10px';
+
 const PlaylistTitleBar = styled.div`
-  padding: 10px 16px;
+  padding: ${TITLE_BAR_SPACING} 16px;
   border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: ${TITLE_BAR_SPACING};
   min-width: 0;
 `;
 
-// The playlist actions ride on the label line rather than a row of their own: they are short, the
-// label beside them is one small word, and the name below keeps the full width it needs to read.
+// The actions ride above the name rather than beside it: they are small and of fixed width, and
+// the name below then keeps the full width of the rail, which it needs — playlist names are long
+// and it is their tail that tells two of them apart.
 const PlaylistTitleRow = styled.div`
   display: flex;
   align-items: center;
@@ -137,90 +142,38 @@ const PlaylistTitleRow = styled.div`
   min-width: 0;
 `;
 
+// Everything you can do to the list, packed against the left edge. It takes the row's spare width
+// so the search stays pinned right, and so the Add pill has somewhere to open into.
 const PlaylistActions = styled.div`
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-`;
-
-// Ways of getting versions into the list, kept on a line of their own rather than in the playlist
-// menu: they act on the list below, not on which playlist is open, and this row is where the other
-// ways of pulling versions from ShotGrid (by filter, by task, by status) will sit beside them.
-const VersionActionsBar = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
-`;
-
-const VersionActionButton = styled.button`
-  display: flex;
-  align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  font-size: 14px;
-  font-weight: 500;
-  font-family: ${({ theme }) => theme.fonts.sans};
-  color: ${({ theme }) => theme.colors.text.secondary};
-  background: transparent;
-  border: 1px solid ${({ theme }) => theme.colors.border.default};
-  border-radius: ${({ theme }) => theme.radii.md};
-  cursor: pointer;
-  transition: all ${({ theme }) => theme.transitions.fast};
-  white-space: nowrap;
-
-  &:hover:not(:disabled) {
-    background: ${({ theme }) => theme.colors.bg.surfaceHover};
-    color: ${({ theme }) => theme.colors.text.primary};
-    border-color: ${({ theme }) => theme.colors.border.strong};
-  }
-
-  &:active:not(:disabled) {
-    background: ${({ theme }) => theme.colors.bg.overlay};
-    transform: translateY(1px);
-  }
-
-  &:disabled {
-    opacity: 0.5;
-    // A disabled button swallows its own pointer events, tooltip included, so hover is handled by
-    // the wrapper below and the button stays out of the way.
-    pointer-events: none;
-  }
-
-  svg {
-    width: 16px;
-    height: 16px;
-  }
+  flex: 1;
+  min-width: 0;
 `;
 
-// Hover target for a disabled action's tooltip — the button itself cannot be one.
-const DisabledActionWrapper = styled.span`
-  display: inline-flex;
-  cursor: not-allowed;
-`;
-
-const PlaylistTitleLabel = styled.span`
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: ${({ theme }) => theme.colors.text.muted};
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-`;
-
-// The ShotGrid id, kept next to the "Playlist" label rather than the name: it is what people
-// paste into a ticket or a URL when they need to say which playlist they mean, but it is not how
-// they read the playlist, so it stays small and out of the name's way.
+// The ShotGrid id, on the name's own line and in brackets after it. It is what people paste into
+// a ticket or a URL when they need to say which playlist they mean — worth having in reach, not
+// worth a line or a weight of its own.
 const PlaylistIdText = styled.span`
-  font-family: ${({ theme }) => theme.fonts.mono};
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
+  font-family: ${({ theme }) => theme.fonts.mono};
+  color: ${({ theme }) => theme.colors.text.muted};
+  margin-left: 4px;
+  white-space: nowrap;
+`;
+
+// The name gets a card of its own, like the versions below it. Bare text could only ever line up
+// with one of the two columns the sidebar keeps — the edges every box starts at, or the text
+// inside those boxes, 13px further in — and looked adrift of whichever one it missed. In a box it
+// is on both: this edge with the buttons and cards, its text with their text.
+const PlaylistTitleCard = styled.div`
+  padding: 10px 12px;
+  background: ${({ theme }) => theme.colors.bg.surface};
+  border: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  border-radius: ${({ theme }) => theme.radii.lg};
+  min-width: 0;
 `;
 
 const PlaylistTitleText = styled.span`
@@ -372,11 +325,16 @@ export function Sidebar({
   onLogout,
 }: SidebarProps) {
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [isAddVersionExpanded, setIsAddVersionExpanded] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const versionRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<ExpandableSearchHandle>(null);
+
+  // Either pill takes the whole title row when it opens, so the label and the playlist menu
+  // step aside for whichever one it is.
+  const rowExpanded = isSearchExpanded || isAddVersionExpanded;
 
   const { getLabel } = useHotkeyConfig();
   const { transcriptionEnabled, inReviewEnabled } = useFeatureFlags();
@@ -598,60 +556,53 @@ export function Sidebar({
       {!collapsed && (
         <PlaylistTitleBar>
           <PlaylistTitleRow>
-            {playlistTitle && !isSearchExpanded && (
-              <PlaylistTitleLabel>
-                Playlist
-                {/* `playlistLabel` already falls back to "Playlist <id>" for an unnamed playlist, so
-                    showing the id here too would just say it twice. */}
-                {playlistId !== null &&
-                  !playlistTitle.includes(String(playlistId)) && (
-                    <PlaylistIdText>#{playlistId}</PlaylistIdText>
-                  )}
-              </PlaylistTitleLabel>
-            )}
-
+            {/* Two ways of acting on the list below, side by side at the left edge. Either one
+                opens into the whole row, so the other stands down while it is open. */}
             {!isSearchExpanded && (
               <PlaylistActions>
-                <SplitButton
-                  menuItems={playlistMenuItems}
-                  onClick={() => refetch()}
-                >
-                  Reload Playlist
-                </SplitButton>
+                {!rowExpanded && (
+                  <SplitButton
+                    menuItems={playlistMenuItems}
+                    onClick={() => refetch()}
+                  >
+                    Reload Playlist
+                  </SplitButton>
+                )}
+                <AddVersionsInput
+                  playlistId={playlistId}
+                  onExpandedChange={setIsAddVersionExpanded}
+                />
               </PlaylistActions>
             )}
 
-            <ExpandableSearch
-              ref={searchRef}
-              placeholder="Search versions..."
-              versions={versions}
-              selectedVersionId={selectedVersionId}
-              onVersionSelect={handleSearchVersionSelect}
-              onExpandedChange={setIsSearchExpanded}
-            />
+            {!isAddVersionExpanded && (
+              <ExpandableSearch
+                ref={searchRef}
+                placeholder="Search versions..."
+                versions={versions}
+                selectedVersionId={selectedVersionId}
+                onVersionSelect={handleSearchVersionSelect}
+                onExpandedChange={setIsSearchExpanded}
+              />
+            )}
           </PlaylistTitleRow>
 
           {playlistTitle && (
             <Tooltip content={playlistTitle}>
-              <PlaylistTitleText>{playlistTitle}</PlaylistTitleText>
+              <PlaylistTitleCard>
+                <PlaylistTitleText>
+                  {playlistTitle}
+                  {/* `playlistLabel` already falls back to "Playlist <id>" for an unnamed playlist,
+                    so printing the id here too would just say it twice. */}
+                  {playlistId !== null &&
+                    !playlistTitle.includes(String(playlistId)) && (
+                      <PlaylistIdText>(#{playlistId})</PlaylistIdText>
+                    )}
+                </PlaylistTitleText>
+              </PlaylistTitleCard>
             </Tooltip>
           )}
         </PlaylistTitleBar>
-      )}
-
-      {!collapsed && (
-        <VersionActionsBar>
-          {/* Nothing behind this yet — there is no way to write a version into a playlist from
-              here, so the button says so rather than swallowing the click as it used to. */}
-          <Tooltip content="Adding versions from ShotGrid is not wired up yet">
-            <DisabledActionWrapper>
-              <VersionActionButton disabled>
-                <Plus />
-                Add Version
-              </VersionActionButton>
-            </DisabledActionWrapper>
-          </Tooltip>
-        </VersionActionsBar>
       )}
 
       {collapsed && (

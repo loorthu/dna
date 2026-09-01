@@ -68,6 +68,12 @@ class MockProdtrackProvider(ProdtrackProviderBase):
             base_url or os.getenv("API_BASE_URL", "http://localhost:8000")
         ).rstrip("/")
         self._conn: Optional[sqlite3.Connection] = None
+        # Versions appended to a playlist since this process started, by playlist id. The seeded
+        # database is opened read-only and is a fixture shared by every developer running the
+        # mock, so adding a version writes here instead of into it: the addition is real for as
+        # long as the backend runs and is gone on restart, which is what a demo needs and all a
+        # fixture should promise.
+        self._appended_versions: dict[int, list[int]] = {}
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -369,6 +375,9 @@ class MockProdtrackProvider(ProdtrackProviderBase):
                 "description": "description",
                 "status": "status",
                 "project": "project_id",
+                # The mock has no review tool behind it, so a version's own id stands in for the
+                # id one would announce -- the same stand-in `_version_from_row` hands out.
+                "external_ref": "id",
             },
             "playlist": {
                 "id": "id",
@@ -589,12 +598,47 @@ class MockProdtrackProvider(ProdtrackProviderBase):
                 (playlist_id,),
             ).fetchall()
         ]
+        version_ids += self._appended_versions.get(playlist_id, [])
         if not version_ids:
             return []
         versions = []
         for vid in version_ids:
             versions.append(self.get_entity("version", vid, resolve_links=True))
         return versions
+
+    def add_versions_to_playlist(
+        self, playlist_id: int, version_ids: list[int]
+    ) -> list[int]:
+        """Append versions to a playlist for the life of this process. See `_appended_versions`."""
+        conn = self._get_conn()
+        if not conn.execute(
+            "SELECT id FROM playlists WHERE id = ?", (playlist_id,)
+        ).fetchone():
+            raise ValueError(f"Playlist not found: {playlist_id}")
+
+        existing = {
+            r["version_id"]
+            for r in conn.execute(
+                "SELECT version_id FROM playlist_versions WHERE playlist_id = ?",
+                (playlist_id,),
+            ).fetchall()
+        }
+        existing.update(self._appended_versions.get(playlist_id, []))
+
+        appended = []
+        for vid in version_ids:
+            if vid in existing:
+                continue
+            if not conn.execute(
+                "SELECT id FROM versions WHERE id = ?", (vid,)
+            ).fetchone():
+                raise ValueError(f"Entity not found: version {vid}")
+            appended.append(vid)
+            existing.add(vid)
+
+        if appended:
+            self._appended_versions.setdefault(playlist_id, []).extend(appended)
+        return appended
 
     def get_version_statuses(
         self, project_id: int | None = None

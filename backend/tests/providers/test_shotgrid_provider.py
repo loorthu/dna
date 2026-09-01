@@ -1482,6 +1482,213 @@ class TestShotgridProviderGetVersionsForPlaylist:
         assert results[0].task.id == 500
         assert results[0].task.name == "Animation"
 
+    def _playlist_of_three(self, shotgrid_provider, connections):
+        """A playlist of three versions whose connection rows carry `connections`."""
+        shotgrid_provider.sg.find_one.return_value = {
+            "id": 1,
+            "versions": [
+                {"type": "Version", "id": 10},
+                {"type": "Version", "id": 20},
+                {"type": "Version", "id": 30},
+            ],
+        }
+        # Versions, then notes, then the connection rows the order is read from.
+        shotgrid_provider.sg.find.side_effect = [
+            [
+                {"id": 10, "code": "a_v001"},
+                {"id": 20, "code": "b_v001"},
+                {"id": 30, "code": "c_v001"},
+            ],
+            [],
+            connections,
+        ]
+
+    def test_versions_come_back_in_the_reviews_running_order(self, shotgrid_provider):
+        """The list on screen is the playlist, so it is the playlist's order that must show.
+
+        The `versions` field reads back sorted by id and the version query answers "these ids" --
+        neither knows the order the review runs in, which lives on the connection row.
+        """
+        self._playlist_of_three(
+            shotgrid_provider,
+            [
+                {"version": {"type": "Version", "id": 30}, "sg_sort_order": 1},
+                {"version": {"type": "Version", "id": 10}, "sg_sort_order": 2},
+                {"version": {"type": "Version", "id": 20}, "sg_sort_order": 3},
+            ],
+        )
+
+        results = shotgrid_provider.get_versions_for_playlist(1)
+
+        assert [v.id for v in results] == [30, 10, 20]
+
+    def test_a_version_with_no_place_yet_sorts_to_the_end(self, shotgrid_provider):
+        """What a freshly added version looks like before anything numbers it."""
+        self._playlist_of_three(
+            shotgrid_provider,
+            [
+                {"version": {"type": "Version", "id": 30}, "sg_sort_order": 1},
+                {"version": {"type": "Version", "id": 20}, "sg_sort_order": 2},
+                {"version": {"type": "Version", "id": 10}, "sg_sort_order": None},
+            ],
+        )
+
+        results = shotgrid_provider.get_versions_for_playlist(1)
+
+        assert [v.id for v in results] == [30, 20, 10]
+
+    def test_a_site_without_an_orderable_connection_still_lists(
+        self, shotgrid_provider
+    ):
+        """Ordering is worth a query, not a playlist that will not open."""
+        shotgrid_provider.sg.find_one.return_value = {
+            "id": 1,
+            "versions": [
+                {"type": "Version", "id": 10},
+                {"type": "Version", "id": 20},
+            ],
+        }
+        shotgrid_provider.sg.find.side_effect = [
+            [{"id": 10, "code": "a_v001"}, {"id": 20, "code": "b_v001"}],
+            [],
+            Exception(
+                "API read() PlaylistVersionConnection.sg_sort_order doesn't exist"
+            ),
+        ]
+
+        results = shotgrid_provider.get_versions_for_playlist(1)
+
+        assert [v.id for v in results] == [10, 20]
+
+
+# ============================================================================
+# ShotGrid add_versions_to_playlist tests
+# ============================================================================
+
+
+class TestShotgridProviderAddVersionsToPlaylist:
+    """Tests for the ShotgridProvider.add_versions_to_playlist method."""
+
+    @pytest.fixture
+    def shotgrid_provider(self):
+        sg_provider = ShotgridProvider(
+            url="https://test.shotgunstudio.com",
+            script_name="test_script",
+            api_key="test_key",
+            connect=False,
+        )
+        sg_provider.sg = mock.MagicMock()
+        return sg_provider
+
+    def test_appends_without_touching_what_is_already_there(self, shotgrid_provider):
+        shotgrid_provider.sg.find_one.return_value = {
+            "id": 400,
+            "versions": [{"type": "Version", "id": 10}],
+        }
+        shotgrid_provider.sg.find.return_value = []
+
+        appended = shotgrid_provider.add_versions_to_playlist(400, [20])
+
+        assert appended == [20]
+        # "add" mode, not a rewritten list: whatever else landed in the playlist between the read
+        # above and this write survives.
+        assert (
+            mock.call(
+                "Playlist",
+                400,
+                {"versions": [{"type": "Version", "id": 20}]},
+                multi_entity_update_modes={"versions": "add"},
+            )
+            in shotgrid_provider.sg.update.call_args_list
+        )
+
+    def test_the_new_version_is_placed_after_the_last_one(self, shotgrid_provider):
+        """Membership alone leaves it unplaced -- ShotGrid's own order lives on the connection."""
+        shotgrid_provider.sg.find_one.return_value = {
+            "id": 400,
+            "versions": [{"type": "Version", "id": 10}],
+        }
+        shotgrid_provider.sg.find.return_value = [
+            {"id": 900, "version": {"type": "Version", "id": 10}, "sg_sort_order": 7},
+            {
+                "id": 901,
+                "version": {"type": "Version", "id": 20},
+                "sg_sort_order": None,
+            },
+        ]
+
+        shotgrid_provider.add_versions_to_playlist(400, [20])
+
+        shotgrid_provider.sg.update.assert_any_call(
+            "PlaylistVersionConnection", 901, {"sg_sort_order": 8}
+        )
+
+    def test_an_existing_place_in_the_running_order_is_left_alone(
+        self, shotgrid_provider
+    ):
+        """Somebody's ordering of a review is not ours to renumber."""
+        shotgrid_provider.sg.find_one.return_value = {"id": 400, "versions": []}
+        shotgrid_provider.sg.find.return_value = [
+            {"id": 901, "version": {"type": "Version", "id": 20}, "sg_sort_order": 3},
+        ]
+
+        shotgrid_provider.add_versions_to_playlist(400, [20])
+
+        connection_updates = [
+            c
+            for c in shotgrid_provider.sg.update.call_args_list
+            if c[0][0] == "PlaylistVersionConnection"
+        ]
+        assert connection_updates == []
+
+    def test_ordering_trouble_does_not_lose_the_version(self, shotgrid_provider):
+        """The version is in the playlist by then; the order is the lesser half."""
+        shotgrid_provider.sg.find_one.return_value = {"id": 400, "versions": []}
+        shotgrid_provider.sg.find.side_effect = Exception("no such field")
+
+        assert shotgrid_provider.add_versions_to_playlist(400, [20]) == [20]
+
+    def test_a_version_already_in_the_playlist_is_not_written_again(
+        self, shotgrid_provider
+    ):
+        shotgrid_provider.sg.find_one.return_value = {
+            "id": 400,
+            "versions": [{"type": "Version", "id": 10}],
+        }
+
+        assert shotgrid_provider.add_versions_to_playlist(400, [10]) == []
+        shotgrid_provider.sg.update.assert_not_called()
+
+    def test_adds_only_the_ones_missing(self, shotgrid_provider):
+        shotgrid_provider.sg.find_one.return_value = {
+            "id": 400,
+            "versions": [{"type": "Version", "id": 10}],
+        }
+
+        assert shotgrid_provider.add_versions_to_playlist(400, [10, 20, 30]) == [20, 30]
+
+    def test_an_empty_playlist_takes_the_first_version(self, shotgrid_provider):
+        shotgrid_provider.sg.find_one.return_value = {"id": 400, "versions": None}
+
+        assert shotgrid_provider.add_versions_to_playlist(400, [20]) == [20]
+
+    def test_unknown_playlist_raises(self, shotgrid_provider):
+        shotgrid_provider.sg.find_one.return_value = None
+
+        with pytest.raises(ValueError, match="Playlist not found: 999"):
+            shotgrid_provider.add_versions_to_playlist(999, [20])
+        shotgrid_provider.sg.update.assert_not_called()
+
+    def test_raises_when_not_connected(self):
+        provider = ShotgridProvider(
+            url="https://test.shotgunstudio.com",
+            script_name="test_script",
+            api_key="test_key",
+            connect=False,
+        )
+        with pytest.raises(ValueError, match="Not connected to ShotGrid"):
+            provider.add_versions_to_playlist(400, [20])
+
 
 # ============================================================================
 # ShotGrid get_user_by_email tests

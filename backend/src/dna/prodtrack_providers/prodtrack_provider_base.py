@@ -169,6 +169,24 @@ class ProdtrackProviderBase:
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def add_versions_to_playlist(
+        self, playlist_id: int, version_ids: list[int]
+    ) -> list[int]:
+        """Append versions to the end of a playlist, skipping ones already in it.
+
+        Appending rather than replacing is the whole point: a playlist is an ordered list someone
+        curated, and the versions already in it keep their places and their order.
+
+        Args:
+            playlist_id: The ID of the playlist to append to
+            version_ids: The versions to append, in the order they should land
+
+        Returns:
+            The ids actually appended — a version already in the playlist is left alone and
+            omitted here, so an empty list means every one of them was already there.
+        """
+        raise NotImplementedError("Subclasses must implement this method.")
+
     def get_version_statuses(
         self, project_id: int | None = None
     ) -> list[dict[str, str]]:

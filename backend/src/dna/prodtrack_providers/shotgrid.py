@@ -1,6 +1,7 @@
 """ShotGrid production tracking provider implementation."""
 
 import contextlib
+import logging
 import os
 from datetime import date
 from typing import Any, Optional, cast
@@ -21,6 +22,8 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
     UserNotFoundError,
 )
 from dna.review_links import slugify
+
+logger = logging.getLogger(__name__)
 
 # Project types shown in the login project picker. Mirrors magboard's
 # PROJECT_ALLOWED_TYPES — only real production projects, not R&D/test shows.
@@ -356,17 +359,28 @@ class ShotgridProvider(ProdtrackProviderBase):
         return entity
 
     def _resolve_linked_field(self, data):
-        """Resolve linked entity data by fetching the full entity."""
+        """Resolve linked entity data by fetching the full entity.
+
+        A link to something DNA has no model for -- a Version whose entity is a Sequence, on a
+        show that reviews sequences -- resolves to nothing rather than raising. The version is
+        real and the rest of it is wanted; losing the whole entity over the type of one link is
+        what made `get_entity` fail for those versions. The shallow path has always been this
+        forgiving, and this one now agrees with it.
+        """
         if isinstance(data, dict):
-            dna_type = _get_dna_entity_type(data["type"])
+            dna_type = _dna_entity_type_or_none(data["type"])
+            if dna_type is None:
+                return None
             return self.get_entity(dna_type, data["id"], resolve_links=False)
         elif isinstance(data, list):
-            return [
-                self.get_entity(
-                    _get_dna_entity_type(item["type"]), item["id"], resolve_links=False
-                )
-                for item in data
-            ]
+            resolved = []
+            for item in data:
+                dna_type = _dna_entity_type_or_none(item["type"])
+                if dna_type is not None:
+                    resolved.append(
+                        self.get_entity(dna_type, item["id"], resolve_links=False)
+                    )
+            return resolved
         return None
 
     def _convert_entities_to_sg_links(self, entities):
@@ -875,7 +889,129 @@ class ShotgridProvider(ProdtrackProviderBase):
 
             versions.append(version)
 
+        # Hand them back in the order the review runs in. Neither query above knows it: the
+        # playlist's `versions` field reads back sorted by id, and the version query answers
+        # "these ids". So without this the list on screen is in id order — which is not the order
+        # anyone arranged the review in, and is not where a version appended to the end belongs.
+        # A version with no place yet sorts to the end, by id among its peers.
+        order = self._playlist_sort_orders(playlist_id)
+
+        def running_order(version: Version) -> tuple[bool, int, int]:
+            place = order.get(version.id)
+            return (place is None, place or 0, version.id)
+
+        versions.sort(key=running_order)
+
         return versions
+
+    def _playlist_sort_orders(self, playlist_id: int) -> dict[int, Optional[int]]:
+        """Each version's place in a playlist's running order, keyed by version id.
+
+        The order lives on the connection row between the playlist and the version, which is
+        where ShotGrid's own playlist view and the review tools read it from. Empty if the site's
+        connection carries no such field — a playlist that cannot be ordered still lists.
+        """
+        try:
+            connections = self._sg.find(
+                "PlaylistVersionConnection",
+                filters=[["playlist", "is", {"type": "Playlist", "id": playlist_id}]],
+                fields=["version", "sg_sort_order"],
+            )
+        except (
+            Exception
+        ) as error:  # noqa: BLE001 - the list matters more than its order
+            logger.warning(
+                "Could not read the running order of playlist %s: %s",
+                playlist_id,
+                error,
+            )
+            return {}
+        return {
+            connection["version"]["id"]: connection.get("sg_sort_order")
+            for connection in connections
+            if connection.get("version")
+        }
+
+    def add_versions_to_playlist(
+        self, playlist_id: int, version_ids: list[int]
+    ) -> list[int]:
+        """Append versions to the end of a playlist, skipping ones already in it."""
+        if not self._sg:
+            raise ValueError("Not connected to ShotGrid")
+
+        sg_playlist = self._sg.find_one(
+            "Playlist",
+            filters=[["id", "is", playlist_id]],
+            fields=["versions"],
+        )
+        if not sg_playlist:
+            raise ValueError(f"Playlist not found: {playlist_id}")
+
+        existing_ids = {v["id"] for v in (sg_playlist.get("versions") or [])}
+        to_append = [vid for vid in version_ids if vid not in existing_ids]
+        if not to_append:
+            return []
+
+        # "add" mode appends to the field rather than replacing it, so a review that is being
+        # built by more than one person does not lose whatever the other one added between the
+        # read above and this write. The read is only for deciding what is already there.
+        self._sg.update(
+            "Playlist",
+            playlist_id,
+            {"versions": [{"type": "Version", "id": vid} for vid in to_append]},
+            multi_entity_update_modes={"versions": "add"},
+        )
+        self._place_at_end_of_playlist(playlist_id, to_append)
+        return to_append
+
+    def _place_at_end_of_playlist(
+        self, playlist_id: int, version_ids: list[int]
+    ) -> None:
+        """Give newly added versions a place in the playlist's running order.
+
+        A playlist's order lives on the connection row between it and each version, not on the
+        `versions` field -- that field reads back sorted by id and says nothing about how the
+        review runs. A version added through the field alone therefore arrives with no sort
+        order at all, unplaced for ShotGrid and for every review tool reading the playlist. These
+        stamp it after the last one, which is what appending means to everyone downstream.
+
+        The membership is the part that matters, so a site whose connection has no sort-order
+        field keeps the version rather than losing the whole request to that.
+        """
+        try:
+            connections = self._sg.find(
+                "PlaylistVersionConnection",
+                filters=[["playlist", "is", {"type": "Playlist", "id": playlist_id}]],
+                fields=["id", "version", "sg_sort_order"],
+            )
+            last = max(
+                (
+                    c["sg_sort_order"]
+                    for c in connections
+                    if c.get("sg_sort_order") is not None
+                ),
+                default=0,
+            )
+            by_version = {
+                c["version"]["id"]: c for c in connections if c.get("version")
+            }
+            for offset, version_id in enumerate(version_ids, start=1):
+                connection = by_version.get(version_id)
+                # Only an unplaced row is stamped: a sort order already on the connection is
+                # somebody's ordering of the review, and not ours to renumber.
+                if connection is not None and connection.get("sg_sort_order") is None:
+                    self._sg.update(
+                        "PlaylistVersionConnection",
+                        connection["id"],
+                        {"sg_sort_order": last + offset},
+                    )
+        except Exception as error:  # noqa: BLE001 - the version is added either way
+            logger.warning(
+                "Could not set the playlist order for versions %s on playlist %s: %s",
+                version_ids,
+                playlist_id,
+                error,
+            )
 
     def get_version_statuses(
         self, project_id: int | None = None
@@ -1152,6 +1288,14 @@ def _get_dna_entity_type(sg_entity_type: str) -> str:
         if entity_data["entity_id"] == sg_entity_type:
             return entity_type
     raise ValueError(f"Unknown entity type: {sg_entity_type}")
+
+
+def _dna_entity_type_or_none(sg_entity_type: str) -> Optional[str]:
+    """The DNA entity type for a ShotGrid type, or None for one DNA does not model."""
+    try:
+        return _get_dna_entity_type(sg_entity_type)
+    except ValueError:
+        return None
 
 
 def _transcript_entity_type() -> str:

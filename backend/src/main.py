@@ -28,6 +28,9 @@ from dna.cors_settings import get_cors_middleware_kwargs
 from dna.events import EventType, get_event_publisher
 from dna.llm_providers.llm_provider_base import LLMProviderBase, get_llm_provider
 from dna.models import (
+    AddVersionOutcome,
+    AddVersionsToPlaylistRequest,
+    AddVersionsToPlaylistResponse,
     Asset,
     BotSession,
     BotStatus,
@@ -891,6 +894,123 @@ async def get_versions_for_playlist(
         return provider.get_versions_for_playlist(playlist_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+def _versions_by_external_ref(
+    provider: ProdtrackProviderBase, project_id: int, jts: list[int]
+) -> dict[int, Version]:
+    """The versions on a project carrying these external review ids, keyed by the id asked for.
+
+    One query for the whole list, because the list is the point: a review is assembled by pasting
+    the ids the review tool announced, and asking the tracking system once per id would turn a
+    paste of forty into forty round trips.
+    """
+    matches = provider.find(
+        "version",
+        [
+            {"field": "external_ref", "operator": "in", "value": jts},
+            {
+                "field": "project",
+                "operator": "is",
+                "value": {"type": "Project", "id": project_id},
+            },
+        ],
+    )
+    by_ref: dict[int, Version] = {}
+    for match in cast(list[Version], matches):
+        if match.external_ref is None:
+            continue
+        try:
+            by_ref[int(match.external_ref)] = match
+        except ValueError:
+            # A site whose external ref is not a number has no business in this endpoint, but one
+            # unparseable row should not take the rest of the paste down with it.
+            continue
+    return by_ref
+
+
+@app.post(
+    "/playlists/{playlist_id}/versions",
+    tags=["Versions"],
+    summary="Add versions to a playlist",
+    description=(
+        "Append versions to the end of a playlist, by the id the review tool announces for them "
+        "(the JTS at SPI). Takes a list, so a pasted set of ids goes in at once; each is "
+        "answered for separately. Versions already in the playlist keep their place and order."
+    ),
+    response_model=AddVersionsToPlaylistResponse,
+    status_code=201,
+)
+async def add_versions_to_playlist(
+    playlist_id: int,
+    request: AddVersionsToPlaylistRequest,
+    provider: ProdtrackProviderDep,
+    _: CurrentUserDep,
+) -> AddVersionsToPlaylistResponse:
+    """Append versions to a playlist, resolving each by its external review id."""
+    # The same id twice in a paste is one version, and would otherwise be reported twice.
+    requested = list(dict.fromkeys(request.jts))
+
+    try:
+        playlist = cast(
+            Playlist, provider.get_entity("playlist", playlist_id, resolve_links=False)
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"Playlist {playlist_id} not found")
+
+    project_id = (playlist.project or {}).get("id")
+    if project_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Playlist {playlist_id} is not on a project, so there is nowhere to look "
+                "versions up."
+            ),
+        )
+
+    try:
+        found = _versions_by_external_ref(provider, project_id, requested)
+    except ValueError as e:
+        # Chiefly the deployment having no external-ref field configured, which makes this
+        # endpoint unusable rather than the request wrong -- say which it is.
+        raise HTTPException(
+            status_code=501,
+            detail=(
+                "This deployment cannot look versions up by review id: "
+                f"{e}. Set PRODTRACK_VERSION_EXTERNAL_REF_FIELD to the field holding it."
+            ),
+        )
+
+    try:
+        appended = provider.add_versions_to_playlist(
+            playlist_id, [found[ref].id for ref in requested if ref in found]
+        )
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    was_appended = set(appended)
+    outcomes = []
+    for ref in requested:
+        version = found.get(ref)
+        if version is None:
+            outcomes.append(AddVersionOutcome(jts=ref, status="not_found"))
+            continue
+        outcomes.append(
+            AddVersionOutcome(
+                jts=ref,
+                status=(
+                    "added" if version.id in was_appended else "already_in_playlist"
+                ),
+                version_id=version.id,
+                version_name=version.name,
+            )
+        )
+
+    return AddVersionsToPlaylistResponse(
+        outcomes=outcomes, added_count=len(was_appended)
+    )
 
 
 @app.post(
