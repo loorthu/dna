@@ -53,6 +53,37 @@ describe('VersionHeader', () => {
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
 
+  it('offers the artist view as a new-tab link, anchored at the shot', () => {
+    render(
+      <HotkeysProvider>
+        <VersionHeader
+          shotCode="SHOT"
+          versionNumber="v001"
+          projectId={1}
+          reviewUrl="/review/nite/dailies#abc_0100_comp_v012"
+        />
+      </HotkeysProvider>
+    );
+    const link = screen.getByRole('link', { name: /Artist view/i });
+    expect(link).toHaveAttribute(
+      'href',
+      '/review/nite/dailies#abc_0100_comp_v012'
+    );
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
+  it('hides the artist view when there is no address for it', () => {
+    // An older backend has no review endpoint, which should cost the button and nothing else.
+    render(
+      <HotkeysProvider>
+        <VersionHeader shotCode="SHOT" versionNumber="v001" projectId={1} />
+      </HotkeysProvider>
+    );
+    expect(
+      screen.queryByRole('link', { name: /Artist view/i })
+    ).not.toBeInTheDocument();
+  });
+
   it('flags Set In Review while a live bot has nowhere to file its transcript', () => {
     render(
       <HotkeysProvider>

@@ -20,6 +20,7 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
     ProdtrackProviderBase,
     UserNotFoundError,
 )
+from dna.review_links import slugify
 
 # Project types shown in the login project picker. Mirrors magboard's
 # PROJECT_ALLOWED_TYPES — only real production projects, not R&D/test shows.
@@ -275,7 +276,13 @@ class ShotgridProvider(ProdtrackProviderBase):
         if isinstance(data, dict):
             return self._create_shallow_entity(data)
         elif isinstance(data, list):
-            return [e for item in data if item for e in [self._create_shallow_entity(item)] if e is not None]
+            return [
+                e
+                for item in data
+                if item
+                for e in [self._create_shallow_entity(item)]
+                if e is not None
+            ]
         return None
 
     def _create_shallow_entity(self, sg_link: dict) -> Optional[EntityBase]:
@@ -697,6 +704,31 @@ class ShotgridProvider(ProdtrackProviderBase):
             playlist.version_count = version_count
             playlists.append(playlist)
         return playlists
+
+    def find_playlists_by_name_slug(self, project_id: int, slug: str) -> list[Playlist]:
+        """Find every playlist in a project whose name slugs to `slug`."""
+        if not self._sg:
+            raise ValueError("Not connected to ShotGrid")
+
+        # Slugging is lossy and lives here, not in ShotGrid, so the match cannot be pushed into
+        # the query — every playlist on the show has to be compared. What keeps that affordable
+        # is the field list: id and code alone, no version links, which is the difference between
+        # two columns per row and a shallow copy of the show's entire review history.
+        sg_playlists = self._sg.find(
+            "Playlist",
+            filters=[["project", "is", {"type": "Project", "id": project_id}]],
+            fields=["id", "code", "description", "project", "created_at", "updated_at"],
+            order=[{"field_name": "created_at", "direction": "desc"}],
+        )
+
+        entity_mapping = FIELD_MAPPING["playlist"]
+        return [
+            self._convert_sg_entity_to_dna_entity(
+                sg_playlist, entity_mapping, "playlist", resolve_links=False
+            )
+            for sg_playlist in sg_playlists
+            if slugify(sg_playlist.get("code")) == slug
+        ]
 
     def get_versions_for_playlist(self, playlist_id: int) -> list[Version]:
         """Get versions for a playlist.

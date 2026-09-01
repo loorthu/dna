@@ -9,6 +9,7 @@ import {
   Target,
   ChevronDown,
   ExternalLink,
+  Users,
 } from 'lucide-react';
 import { UserAvatar } from './UserAvatar';
 import { FollowAlongMenu } from './FollowAlongMenu';
@@ -37,6 +38,8 @@ interface VersionHeaderProps {
   onSyncProdtrackTab?: () => void | Promise<void>;
   syncProdtrackDisabled?: boolean;
   syncProdtrackTitle?: string;
+  /** Address of this shot on the artist review page; absent hides the button. */
+  reviewUrl?: string | null;
   canGoBack?: boolean;
   canGoNext?: boolean;
   hasInReview?: boolean;
@@ -117,7 +120,10 @@ const InReviewButton = styled.button`
   }
 `;
 
-const syncProdtrackSurface = css`
+// Shared by every outlined action in the top bar — the production-tracking tab and the artist
+// view. They sit side by side and do the same kind of thing (open this shot somewhere else), so
+// one surface keeps them from drifting into two slightly different buttons.
+const topBarActionSurface = css`
   display: flex;
   align-items: center;
   gap: 6px;
@@ -134,8 +140,8 @@ const syncProdtrackSurface = css`
   box-sizing: border-box;
 `;
 
-const SyncProdtrackButton = styled.button`
-  ${syncProdtrackSurface}
+const TopBarActionButton = styled.button`
+  ${topBarActionSurface}
 
   &:hover:not(:disabled) {
     background: ${({ theme }) => theme.colors.bg.surfaceHover};
@@ -149,8 +155,8 @@ const SyncProdtrackButton = styled.button`
   }
 `;
 
-const SyncProdtrackLink = styled.a`
-  ${syncProdtrackSurface}
+const TopBarActionLink = styled.a`
+  ${topBarActionSurface}
   text-decoration: none;
 
   &:hover {
@@ -476,6 +482,7 @@ export function VersionHeader({
   onSyncProdtrackTab,
   syncProdtrackDisabled = false,
   syncProdtrackTitle = 'Open current version in production tracking (browser tab)',
+  reviewUrl,
   canGoBack = true,
   canGoNext = true,
   hasInReview = true,
@@ -485,7 +492,9 @@ export function VersionHeader({
 }: VersionHeaderProps) {
   const { getLabel } = useHotkeyConfig();
   const { inReviewEnabled } = useFeatureFlags();
-  const { statuses, isLoading: isLoadingStatuses } = useVersionStatuses({ projectId });
+  const { statuses, isLoading: isLoadingStatuses } = useVersionStatuses({
+    projectId,
+  });
   const displayTitle = shotCode && versionNumber ? `${shotCode} - ` : '';
   const displayCode = versionNumber || shotCode || 'Untitled Version';
 
@@ -517,28 +526,42 @@ export function VersionHeader({
               In Review
             </InReviewButton>
           )}
-          {prodtrackDetailUrl && prodtrackTabUsesExtension && onSyncProdtrackTab && (
-            <Tooltip content={syncProdtrackTitle}>
-              <SyncProdtrackButton
-                type="button"
-                onClick={() => void onSyncProdtrackTab()}
-                disabled={syncProdtrackDisabled}
-              >
-                <ExternalLink size={14} />
-                PT tab
-              </SyncProdtrackButton>
-            </Tooltip>
-          )}
+          {prodtrackDetailUrl &&
+            prodtrackTabUsesExtension &&
+            onSyncProdtrackTab && (
+              <Tooltip content={syncProdtrackTitle}>
+                <TopBarActionButton
+                  type="button"
+                  onClick={() => void onSyncProdtrackTab()}
+                  disabled={syncProdtrackDisabled}
+                >
+                  <ExternalLink size={14} />
+                  PT tab
+                </TopBarActionButton>
+              </Tooltip>
+            )}
           {prodtrackDetailUrl && !prodtrackTabUsesExtension && (
             <Tooltip content={syncProdtrackTitle}>
-              <SyncProdtrackLink
+              <TopBarActionLink
                 href={prodtrackDetailUrl}
                 target="_blank"
                 rel="noopener noreferrer"
               >
                 <ExternalLink size={14} />
                 PT tab
-              </SyncProdtrackLink>
+              </TopBarActionLink>
+            </Tooltip>
+          )}
+          {reviewUrl && (
+            <Tooltip content="Open the artist view of this shot — the notes, transcript and recording as the artist receives them, read-only. Same page the notes email links to.">
+              <TopBarActionLink
+                href={reviewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Users size={14} />
+                Artist view
+              </TopBarActionLink>
             </Tooltip>
           )}
           <Tooltip content={`Next Version (${getLabel('nextVersion')})`}>

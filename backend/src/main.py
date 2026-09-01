@@ -54,6 +54,9 @@ from dna.models import (
     PublishTranscriptRequest,
     PublishTranscriptResponse,
     RecordingArchiveRequest,
+    ReviewLink,
+    ReviewPlaylist,
+    ReviewResolution,
     RunQCChecksRequest,
     RunQCChecksResponse,
     SearchRequest,
@@ -82,6 +85,13 @@ from dna.recording_media import (
     ArchiveRecordingMismatch,
     RecordingMediaService,
     RecordingNotFound,
+)
+from dna.review_links import review_url
+from dna.review_page import (
+    ReviewPlaylistNotFound,
+    build_review_link,
+    build_review_playlist,
+    resolve_playlist,
 )
 from dna.site_routing import site_for_client
 from dna.storage_providers.storage_provider_base import (
@@ -1271,16 +1281,37 @@ async def email_notes(
             drafts_by_version.setdefault(d.version_id, []).append(d)
 
     playlist_name = f"Playlist {playlist_id}"
+    playlist_code = ""
+    project_id: Optional[int] = None
     try:
         playlist = prodtrack.get_entity("playlist", playlist_id, resolve_links=False)
         if playlist and getattr(playlist, "code", None):
             playlist_name = playlist.code
+            playlist_code = playlist.code
+        if playlist and getattr(playlist, "project", None):
+            project_id = playlist.project.get("id")
     except Exception:
         pass
 
     project_name = ""
     if versions and versions[0].project:
         project_name = versions[0].project.get("name", "")
+        if project_id is None:
+            project_id = versions[0].project.get("id")
+
+    # The show's short code, which the review URL prefers over its name. It is not on the
+    # version's project link — that carries id, name and type — so it costs a lookup, and a failed
+    # one only costs the readable form: the address then falls back to its id, which still
+    # resolves. Sites whose ShotGrid projects have no tank_name fall back to the name instead.
+    project_code = ""
+    if project_id is not None:
+        try:
+            project = prodtrack.get_entity(
+                "project", int(project_id), resolve_links=False
+            )
+            project_code = getattr(project, "code", "") or ""
+        except Exception:
+            pass
 
     subject = request.subject or playlist_name
 
@@ -1290,6 +1321,7 @@ async def email_notes(
         sent_by=request.sent_by,
         versions=versions,
         drafts_by_version=drafts_by_version,
+        review_url=review_url(playlist_id, playlist_code, project_code, project_name),
     )
 
     try:
@@ -2272,3 +2304,88 @@ async def delete_recording_upstream(
         raise HTTPException(status_code=404, detail=str(e))
     except ArchiveNotConfirmed as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+
+# -----------------------------------------------------------------------------
+# Artist review page
+# -----------------------------------------------------------------------------
+
+
+@app.get(
+    "/review/resolve/{project_slug}/{playlist_slug}",
+    tags=["Review"],
+    summary="Resolve a name-shaped review address to a playlist",
+    description=(
+        "Turns `/review/<project>/<playlist>` into a playlist id. Playlist names are not unique "
+        '— a show runs "Dailies" every day it screens one — so this never guesses: an '
+        "unambiguous name answers with `playlist_id` set, and a reused one answers with "
+        "`playlist_id` null and every candidate in `matches`, newest first, for the page to "
+        "offer. 404 means no playlist of that name exists in a project this user can see."
+    ),
+    response_model=ReviewResolution,
+)
+async def resolve_review_address(
+    project_slug: str,
+    playlist_slug: str,
+    prodtrack: ProdtrackProviderDep,
+    current_user_email: CurrentUserDep,
+) -> ReviewResolution:
+    try:
+        return resolve_playlist(
+            prodtrack, current_user_email, project_slug, playlist_slug
+        )
+    except ReviewPlaylistNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get(
+    "/review/link/{playlist_id}",
+    tags=["Review"],
+    summary="Where a playlist's artist page is, and the fragment for each shot",
+    description=(
+        "The address only — no notes, no transcript, no cut list. It is what the reviewing tool "
+        'needs to offer "open the artist view" beside its production-tracking button, and it '
+        "is asked for rather than worked out in the browser because the page, the notes email "
+        "and that button must agree on every slug. A second implementation in TypeScript would "
+        "agree right up until one of them changed.\n\n"
+        "Every shot's anchor comes back at once, so walking the playlist's versions does not "
+        "re-ask: the answer is about the playlist, not the version being looked at."
+    ),
+    response_model=ReviewLink,
+)
+async def get_review_link(
+    playlist_id: int,
+    prodtrack: ProdtrackProviderDep,
+    _: CurrentUserDep,
+) -> ReviewLink:
+    return build_review_link(playlist_id, prodtrack)
+
+
+@app.get(
+    "/review/playlists/{playlist_id}",
+    tags=["Review"],
+    summary="The artist-facing view of one playlist",
+    description=(
+        "Every shot in the playlist with the notes people wrote about it, the transcript filed "
+        "against it, and the spans of the meeting recording that discussed it — in one response. "
+        "Read-only, and assembled server-side because the page shows the whole playlist at once: "
+        "asking per shot would be four requests apiece.\n\n"
+        "Notes are the ones written in DNA, from every author. The empty note ShotGrid seeds "
+        "against each version when a playlist is created is excluded, and so is the notes "
+        "email's filter to whoever pressed send — an artist is not the sender."
+    ),
+    response_model=ReviewPlaylist,
+)
+async def get_review_playlist(
+    playlist_id: int,
+    prodtrack: ProdtrackProviderDep,
+    storage: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> ReviewPlaylist:
+    try:
+        return await build_review_playlist(
+            playlist_id, prodtrack, storage, transcription_provider
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

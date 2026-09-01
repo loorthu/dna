@@ -15,6 +15,11 @@ import {
 import { useHotkeyAction } from '../hotkeys';
 import { apiHandler } from '../api';
 import { useFeatureFlags } from '../contexts';
+// Imported from their own modules rather than the review barrel: that barrel pulls in ReviewPage,
+// which reaches back into this components barrel, and the cycle resolves to undefined at module
+// init rather than to an error anyone could read.
+import { useReviewLink } from '../review/useReviewLink';
+import { reviewShotHref } from '../review/reviewLink';
 import {
   openProdtrackVersionViaExtensionOrNewTab,
   openProdtrackVersionInExtension,
@@ -87,7 +92,11 @@ export function ContentArea({
 
   const currentVersionAsSearchResult = useMemo((): SearchResult | undefined => {
     if (!version) return undefined;
-    return { type: 'Version', id: version.id, name: version.name || `Version ${version.id}` };
+    return {
+      type: 'Version',
+      id: version.id,
+      name: version.name || `Version ${version.id}`,
+    };
   }, [version]);
 
   const versionSubmitter = useMemo((): SearchResult | undefined => {
@@ -103,11 +112,15 @@ export function ContentArea({
     submitter: versionSubmitter,
   });
 
-  const selectedVersionStatus = draftNote?.versionStatus || (version?.status ?? '');
+  const selectedVersionStatus =
+    draftNote?.versionStatus || (version?.status ?? '');
 
-  const handleVersionStatusChange = useCallback((code: string) => {
-    updateDraftNote({ versionStatus: code });
-  }, [updateDraftNote]);
+  const handleVersionStatusChange = useCallback(
+    (code: string) => {
+      updateDraftNote({ versionStatus: code });
+    },
+    [updateDraftNote]
+  );
 
   const handleRefreshClick = useCallback(() => {
     updateDraftNote({ versionStatus: version?.status ?? '' });
@@ -190,7 +203,6 @@ export function ContentArea({
       enabled: !!userEmail,
     });
 
-
   const shouldAutoSyncProdtrackTab =
     userSettingsQuerySuccess &&
     (userSettings === null ||
@@ -262,6 +274,12 @@ export function ContentArea({
 
   const syncProdtrackDisabled = !activeProdtrackUrl;
 
+  // The same shot on the artist-facing page. Asked for per playlist rather than composed here:
+  // the anchor is a slug of the version's name, and the page and the notes email derive theirs
+  // from the same backend rule.
+  const { data: reviewLink } = useReviewLink(playlistId);
+  const reviewUrl = reviewShotHref(reviewLink, version?.id);
+
   if (!version) {
     return (
       <ContentWrapper>
@@ -291,48 +309,49 @@ export function ContentArea({
   return (
     <>
       <ContentWrapper>
-      <VersionHeader
-        shotCode={entityName}
-        versionNumber={versionNumber}
-        submittedBy={version.user?.name}
-        dateSubmitted={formatDate(version.created_at as string)}
-        versionStatus={selectedVersionStatus}
-        projectId={version.project?.id}
-        thumbnailUrl={version.thumbnail}
-        links={links}
-        onBack={handleBack}
-        onNext={handleNext}
-        onInReview={handleInReview}
-        onSetInReview={handleSetInReview}
-        onVersionStatusChange={handleVersionStatusChange}
-        prodtrackDetailUrl={activeProdtrackUrl}
-        prodtrackTabUsesExtension={!!extensionId}
-        onSyncProdtrackTab={extensionId ? handleSyncProdtrackTab : undefined}
-        syncProdtrackDisabled={syncProdtrackDisabled}
-        syncProdtrackTitle={syncProdtrackTitle}
-        canGoBack={canGoBack}
-        canGoNext={canGoNext}
-        hasInReview={hasInReview}
-        isCurrentVersionInReview={isCurrentVersionInReview}
-        isSettingInReview={isSettingInReview}
-        isDiscardingSegments={isDiscardingSegments}
-        onRefresh={handleRefreshClick}
-      />
-      <NoteEditor
-        ref={noteEditorRef}
-        projectId={version.project?.id}
-        currentVersion={version}
-        draftNote={draftNote}
-        updateDraftNote={updateDraftNote}
-        saveAttachmentIds={saveAttachmentIds}
-        defaultHeight={assistantPanelVisible ? undefined : 300}
-      />
-      <AssistantPanel
-        playlistId={playlistId}
-        versionId={version.id}
-        userEmail={userEmail}
-        onInsertNote={handleInsertNote}
-      />
+        <VersionHeader
+          shotCode={entityName}
+          versionNumber={versionNumber}
+          submittedBy={version.user?.name}
+          dateSubmitted={formatDate(version.created_at as string)}
+          versionStatus={selectedVersionStatus}
+          projectId={version.project?.id}
+          thumbnailUrl={version.thumbnail}
+          links={links}
+          onBack={handleBack}
+          onNext={handleNext}
+          onInReview={handleInReview}
+          onSetInReview={handleSetInReview}
+          onVersionStatusChange={handleVersionStatusChange}
+          prodtrackDetailUrl={activeProdtrackUrl}
+          prodtrackTabUsesExtension={!!extensionId}
+          onSyncProdtrackTab={extensionId ? handleSyncProdtrackTab : undefined}
+          syncProdtrackDisabled={syncProdtrackDisabled}
+          syncProdtrackTitle={syncProdtrackTitle}
+          reviewUrl={reviewUrl}
+          canGoBack={canGoBack}
+          canGoNext={canGoNext}
+          hasInReview={hasInReview}
+          isCurrentVersionInReview={isCurrentVersionInReview}
+          isSettingInReview={isSettingInReview}
+          isDiscardingSegments={isDiscardingSegments}
+          onRefresh={handleRefreshClick}
+        />
+        <NoteEditor
+          ref={noteEditorRef}
+          projectId={version.project?.id}
+          currentVersion={version}
+          draftNote={draftNote}
+          updateDraftNote={updateDraftNote}
+          saveAttachmentIds={saveAttachmentIds}
+          defaultHeight={assistantPanelVisible ? undefined : 300}
+        />
+        <AssistantPanel
+          playlistId={playlistId}
+          versionId={version.id}
+          userEmail={userEmail}
+          onInsertNote={handleInsertNote}
+        />
       </ContentWrapper>
     </>
   );

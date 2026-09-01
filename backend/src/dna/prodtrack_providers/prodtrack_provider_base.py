@@ -138,6 +138,26 @@ class ProdtrackProviderBase:
         """
         raise NotImplementedError("Subclasses must implement this method.")
 
+    def find_playlists_by_name_slug(
+        self, project_id: int, slug: str
+    ) -> list["Playlist"]:
+        """Find every playlist in a project whose name slugs to `slug`.
+
+        Separate from `get_playlists_for_project`, which answers a different question: that one
+        feeds the login picker and stops at RECENT_PLAYLIST_LIMIT, so resolving a review link
+        through it would work for this week's playlists and 404 for the rest. This one is
+        unbounded on purpose and is expected to return zero, one, or — when a show reuses a
+        playlist name — several, newest first.
+
+        Args:
+            project_id: The ID of the project to search within
+            slug: The slugified playlist name to match (see `dna.review_links.slugify`)
+
+        Returns:
+            Matching Playlist entities, most recently created first
+        """
+        raise NotImplementedError("Subclasses must implement this method.")
+
     def get_versions_for_playlist(self, playlist_id: int) -> list["Version"]:
         """Get versions for a playlist.
 

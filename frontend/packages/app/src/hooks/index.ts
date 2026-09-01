@@ -70,3 +70,5 @@ export type {
 } from './useVersionStatuses';
 
 export { usePlaylistDraftNotes } from './usePlaylistDraftNotes';
+
+export { useVideoSeek } from './useVideoSeek';

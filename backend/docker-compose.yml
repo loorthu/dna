@@ -51,6 +51,13 @@ services:
       # draft notes, so a test can be re-run from a host that has only the API. Off
       # here: it is a testing convenience, and every other delete removes one named row.
       - DNA_ENABLE_PLAYLIST_RESET=false
+      # Where the FRONTEND is served, as the recipient's BROWSER would reach it — e.g.
+      # http://dna.example.com:8081. It is what makes the notes email's per-shot links
+      # absolute: each version name links to that shot on the artist review page at
+      # /review/<project>/<playlist>#<version>. A mail client has no origin to resolve a
+      # bare path against, so leaving this EMPTY is the supported default and simply
+      # sends the email it always sent, without links.
+      - DNA_APP_BASE_URL=
     depends_on:
       - mongo
     restart: unless-stopped

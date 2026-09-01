@@ -266,6 +266,64 @@ const GoogleIcon = () => (
   </svg>
 );
 
+/**
+ * The sign-in step, on its own.
+ *
+ * Extracted because the artist review page needs exactly this and nothing else after it: a link
+ * from an email lands on a shot, not on a project picker, so it signs the reader in and then
+ * stays where it was. Sharing the component rather than copying it is what keeps one deployment
+ * from offering a Google button on one screen and an email box on the other.
+ */
+export function SignInCard({ subtitle }: { subtitle?: string }) {
+  const { isLoading, signIn, signInWithEmail, authProvider } = useAuth();
+  const [emailInput, setEmailInput] = useState('');
+
+  return (
+    <PageWrapper>
+      <CardContainer>
+        <LogoWrapper>
+          <Logo showText width={160} />
+        </LogoWrapper>
+
+        <Title>Welcome to DNA</Title>
+        <Subtitle>{subtitle ?? 'Dailies Notes Assistant'}</Subtitle>
+
+        {authProvider === 'none' ? (
+          <FormSection>
+            <StyledForm
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (emailInput.trim()) {
+                  signInWithEmail(emailInput.trim());
+                }
+              }}
+            >
+              <Label>Enter your email</Label>
+              <StyledInput
+                type="email"
+                placeholder="you@example.com"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                autoFocus
+              />
+              <SubmitButton type="submit" disabled={!emailInput.trim()}>
+                Continue
+              </SubmitButton>
+            </StyledForm>
+          </FormSection>
+        ) : (
+          <FormSection>
+            <GoogleButton onClick={signIn} disabled={isLoading}>
+              <GoogleIcon />
+              Sign in with Google
+            </GoogleButton>
+          </FormSection>
+        )}
+      </CardContainer>
+    </PageWrapper>
+  );
+}
+
 function getStoredProject(): Project | null {
   try {
     const stored = localStorage.getItem(STORAGE_KEYS.PROJECT);
@@ -305,8 +363,12 @@ export function clearUserSession(): void {
 }
 
 export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
-  const { isAuthenticated, isLoading: isAuthLoading, user, signIn, signInWithEmail, signOut, authProvider } = useAuth();
-  const [emailInput, setEmailInput] = useState('');
+  const {
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    user,
+    signOut,
+  } = useAuth();
   const [step, setStep] = useState<Step>('loading');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('');
@@ -404,6 +466,10 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
     );
   }
 
+  if (step === 'signin') {
+    return <SignInCard />;
+  }
+
   return (
     <PageWrapper>
       <CardContainer>
@@ -413,40 +479,6 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
 
         <Title>Welcome to DNA</Title>
         <Subtitle>Dailies Notes Assistant</Subtitle>
-
-        {step === 'signin' && authProvider === 'none' && (
-          <FormSection>
-            <StyledForm
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (emailInput.trim()) {
-                  signInWithEmail(emailInput.trim());
-                }
-              }}
-            >
-              <Label>Enter your email</Label>
-              <StyledInput
-                type="email"
-                placeholder="you@example.com"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                autoFocus
-              />
-              <SubmitButton type="submit" disabled={!emailInput.trim()}>
-                Continue
-              </SubmitButton>
-            </StyledForm>
-          </FormSection>
-        )}
-
-        {step === 'signin' && authProvider === 'google' && (
-          <FormSection>
-            <GoogleButton onClick={signIn} disabled={isAuthLoading}>
-              <GoogleIcon />
-              Sign in with Google
-            </GoogleButton>
-          </FormSection>
-        )}
 
         {step === 'project' && (
           <FormSection>

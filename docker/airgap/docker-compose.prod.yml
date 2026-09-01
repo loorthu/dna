@@ -69,6 +69,11 @@ services:
       - EMAIL_PROVIDER=${EMAIL_PROVIDER:-gmail}
       - EMAIL_SENDER=${EMAIL_SENDER:-}
       - GMAIL_CREDENTIALS_DIR=/app/gmail-credentials
+      # Where the FRONTEND is served, as the recipient's browser would reach it — e.g.
+      # http://<host>:${DNA_FRONTEND_PORT}. The notes email links each shot to the artist
+      # review page, and a mail client has no origin to resolve a bare path against, so
+      # leaving this unset simply sends the email without those links.
+      - DNA_APP_BASE_URL=${DNA_APP_BASE_URL:-}
     volumes:
       # Put client_secret.json + token.json in this host dir on prod (mounted ro).
       - ${GMAIL_CREDENTIALS_HOST_DIR:-./gmail-credentials}:/app/gmail-credentials:ro

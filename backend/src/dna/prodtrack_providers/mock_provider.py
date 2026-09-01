@@ -23,6 +23,7 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
     RECENT_PLAYLIST_LIMIT,
     ProdtrackProviderBase,
 )
+from dna.review_links import slugify
 
 _SG_TYPE_TO_DNA: dict[str, str] = {
     "Project": "project",
@@ -559,6 +560,20 @@ class MockProdtrackProvider(ProdtrackProviderBase):
             playlist.version_count = r["version_count"]
             playlists.append(playlist)
         return playlists
+
+    def find_playlists_by_name_slug(self, project_id: int, slug: str) -> list[Playlist]:
+        """Find every playlist in a project whose name slugs to `slug`."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT id, code, description, project_id, created_at, updated_at "
+            "FROM playlists WHERE project_id = ? ORDER BY created_at DESC",
+            (project_id,),
+        ).fetchall()
+        return [
+            self._playlist_from_row(r, r["project_id"])
+            for r in rows
+            if slugify(r["code"]) == slug
+        ]
 
     def get_versions_for_playlist(self, playlist_id: int) -> list[Version]:
         conn = self._get_conn()

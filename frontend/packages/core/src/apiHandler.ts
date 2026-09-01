@@ -18,7 +18,13 @@ import {
   GetTranscriptParams,
   DeploymentCapabilities,
   GetRecordingCutsParams,
+  GetReviewLinkParams,
+  GetReviewPlaylistParams,
   GetSegmentsParams,
+  ResolveReviewAddressParams,
+  ReviewLink,
+  ReviewPlaylist,
+  ReviewResolution,
   GetUserSettingsParams,
   UpsertUserSettingsParams,
   DeleteUserSettingsParams,
@@ -264,6 +270,45 @@ class ApiHandler {
     return this.get<PlaylistRecordingCuts>(
       `/recordings/cuts/${params.playlistId}`
     );
+  }
+
+  /**
+   * Where a playlist's artist page is, and the anchor for each of its shots.
+   *
+   * The cheap half of the review API: it costs the production tracker's answer about the
+   * playlist and its version names, and nothing from the note store or the recording. Cheap
+   * enough to sit behind a button in the reviewing tool.
+   */
+  async getReviewLink(params: GetReviewLinkParams): Promise<ReviewLink> {
+    return this.get<ReviewLink>(`/review/link/${params.playlistId}`);
+  }
+
+  /**
+   * Turn a `/review/<project>/<playlist>` address into a playlist id.
+   *
+   * Slugs are what the notes email links to, and they are not unique — the response either names
+   * one playlist or lists every one the address could have meant, for the page to offer.
+   */
+  async resolveReviewAddress(
+    params: ResolveReviewAddressParams
+  ): Promise<ReviewResolution> {
+    return this.get<ReviewResolution>(
+      `/review/resolve/${encodeURIComponent(params.projectSlug)}/${encodeURIComponent(
+        params.playlistSlug
+      )}`
+    );
+  }
+
+  /**
+   * The artist-facing view of a playlist: every shot with its notes, transcript and cut list.
+   *
+   * One call for the whole page. It is read-only and assembled server-side, so nothing here is
+   * refetched as the reader scrolls.
+   */
+  async getReviewPlaylist(
+    params: GetReviewPlaylistParams
+  ): Promise<ReviewPlaylist> {
+    return this.get<ReviewPlaylist>(`/review/playlists/${params.playlistId}`);
   }
 
   /**

@@ -44,3 +44,10 @@ services:
       # false outside a test deployment: it is the one delete that takes a whole
       # playlist's history rather than a single row someone named.
       - DNA_ENABLE_PLAYLIST_RESET=false
+      # Where the FRONTEND is served, as the recipient's BROWSER would reach it — e.g.
+      # http://dna.example.com:8081. It is what makes the notes email's per-shot links
+      # absolute: each version name links to that shot on the artist review page at
+      # /review/<project>/<playlist>#<version>. A mail client has no origin to resolve a
+      # bare path against, so leaving this EMPTY is the supported default and simply
+      # sends the email it always sent, without links.
+      - DNA_APP_BASE_URL=

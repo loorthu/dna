@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styled from 'styled-components';
 import type { PlaylistRecordingCuts, RecordingCut } from '@dna/core';
+import { useVideoSeek } from '../hooks/useVideoSeek';
 
 /**
  * The meeting recording, scrubbed to the spans that discussed one version.
@@ -115,37 +116,16 @@ export function VirtualCutPlayer({
   versionId,
 }: VirtualCutPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  // A seek requested before the browser knows the duration is a silent no-op: setting currentTime
-  // without metadata does nothing at all, and the clip plays from zero with no error anywhere.
-  // Hold it here and flush on loadedmetadata.
-  const pendingSeekRef = useRef<number | null>(null);
+  // A seek requested before the browser knows the duration is a silent no-op — see useVideoSeek,
+  // which holds it and flushes on loadedmetadata.
+  const { seekTo, onLoadedMetadata: handleLoadedMetadata } =
+    useVideoSeek(videoRef);
   const [activeCut, setActiveCut] = useState(0);
 
   const cuts = useMemo(() => {
     if (!data || versionId == null) return [];
     return data.versions.find((v) => v.version_id === versionId)?.cuts ?? [];
   }, [data, versionId]);
-
-  const seekTo = useCallback((seconds: number) => {
-    const video = videoRef.current;
-    if (!video) return;
-    // readyState >= HAVE_METADATA (1) means duration is known and currentTime will take.
-    if (video.readyState >= 1) {
-      video.currentTime = seconds;
-    } else {
-      pendingSeekRef.current = seconds;
-    }
-  }, []);
-
-  const handleLoadedMetadata = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const pending = pendingSeekRef.current;
-    if (pending != null) {
-      pendingSeekRef.current = null;
-      video.currentTime = pending;
-    }
-  }, []);
 
   // Reset to the first span whenever the version changes: the clip indices belong to the version
   // being shown, and keeping "Clip 3" selected across a change would play an unrelated span.

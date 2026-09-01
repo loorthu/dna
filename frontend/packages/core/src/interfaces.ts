@@ -674,3 +674,124 @@ export interface RunQCChecksParams {
   versionId: number;
   userEmail: string;
 }
+
+/**
+ * The artist-facing view of a review, in one response.
+ *
+ * A read-only projection built server-side rather than the shapes the reviewing tool uses. The
+ * page shows a whole playlist at once and edits none of it, so asking per shot for its version,
+ * notes, segments and cut list would be four requests apiece — about ninety for a dailies — to
+ * build something that never changes after it loads.
+ */
+export interface ReviewNote {
+  author_email: string;
+  /** Byline derived from the mailbox, since a draft note stores only an address. */
+  author_name: string;
+  subject: string;
+  content: string;
+  published: boolean;
+  updated_at: string | null;
+}
+
+export interface ReviewTranscriptLine {
+  speaker: string | null;
+  text: string;
+  absolute_start_time: string | null;
+  start_time: number | null;
+}
+
+export interface ReviewCut {
+  video_in_seconds: number;
+  video_out_seconds: number;
+}
+
+export interface ReviewShot {
+  version_id: number;
+  /** Fragment identifier for this shot — what the notes email links to. */
+  anchor: string;
+  index: number;
+  name: string;
+  entity_name: string;
+  task_name: string;
+  artist_name: string;
+  status: string;
+  thumbnail: string | null;
+  frame_path: string;
+  created_at: string | null;
+  prodtrack_detail_url: string | null;
+  notes: ReviewNote[];
+  transcript: ReviewTranscriptLine[];
+  cuts: ReviewCut[];
+}
+
+/**
+ * The same enum the coordinator's player uses, plus `disabled` for a deployment with no
+ * recording pipeline at all — the review page has no capabilities call of its own.
+ */
+export type ReviewRecordingStatus = RecordingCutsStatus | 'disabled';
+
+export interface ReviewRecording {
+  status: ReviewRecordingStatus;
+  media_url: string | null;
+  duration_seconds: number | null;
+}
+
+export interface ReviewPlaylist {
+  playlist_id: number;
+  playlist_name: string;
+  project_id: number | null;
+  project_name: string;
+  project_code: string;
+  /** Canonical path for this page, which may differ from the one that was followed. */
+  url_path: string;
+  screened_at: string | null;
+  recording: ReviewRecording;
+  shots: ReviewShot[];
+}
+
+export interface ReviewPlaylistRef {
+  playlist_id: number;
+  playlist_name: string;
+  url_path: string;
+  created_at: string | null;
+  version_count: number | null;
+}
+
+/**
+ * What a `/review/<project>/<name>` address resolved to.
+ *
+ * `playlist_id` null with several `matches` is not a failure: a show that screens "Dailies" every
+ * day has many playlists of one name, and the page offers the choice rather than guessing — the
+ * newest is the wrong answer for anyone following a link to an older review.
+ */
+export interface ReviewResolution {
+  playlist_id: number | null;
+  matches: ReviewPlaylistRef[];
+}
+
+/**
+ * Where a playlist's artist page is, and the fragment for each shot in it.
+ *
+ * Asked for rather than assembled in the browser: slugging is lossy, and the page, the notes
+ * email and the reviewing tool's button all have to produce the same string. A second
+ * implementation here would agree with the backend right up until one of them changed.
+ */
+export interface ReviewLink {
+  playlist_id: number;
+  url_path: string;
+  /** Fragment per version id — keys arrive as strings, the way JSON object keys do. */
+  anchors: Record<string, string>;
+}
+
+export interface GetReviewLinkParams {
+  playlistId: number;
+}
+
+export interface ResolveReviewAddressParams {
+  projectSlug: string;
+  playlistSlug: string;
+}
+
+export interface GetReviewPlaylistParams {
+  playlistId: number;
+}

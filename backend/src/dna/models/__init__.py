@@ -62,6 +62,17 @@ from dna.models.requests import (
     SearchResult,
     StatusOption,
 )
+from dna.models.review import (
+    ReviewCut,
+    ReviewLink,
+    ReviewNote,
+    ReviewPlaylist,
+    ReviewPlaylistRef,
+    ReviewRecording,
+    ReviewResolution,
+    ReviewShot,
+    ReviewTranscriptLine,
+)
 from dna.models.stored_segment import (
     StoredSegment,
     StoredSegmentCreate,
@@ -116,6 +127,15 @@ __all__ = [
     "DraftNoteLink",
     "DraftNoteUpdate",
     "NoteOrigin",
+    "ReviewCut",
+    "ReviewLink",
+    "ReviewNote",
+    "ReviewPlaylist",
+    "ReviewPlaylistRef",
+    "ReviewRecording",
+    "ReviewResolution",
+    "ReviewShot",
+    "ReviewTranscriptLine",
     "PlaylistMetadata",
     "PlaylistMetadataUpdate",
     "PublishedTranscript",

@@ -18,8 +18,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 
+from dna.auth.email import display_name as _display_name
 from dna.models.draft_note import DraftNote
 from dna.models.entity import Version
+from dna.review_links import version_anchors
 
 EMAIL_SENDER = os.getenv("EMAIL_SENDER", "")
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "gmail")
@@ -40,6 +42,7 @@ GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 # ---------------------------------------------------------------------------
 # Send helpers (Gmail + SMTP)
 # ---------------------------------------------------------------------------
+
 
 def _get_gmail_service():
     from google.auth.transport.requests import Request
@@ -68,7 +71,9 @@ def _get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def _send_gmail(to: str, subject: str, html_content: str, cc: Optional[str] = None) -> None:
+def _send_gmail(
+    to: str, subject: str, html_content: str, cc: Optional[str] = None
+) -> None:
     msg = MIMEMultipart("mixed")
     msg["to"] = to
     msg["from"] = EMAIL_SENDER
@@ -81,7 +86,9 @@ def _send_gmail(to: str, subject: str, html_content: str, cc: Optional[str] = No
     service.users().messages().send(userId="me", body={"raw": raw}).execute()
 
 
-def _send_smtp(to: str, subject: str, html_content: str, cc: Optional[str] = None) -> None:
+def _send_smtp(
+    to: str, subject: str, html_content: str, cc: Optional[str] = None
+) -> None:
     recipients = [to]
     if cc:
         recipients += [a.strip() for a in cc.split(",") if a.strip()]
@@ -105,7 +112,9 @@ def _send_smtp(to: str, subject: str, html_content: str, cc: Optional[str] = Non
     smtp.close()
 
 
-def send_notes_email(to: str, subject: str, html_content: str, cc: Optional[str] = None) -> None:
+def send_notes_email(
+    to: str, subject: str, html_content: str, cc: Optional[str] = None
+) -> None:
     if not EMAIL_SENDER:
         raise ValueError("EMAIL_SENDER is not set — add it to docker-compose.local.yml")
     if EMAIL_PROVIDER == "smtp":
@@ -117,6 +126,7 @@ def send_notes_email(to: str, subject: str, html_content: str, cc: Optional[str]
 # ---------------------------------------------------------------------------
 # HTML generation
 # ---------------------------------------------------------------------------
+
 
 def _h(s: Optional[str]) -> str:
     return html.escape(s or "")
@@ -131,19 +141,35 @@ def _attr(obj, *keys: str) -> Optional[str]:
     return None
 
 
-def _display_name(email: str) -> str:
-    local = email.split("@")[0]
-    return local.replace(".", " ").replace("_", " ").title()
-
-
 def build_notes_html(
     playlist_name: str,
     project_name: str,
     sent_by: str,
     versions: list[Version],
     drafts_by_version: dict[int, list[DraftNote]],
+    review_url: Optional[str] = None,
 ) -> str:
+    """The notes email, and — when the deployment knows its own address — the way back into it.
+
+    `review_url` turns every version name into a link to that shot on the artist review page,
+    where the same notes sit next to the transcript and the part of the meeting recording that
+    discussed them. The anchors come from `review_links.version_anchors` rather than being
+    written here, because the page derives its own from the same function: a link is only worth
+    sending if the thing it lands on agrees about what it is called.
+
+    Omitted (DNA_APP_BASE_URL unset) the email is exactly what it was before. A mail client has no
+    origin to resolve a bare path against, so a deployment that has not been told where it is
+    served from sends plain text rather than links that go nowhere.
+    """
     date_str = datetime.now().strftime("%B %d, %Y, %I:%M %p")
+    anchors = version_anchors(versions) if review_url else {}
+
+    review_row = ""
+    if review_url:
+        review_row = f"""
+      <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Review Page:</td>
+          <td style="padding:3px 0;"><a href="{_h(review_url)}"
+             style="color:#1a5fb4;">Open notes, transcript and recording</a></td></tr>"""
 
     header = f"""
     <table style="border-collapse:collapse;width:100%;margin-bottom:20px;font-size:13px;">
@@ -154,7 +180,7 @@ def build_notes_html(
       <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Screening Date:</td>
           <td style="padding:3px 0;">{date_str}</td></tr>
       <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Notes By:</td>
-          <td style="padding:3px 0;">{_h(sent_by)}</td></tr>
+          <td style="padding:3px 0;">{_h(sent_by)}</td></tr>{review_row}
     </table>"""
 
     rows = []
@@ -163,11 +189,22 @@ def build_notes_html(
         entity_name = _h(_attr(version.entity, "name") if version.entity else "")
         task_name = ""
         if version.task:
-            step = (version.task.get("pipeline_step") if isinstance(version.task, dict)
-                    else getattr(version.task, "pipeline_step", None))
-            task_name = _h(_attr(step, "name") if step else (_attr(version.task, "name") or ""))
+            step = (
+                version.task.get("pipeline_step")
+                if isinstance(version.task, dict)
+                else getattr(version.task, "pipeline_step", None)
+            )
+            task_name = _h(
+                _attr(step, "name") if step else (_attr(version.task, "name") or "")
+            )
         frame_path = _h(version.frame_path or version.movie_path or "")
         version_name = _h(version.name or f"Version {version.id}")
+        anchor = anchors.get(version.id)
+        if review_url and anchor:
+            version_name = (
+                f'<a href="{_h(review_url)}#{_h(anchor)}" '
+                f'style="color:#1a5fb4;text-decoration:none;">{version_name}</a>'
+            )
 
         notes_parts = []
         for draft in drafts_by_version.get(version.id, []):
@@ -180,9 +217,10 @@ def build_notes_html(
 
         notes_html = "".join(notes_parts) or '<span style="color:#aaa;">—</span>'
         row_bg = "#ffffff" if idx % 2 == 1 else "#f9f9f9"
-        td = f'border:1px solid #ddd;background:{row_bg};'
+        td = f"border:1px solid #ddd;background:{row_bg};"
 
-        rows.append(f"""
+        rows.append(
+            f"""
         <tr>
           <td style="padding:10px 8px;text-align:center;vertical-align:middle;{td}
                      font-weight:bold;width:28px;" rowspan="3">{idx}</td>
@@ -199,7 +237,8 @@ def build_notes_html(
         </tr>
         <tr>
           <td colspan="4" style="padding:10px 8px;{td}">{notes_html}</td>
-        </tr>""")
+        </tr>"""
+        )
 
     versions_table = f"""
     <table style="border-collapse:collapse;width:100%;font-size:13px;">
