@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { formatDate, isValidUrl, playlistLabel } from './utils';
+import {
+  formatDate,
+  isValidUrl,
+  playlistLabel,
+  versionCountLabel,
+} from './utils';
 
 describe('utils', () => {
   describe('playlistLabel', () => {
@@ -21,6 +26,25 @@ describe('utils', () => {
 
     it('has nothing to say about no playlist', () => {
       expect(playlistLabel(null)).toBe('');
+    });
+  });
+
+  describe('versionCountLabel', () => {
+    it.each([
+      [4, '4 versions'],
+      [1, '1 version'],
+      [0, 'empty'],
+    ])('says what %s versions is', (count, expected) => {
+      expect(versionCountLabel(count)).toBe(expected);
+    });
+
+    it.each([
+      ['undefined', undefined],
+      ['null', null],
+    ])('says nothing when the count is %s', (_case, count) => {
+      // An uncounted playlist is not an empty one, and a picker that called it "empty" would
+      // steer people away from the playlist they came for.
+      expect(versionCountLabel(count)).toBeNull();
     });
   });
 

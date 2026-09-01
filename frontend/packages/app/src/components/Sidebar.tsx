@@ -7,12 +7,19 @@ import {
   Upload,
   Loader2,
   AlertCircle,
+  Plus,
 } from 'lucide-react';
 import { Button, Tooltip } from '@radix-ui/themes';
-import type { Version, DraftNote } from '@dna/core';
+import {
+  playlistLabel,
+  versionCountLabel,
+  type Playlist,
+  type Version,
+  type DraftNote,
+} from '@dna/core';
 import { Logo } from './Logo';
 import { UserAvatar } from './UserAvatar';
-import { SplitButton } from './SplitButton';
+import { SplitButton, type SplitButtonMenuItem } from './SplitButton';
 import {
   ExpandableSearch,
   type ExpandableSearchHandle,
@@ -23,7 +30,11 @@ import { noteStatus, noteProvenance } from './noteStatus';
 import { TranscriptionMenu } from './TranscriptionMenu';
 import { SettingsModal } from './SettingsModal';
 import { PublishDialog } from './PublishDialog';
-import { useGetVersionsForPlaylist, useGetUserByEmail } from '../api';
+import {
+  useGetVersionsForPlaylist,
+  useGetUserByEmail,
+  useGetPlaylistsForProject,
+} from '../api';
 import { usePlaylistMetadata, usePlaylistDraftNotes } from '../hooks';
 import { useHotkeyAction, useHotkeyConfig } from '../hotkeys';
 import { useFeatureFlags } from '../contexts';
@@ -32,6 +43,10 @@ interface SidebarProps {
   collapsed: boolean;
   onCollapsedChange: (collapsed: boolean) => void;
   onReplacePlaylist?: () => void;
+  /** Switch to another playlist in the same project, without going back to the picker. */
+  onPlaylistSelect?: (playlist: Playlist) => void;
+  /** Project the open playlist belongs to — whose recent playlists the menu offers. */
+  projectId?: number | null;
   playlistId: number | null;
   /** What to call the playlist on screen — see `playlistLabel`. */
   playlistTitle?: string;
@@ -101,7 +116,7 @@ const CollapseButton = styled.button`
 `;
 
 // Which playlist this is. It sits directly above the version list because that list, the
-// transcription controls and "Change Playlist" all act on this one playlist, and none of them say
+// transcription controls and the playlist menu all act on this one playlist, and none of them say
 // so — once the picker closes, nothing on screen names what is being reviewed.
 const PlaylistTitleBar = styled.div`
   padding: 10px 16px;
@@ -110,6 +125,81 @@ const PlaylistTitleBar = styled.div`
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+`;
+
+// The playlist actions ride on the label line rather than a row of their own: they are short, the
+// label beside them is one small word, and the name below keeps the full width it needs to read.
+const PlaylistTitleRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+`;
+
+const PlaylistActions = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+`;
+
+// Ways of getting versions into the list, kept on a line of their own rather than in the playlist
+// menu: they act on the list below, not on which playlist is open, and this row is where the other
+// ways of pulling versions from ShotGrid (by filter, by task, by status) will sit beside them.
+const VersionActionsBar = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
+`;
+
+const VersionActionButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: ${({ theme }) => theme.fonts.sans};
+  color: ${({ theme }) => theme.colors.text.secondary};
+  background: transparent;
+  border: 1px solid ${({ theme }) => theme.colors.border.default};
+  border-radius: ${({ theme }) => theme.radii.md};
+  cursor: pointer;
+  transition: all ${({ theme }) => theme.transitions.fast};
+  white-space: nowrap;
+
+  &:hover:not(:disabled) {
+    background: ${({ theme }) => theme.colors.bg.surfaceHover};
+    color: ${({ theme }) => theme.colors.text.primary};
+    border-color: ${({ theme }) => theme.colors.border.strong};
+  }
+
+  &:active:not(:disabled) {
+    background: ${({ theme }) => theme.colors.bg.overlay};
+    transform: translateY(1px);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    // A disabled button swallows its own pointer events, tooltip included, so hover is handled by
+    // the wrapper below and the button stays out of the way.
+    pointer-events: none;
+  }
+
+  svg {
+    width: 16px;
+    height: 16px;
+  }
+`;
+
+// Hover target for a disabled action's tooltip — the button itself cannot be one.
+const DisabledActionWrapper = styled.span`
+  display: inline-flex;
+  cursor: not-allowed;
 `;
 
 const PlaylistTitleLabel = styled.span`
@@ -147,30 +237,6 @@ const PlaylistTitleText = styled.span`
   overflow: hidden;
   line-height: 1.35;
   word-break: break-word;
-`;
-
-const Toolbar = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
-  gap: 12px;
-
-  button[data-accent-color='gray'] {
-    color: ${({ theme }) => theme.colors.text.secondary};
-
-    &:hover {
-      color: ${({ theme }) => theme.colors.text.primary};
-    }
-  }
-`;
-
-const ToolbarLeft = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
 `;
 
 const ScrollableContent = styled.div`
@@ -295,6 +361,8 @@ export function Sidebar({
   collapsed,
   onCollapsedChange,
   onReplacePlaylist,
+  onPlaylistSelect,
+  projectId,
   playlistId,
   playlistTitle,
   selectedVersionId,
@@ -332,6 +400,11 @@ export function Sidebar({
 
   const { data: user } = useGetUserByEmail(userEmail);
   const { data: playlistMetadata } = usePlaylistMetadata(playlistId);
+  // Same query the login picker runs, so switching from here costs nothing once either has
+  // loaded it: the backend returns the project's most recent playlists, newest first.
+  const { data: recentPlaylists } = useGetPlaylistsForProject(
+    projectId ?? null
+  );
   const { data: draftNotes } = usePlaylistDraftNotes(playlistId);
 
   const publishDialogNotes = useMemo(
@@ -376,9 +449,22 @@ export function Sidebar({
     return () => clearTimeout(timer);
   }, [followedVersionId]);
 
-  const playlistMenuItems = [
-    { label: 'Change Playlist', onSelect: onReplacePlaylist },
-    { label: 'Add Version' },
+  // The other recent playlists on the show, switchable in one click. The picker stays on the end
+  // of the list because it is still the only way to reach an older playlist or another project —
+  // it is the fallback now, not the way through.
+  const playlistMenuItems: SplitButtonMenuItem[] = [
+    ...(recentPlaylists ?? [])
+      .filter((playlist) => playlist.id !== playlistId)
+      .map((playlist) => ({
+        label: playlistLabel(playlist),
+        meta: versionCountLabel(playlist.version_count),
+        onSelect: () => onPlaylistSelect?.(playlist),
+      })),
+    {
+      label: 'Other Playlist…',
+      onSelect: onReplacePlaylist,
+      separatorBefore: (recentPlaylists?.length ?? 0) > 0,
+    },
   ];
 
   const handleSearchVersionSelect = (version: Version) => {
@@ -509,51 +595,71 @@ export function Sidebar({
         </HeaderActions>
       </Header>
 
-      {!collapsed && playlistTitle && (
+      {!collapsed && (
         <PlaylistTitleBar>
-          <PlaylistTitleLabel>
-            Playlist
-            {/* `playlistLabel` already falls back to "Playlist <id>" for an unnamed playlist, so
-                showing the id here too would just say it twice. */}
-            {playlistId !== null &&
-              !playlistTitle.includes(String(playlistId)) && (
-                <PlaylistIdText>#{playlistId}</PlaylistIdText>
-              )}
-          </PlaylistTitleLabel>
-          <Tooltip content={playlistTitle}>
-            <PlaylistTitleText>{playlistTitle}</PlaylistTitleText>
-          </Tooltip>
+          <PlaylistTitleRow>
+            {playlistTitle && !isSearchExpanded && (
+              <PlaylistTitleLabel>
+                Playlist
+                {/* `playlistLabel` already falls back to "Playlist <id>" for an unnamed playlist, so
+                    showing the id here too would just say it twice. */}
+                {playlistId !== null &&
+                  !playlistTitle.includes(String(playlistId)) && (
+                    <PlaylistIdText>#{playlistId}</PlaylistIdText>
+                  )}
+              </PlaylistTitleLabel>
+            )}
+
+            {!isSearchExpanded && (
+              <PlaylistActions>
+                <SplitButton
+                  menuItems={playlistMenuItems}
+                  onClick={() => refetch()}
+                >
+                  Reload Playlist
+                </SplitButton>
+              </PlaylistActions>
+            )}
+
+            <ExpandableSearch
+              ref={searchRef}
+              placeholder="Search versions..."
+              versions={versions}
+              selectedVersionId={selectedVersionId}
+              onVersionSelect={handleSearchVersionSelect}
+              onExpandedChange={setIsSearchExpanded}
+            />
+          </PlaylistTitleRow>
+
+          {playlistTitle && (
+            <Tooltip content={playlistTitle}>
+              <PlaylistTitleText>{playlistTitle}</PlaylistTitleText>
+            </Tooltip>
+          )}
         </PlaylistTitleBar>
       )}
 
-      {collapsed ? (
+      {!collapsed && (
+        <VersionActionsBar>
+          {/* Nothing behind this yet — there is no way to write a version into a playlist from
+              here, so the button says so rather than swallowing the click as it used to. */}
+          <Tooltip content="Adding versions from ShotGrid is not wired up yet">
+            <DisabledActionWrapper>
+              <VersionActionButton disabled>
+                <Plus />
+                Add Version
+              </VersionActionButton>
+            </DisabledActionWrapper>
+          </Tooltip>
+        </VersionActionsBar>
+      )}
+
+      {collapsed && (
         <CollapsedToolbar>
           {transcriptionEnabled && (
             <TranscriptionMenu playlistId={playlistId} collapsed />
           )}
         </CollapsedToolbar>
-      ) : (
-        <Toolbar>
-          {!isSearchExpanded && (
-            <ToolbarLeft>
-              <SplitButton
-                menuItems={playlistMenuItems}
-                onClick={() => refetch()}
-              >
-                Reload Playlist
-              </SplitButton>
-            </ToolbarLeft>
-          )}
-
-          <ExpandableSearch
-            ref={searchRef}
-            placeholder="Search versions..."
-            versions={versions}
-            selectedVersionId={selectedVersionId}
-            onVersionSelect={handleSearchVersionSelect}
-            onExpandedChange={setIsSearchExpanded}
-          />
-        </Toolbar>
       )}
 
       <ScrollableContent ref={scrollContainerRef}>

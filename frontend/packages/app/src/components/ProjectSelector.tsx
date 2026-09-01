@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { Button, Flex, Select, Spinner } from '@radix-ui/themes';
-import { Playlist, playlistLabel, Project } from '@dna/core';
+import { Playlist, playlistLabel, Project, versionCountLabel } from '@dna/core';
 import { useGetProjectsForUser, useGetPlaylistsForProject } from '../api';
 import { Logo } from './Logo';
 import {
@@ -153,16 +153,6 @@ const EmptyText = styled.p`
 `;
 
 type Step = 'loading' | 'signin' | 'project' | 'playlist';
-
-/**
- * How many versions a playlist holds, for the picker. Returns null when the backend didn't
- * count, so an unknown number reads as silence rather than as an empty playlist.
- */
-function versionCountLabel(count: number | undefined): string | null {
-  if (count === undefined || count === null) return null;
-  if (count === 0) return 'empty';
-  return count === 1 ? '1 version' : `${count} versions`;
-}
 
 const StyledForm = styled.form`
   display: flex;

@@ -1,11 +1,16 @@
-import { type ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 import styled from 'styled-components';
 import { ChevronDown } from 'lucide-react';
 import { DropdownMenu } from '@radix-ui/themes';
 
-interface SplitButtonMenuItem {
+export interface SplitButtonMenuItem {
   label: string;
+  /** Muted text at the right of the row — a count, a date, anything secondary to the label. */
+  meta?: ReactNode;
   onSelect?: () => void;
+  /** Rule above this item, for parting a list of things from the actions below it. */
+  separatorBefore?: boolean;
+  disabled?: boolean;
 }
 
 interface SplitButtonProps {
@@ -89,6 +94,24 @@ const TriggerButton = styled.button`
   }
 `;
 
+// Menus here list things as well as actions — recent playlists, for one — so a long name has to
+// give way. The cap is on the label rather than on the menu: the menu sizes itself to its widest
+// row, so capping the menu instead would leave the row wider than the box and hide the meta off
+// the right edge.
+const MenuItemLabel = styled.span`
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+`;
+
+const MenuItemMeta = styled.span`
+  margin-left: auto;
+  padding-left: 16px;
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.text.muted};
+`;
+
 export function SplitButton({
   children,
   onClick,
@@ -109,9 +132,18 @@ export function SplitButton({
           </DropdownMenu.Trigger>
           <DropdownMenu.Content>
             {menuItems.map((item, index) => (
-              <DropdownMenu.Item key={index} onSelect={item.onSelect}>
-                {item.label}
-              </DropdownMenu.Item>
+              <Fragment key={index}>
+                {item.separatorBefore && <DropdownMenu.Separator />}
+                <DropdownMenu.Item
+                  onSelect={item.onSelect}
+                  disabled={item.disabled}
+                >
+                  <MenuItemLabel>{item.label}</MenuItemLabel>
+                  {item.meta != null && (
+                    <MenuItemMeta>{item.meta}</MenuItemMeta>
+                  )}
+                </DropdownMenu.Item>
+              </Fragment>
             ))}
           </DropdownMenu.Content>
         </DropdownMenu.Root>

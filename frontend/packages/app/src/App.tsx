@@ -84,6 +84,14 @@ function App() {
     setSelectedVersion(null);
   };
 
+  // Switching straight from the sidebar, without a trip back through the picker. The version has
+  // to go with it: it belongs to the playlist being left, and holding on to it would leave the
+  // content area showing a shot the new playlist does not contain.
+  const handlePlaylistSelect = (playlist: Playlist) => {
+    setSelectedPlaylist(playlist);
+    setSelectedVersion(null);
+  };
+
   const handleLogout = () => {
     signOut();
     setSelectedProject(null);
@@ -103,6 +111,8 @@ function App() {
   return (
     <Layout
       onReplacePlaylist={handleReplacePlaylist}
+      onPlaylistSelect={handlePlaylistSelect}
+      projectId={selectedProject.id}
       playlistId={selectedPlaylist.id}
       playlistTitle={playlistTitle}
       selectedVersionId={selectedVersion?.id}

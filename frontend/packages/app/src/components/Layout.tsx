@@ -1,11 +1,15 @@
 import { useState, useEffect, type ReactNode } from 'react';
 import styled from 'styled-components';
-import type { Version } from '@dna/core';
+import type { Playlist, Version } from '@dna/core';
 import { Sidebar } from './Sidebar';
 
 interface LayoutProps {
   children: ReactNode;
   onReplacePlaylist?: () => void;
+  /** Switch to another playlist in the same project, without going back to the picker. */
+  onPlaylistSelect?: (playlist: Playlist) => void;
+  /** Project the open playlist belongs to — what the sidebar offers to switch within. */
+  projectId?: number | null;
   playlistId: number | null;
   /** What to call the playlist on screen — see `playlistLabel`. */
   playlistTitle?: string;
@@ -48,6 +52,8 @@ const Main = styled.main<{ $sidebarCollapsed: boolean }>`
 export function Layout({
   children,
   onReplacePlaylist,
+  onPlaylistSelect,
+  projectId,
   playlistId,
   playlistTitle,
   selectedVersionId,
@@ -77,6 +83,8 @@ export function Layout({
         collapsed={sidebarCollapsed}
         onCollapsedChange={setSidebarCollapsed}
         onReplacePlaylist={onReplacePlaylist}
+        onPlaylistSelect={onPlaylistSelect}
+        projectId={projectId}
         playlistId={playlistId}
         playlistTitle={playlistTitle}
         selectedVersionId={selectedVersionId}

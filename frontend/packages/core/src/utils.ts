@@ -20,6 +20,20 @@ export function playlistLabel(
 }
 
 /**
+ * How many versions a playlist holds, for a list of playlists to choose from.
+ *
+ * Returns null when the backend didn't count, so an unknown number reads as silence rather than
+ * as an empty playlist — the one thing a reviewer picking a playlist most needs told.
+ */
+export function versionCountLabel(
+  count: number | undefined | null
+): string | null {
+  if (count === undefined || count === null) return null;
+  if (count === 0) return 'empty';
+  return count === 1 ? '1 version' : `${count} versions`;
+}
+
+/**
  * Formats a date string to a readable format (in UTC)
  */
 export function formatDate(dateString: string): string {
