@@ -2,6 +2,11 @@ import { useState } from 'react';
 import styled from 'styled-components';
 import { Pencil, X } from 'lucide-react';
 import { SearchResult } from '@dna/core';
+import { useFeatureFlags } from '../contexts/FeatureFlagsContext';
+import {
+  ADDRESSING_FIELDS_ENABLED,
+  useNoteOptionsVisible,
+} from './noteOptions';
 import { EntitySearchInput } from './EntitySearchInput';
 import { EntityPill, type EntityType } from './EntityPill/EntityPill';
 
@@ -186,6 +191,25 @@ const TextInput = styled.input`
   }
 `;
 
+/* The whole options panel collapses to this when Subject is all that is left. */
+const SubjectRow = styled.label`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const SubjectLabel = styled.span`
+  font-size: 12px;
+  font-family: ${({ theme }) => theme.fonts.sans};
+  color: ${({ theme }) => theme.colors.text.muted};
+  flex-shrink: 0;
+`;
+
+const SubjectInput = styled(TextInput)`
+  flex: 1;
+  min-width: 0;
+`;
+
 const PillsDisplay = styled.div`
   display: flex;
   flex-wrap: wrap;
@@ -206,7 +230,32 @@ export function NoteOptionsInline({
   onSubjectChange,
   onLinksChange,
 }: NoteOptionsInlineProps) {
+  const { noteLinksEnabled, noteSubjectEnabled } = useFeatureFlags();
+  const visible = useNoteOptionsVisible();
   const [isEditing, setIsEditing] = useState(false);
+
+  const otherFields = ADDRESSING_FIELDS_ENABLED || noteLinksEnabled;
+
+  // Everything is off: render nothing rather than an empty bar above the body.
+  if (!visible) return null;
+
+  // Subject alone doesn't earn the chip row and the "Note Options" form behind
+  // the pencil — that is two clicks to reach one text field. Edit it in place.
+  // The panel returns as soon as a second field does, since there is then more
+  // than one thing for it to hold.
+  if (!otherFields) {
+    return (
+      <SubjectRow>
+        <SubjectLabel>Subject</SubjectLabel>
+        <SubjectInput
+          type="text"
+          placeholder="Optional — titles the note in ShotGrid"
+          value={subjectValue}
+          onChange={(e) => onSubjectChange?.(e.target.value)}
+        />
+      </SubjectRow>
+    );
+  }
 
   if (isEditing) {
     return (
@@ -219,61 +268,71 @@ export function NoteOptionsInline({
             </CloseButton>
           </EditHeader>
 
-          <FieldRow>
-            <FieldGroup>
-              <FieldLabel $required $hasError={lockedTo.length === 0 && toValue.length === 0}>
-                To
-              </FieldLabel>
-              <EntitySearchInput
-                entityTypes={['user']}
-                projectId={projectId}
-                value={toValue}
-                onChange={(entities) => onToChange?.(entities)}
-                placeholder="Search users..."
-                lockedEntities={lockedTo}
-              />
-            </FieldGroup>
-          </FieldRow>
+          {ADDRESSING_FIELDS_ENABLED && (
+            <>
+              <FieldRow>
+                <FieldGroup>
+                  <FieldLabel
+                    $required
+                    $hasError={lockedTo.length === 0 && toValue.length === 0}
+                  >
+                    To
+                  </FieldLabel>
+                  <EntitySearchInput
+                    entityTypes={['user']}
+                    projectId={projectId}
+                    value={toValue}
+                    onChange={(entities) => onToChange?.(entities)}
+                    placeholder="Search users..."
+                    lockedEntities={lockedTo}
+                  />
+                </FieldGroup>
+              </FieldRow>
 
-          <FieldRow>
-            <FieldGroup>
-              <FieldLabel>CC</FieldLabel>
-              <EntitySearchInput
-                entityTypes={['user']}
-                projectId={projectId}
-                value={ccValue}
-                onChange={(entities) => onCcChange?.(entities)}
-                placeholder="Search users..."
-              />
-            </FieldGroup>
-          </FieldRow>
+              <FieldRow>
+                <FieldGroup>
+                  <FieldLabel>CC</FieldLabel>
+                  <EntitySearchInput
+                    entityTypes={['user']}
+                    projectId={projectId}
+                    value={ccValue}
+                    onChange={(entities) => onCcChange?.(entities)}
+                    placeholder="Search users..."
+                  />
+                </FieldGroup>
+              </FieldRow>
+            </>
+          )}
 
-          <FieldRow>
-            <FieldGroup>
-              <FieldLabel>Subject</FieldLabel>
-              <TextInput
-                type="text"
-                placeholder="Subject..."
-                value={subjectValue}
-                onChange={(e) => onSubjectChange?.(e.target.value)}
-              />
-            </FieldGroup>
-          </FieldRow>
+          {noteSubjectEnabled && (
+            <FieldRow>
+              <FieldGroup>
+                <FieldLabel>Subject</FieldLabel>
+                <TextInput
+                  type="text"
+                  placeholder="Subject..."
+                  value={subjectValue}
+                  onChange={(e) => onSubjectChange?.(e.target.value)}
+                />
+              </FieldGroup>
+            </FieldRow>
+          )}
 
-          <FieldRow>
-            <FieldGroup>
-              <FieldLabel>Links</FieldLabel>
-              <EntitySearchInput
-                entityTypes={['shot', 'asset', 'task', 'version']}
-                projectId={projectId}
-                value={linksValue}
-                onChange={(entities) => onLinksChange?.(entities)}
-                placeholder="Search shots, assets, tasks..."
-                lockedEntities={currentVersion ? [currentVersion] : []}
-              />
-            </FieldGroup>
-          </FieldRow>
-
+          {noteLinksEnabled && (
+            <FieldRow>
+              <FieldGroup>
+                <FieldLabel>Links</FieldLabel>
+                <EntitySearchInput
+                  entityTypes={['shot', 'asset', 'task', 'version']}
+                  projectId={projectId}
+                  value={linksValue}
+                  onChange={(entities) => onLinksChange?.(entities)}
+                  placeholder="Search shots, assets, tasks..."
+                  lockedEntities={currentVersion ? [currentVersion] : []}
+                />
+              </FieldGroup>
+            </FieldRow>
+          )}
         </EditForm>
       </Wrapper>
     );
@@ -281,79 +340,101 @@ export function NoteOptionsInline({
 
   // Combine locked + editable for display only
   const allTo = [...lockedTo, ...toValue];
-  const allLinks = currentVersion ? [currentVersion, ...linksValue] : linksValue;
+  const allLinks = currentVersion
+    ? [currentVersion, ...linksValue]
+    : linksValue;
 
   return (
     <Wrapper>
       <DisplayRow>
-        <OptionChip>
-          <ChipLabel>To:</ChipLabel>
-          {allTo.length > 0 ? (
-            <PillsDisplay>
-              {allTo.slice(0, 2).map((entity) => (
-                <EntityPill
-                  key={`${entity.type}-${entity.id}`}
-                  entity={{ type: entity.type.toLowerCase() as EntityType, id: entity.id, name: entity.name }}
-                  size="compact"
-                />
-              ))}
-              {allTo.length > 2 && (
-                <ChipValue>+{allTo.length - 2} more</ChipValue>
+        {ADDRESSING_FIELDS_ENABLED && (
+          <>
+            <OptionChip>
+              <ChipLabel>To:</ChipLabel>
+              {allTo.length > 0 ? (
+                <PillsDisplay>
+                  {allTo.slice(0, 2).map((entity) => (
+                    <EntityPill
+                      key={`${entity.type}-${entity.id}`}
+                      entity={{
+                        type: entity.type.toLowerCase() as EntityType,
+                        id: entity.id,
+                        name: entity.name,
+                      }}
+                      size="compact"
+                    />
+                  ))}
+                  {allTo.length > 2 && (
+                    <ChipValue>+{allTo.length - 2} more</ChipValue>
+                  )}
+                </PillsDisplay>
+              ) : (
+                <>
+                  <EmptyValue>—</EmptyValue>
+                  <RequiredIndicator>(required)</RequiredIndicator>
+                </>
               )}
-            </PillsDisplay>
-          ) : (
-            <>
+            </OptionChip>
+            <OptionChip>
+              <ChipLabel>CC:</ChipLabel>
+              {ccValue.length > 0 ? (
+                <PillsDisplay>
+                  {ccValue.slice(0, 2).map((entity) => (
+                    <EntityPill
+                      key={`${entity.type}-${entity.id}`}
+                      entity={{
+                        type: entity.type.toLowerCase() as EntityType,
+                        id: entity.id,
+                        name: entity.name,
+                      }}
+                      size="compact"
+                    />
+                  ))}
+                  {ccValue.length > 2 && (
+                    <ChipValue>+{ccValue.length - 2} more</ChipValue>
+                  )}
+                </PillsDisplay>
+              ) : (
+                <EmptyValue>—</EmptyValue>
+              )}
+            </OptionChip>
+          </>
+        )}
+        {noteSubjectEnabled && (
+          <OptionChip>
+            <ChipLabel>Subject:</ChipLabel>
+            {subjectValue ? (
+              <ChipValue>{subjectValue}</ChipValue>
+            ) : (
               <EmptyValue>—</EmptyValue>
-              <RequiredIndicator>(required)</RequiredIndicator>
-            </>
-          )}
-        </OptionChip>
-        <OptionChip>
-          <ChipLabel>CC:</ChipLabel>
-          {ccValue.length > 0 ? (
-            <PillsDisplay>
-              {ccValue.slice(0, 2).map((entity) => (
-                <EntityPill
-                  key={`${entity.type}-${entity.id}`}
-                  entity={{ type: entity.type.toLowerCase() as EntityType, id: entity.id, name: entity.name }}
-                  size="compact"
-                />
-              ))}
-              {ccValue.length > 2 && (
-                <ChipValue>+{ccValue.length - 2} more</ChipValue>
-              )}
-            </PillsDisplay>
-          ) : (
-            <EmptyValue>—</EmptyValue>
-          )}
-        </OptionChip>
-        <OptionChip>
-          <ChipLabel>Subject:</ChipLabel>
-          {subjectValue ? (
-            <ChipValue>{subjectValue}</ChipValue>
-          ) : (
-            <EmptyValue>—</EmptyValue>
-          )}
-        </OptionChip>
-        <OptionChip>
-          <ChipLabel>Links:</ChipLabel>
-          {allLinks.length > 0 ? (
-            <PillsDisplay>
-              {allLinks.slice(0, 2).map((entity) => (
-                <EntityPill
-                  key={`${entity.type}-${entity.id}`}
-                  entity={{ type: entity.type.toLowerCase() as EntityType, id: entity.id, name: entity.name }}
-                  size="compact"
-                />
-              ))}
-              {allLinks.length > 2 && (
-                <ChipValue>+{allLinks.length - 2} more</ChipValue>
-              )}
-            </PillsDisplay>
-          ) : (
-            <EmptyValue>—</EmptyValue>
-          )}
-        </OptionChip>
+            )}
+          </OptionChip>
+        )}
+        {noteLinksEnabled && (
+          <OptionChip>
+            <ChipLabel>Links:</ChipLabel>
+            {allLinks.length > 0 ? (
+              <PillsDisplay>
+                {allLinks.slice(0, 2).map((entity) => (
+                  <EntityPill
+                    key={`${entity.type}-${entity.id}`}
+                    entity={{
+                      type: entity.type.toLowerCase() as EntityType,
+                      id: entity.id,
+                      name: entity.name,
+                    }}
+                    size="compact"
+                  />
+                ))}
+                {allLinks.length > 2 && (
+                  <ChipValue>+{allLinks.length - 2} more</ChipValue>
+                )}
+              </PillsDisplay>
+            ) : (
+              <EmptyValue>—</EmptyValue>
+            )}
+          </OptionChip>
+        )}
         <EditButton
           onClick={() => setIsEditing(true)}
           title="Edit note options"
