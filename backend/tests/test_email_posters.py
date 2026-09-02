@@ -138,3 +138,33 @@ def test_the_images_are_carried_rather_than_linked():
     assert all(
         src.startswith("cid:") for src in re.findall(r'<img[^>]+src="([^"]+)"', html)
     )
+
+
+def test_the_thumbnail_keeps_the_recording_when_the_name_goes_to_the_tracker():
+    """The two links coexist on one row and must not collapse into each other.
+
+    This is the arrangement the row exists for: the name is the version, the picture is the clip.
+    A change that made either one win would look fine in isolation and lose a destination.
+    """
+    html = build_notes_html(
+        playlist_name="Dailies Comp 2026-08-30",
+        project_name="ABC Show",
+        sent_by="sup@example.com",
+        versions=[
+            Version(
+                id=900,
+                name="abc_0100_comp_v012",
+                prodtrack_detail_url="https://sg.example.com/detail/Version/900",
+            )
+        ],
+        drafts_by_version={},
+        review_url=REVIEW,
+        poster_cids={900: poster_cid(12, 900)},
+    )
+    # The name -> ShotGrid.
+    assert 'href="https://sg.example.com/detail/Version/900"' in html
+    # The picture -> the shot's place in the recording.
+    linked = re.search(
+        r'<a href="([^"]+)"[^>]*>\s*<img src="cid:dna-poster-12-900"', html
+    )
+    assert linked and linked.group(1) == f"{REVIEW}#abc_0100_comp_v012"

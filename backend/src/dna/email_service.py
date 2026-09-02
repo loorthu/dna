@@ -212,11 +212,15 @@ def build_notes_html(
 ) -> str:
     """The notes email, and — when the deployment knows its own address — the way back into it.
 
-    `review_url` turns every version name into a link to that shot on the artist review page,
-    where the same notes sit next to the transcript and the part of the meeting recording that
-    discussed them. The anchors come from `review_links.version_anchors` rather than being
-    written here, because the page derives its own from the same function: a link is only worth
-    sending if the thing it lands on agrees about what it is called.
+    Each shot offers two links, and they go to different places on purpose. The version NAME opens
+    that version in the production tracker; the THUMBNAIL beside it opens the shot on the artist
+    review page, at the part of the meeting recording that discussed it. Each link goes where its
+    own shape suggests, which the name alone could not do when it was carrying both.
+
+    `review_url` is what the thumbnail points into, and the fallback the name uses when the
+    provider offers no page of its own. The anchors come from `review_links.version_anchors`
+    rather than being written here, because the page derives its own from the same function: a
+    link is only worth sending if the thing it lands on agrees about what it is called.
 
     `playlist_url` is the same review, in the production tracker — the place a supervisor goes to
     see the versions themselves rather than what was said about them. The two are offered side by
@@ -279,9 +283,21 @@ def build_notes_html(
         frame_path = _h(version.frame_path or version.movie_path or "")
         version_name = _h(version.name or f"Version {version.id}")
         anchor = anchors.get(version.id)
-        if review_url and anchor:
+        # The name opens the VERSION in the production tracker; the thumbnail beside it opens the
+        # recording. One link each, to the thing its own shape already suggests — a version name
+        # reads as the version, and a frame with a play button on it reads as the clip. Before the
+        # thumbnail existed the name had to carry both, and it could only be one of them.
+        #
+        # The review anchor stays as the FALLBACK rather than being dropped. A provider with no
+        # web UI to point at — the mock one, or ShotGrid with no SHOTGRID_URL — would otherwise
+        # leave the shot with no link at all, and a shot nobody discussed has no thumbnail to
+        # carry it either.
+        version_link = _attr(version, "prodtrack_detail_url") or (
+            f"{review_url}#{anchor}" if review_url and anchor else None
+        )
+        if version_link:
             version_name = (
-                f'<a href="{_h(review_url)}#{_h(anchor)}" '
+                f'<a href="{_h(version_link)}" '
                 f'style="color:#1a5fb4;text-decoration:none;">{version_name}</a>'
             )
 

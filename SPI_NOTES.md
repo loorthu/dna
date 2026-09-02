@@ -547,10 +547,17 @@ The email listed shots as text, and nothing in it said that a clip of the discus
 away. Every version name already linked to its own anchor on the review page — but a link that
 looks like a link gets read as "more admin", and the recording is the part of this system nobody
 knew existed. So each shot now carries a **160×90 still of the moment it came up**, with a play
-badge over it, sitting under the File Spec cell to the left of its notes and linking to the same
-anchor the name does. The header gained a **Playlist** row pointing at ShotGrid, next to the
-existing Review Page row: the two answer different questions — "show me the versions" versus "what
-was said about mine" — and neither replaces the other.
+badge over it, sitting under the File Spec cell to the left of its notes. The header gained a
+**Playlist** row pointing at ShotGrid, next to the existing Review Page row: the two answer
+different questions — "show me the versions" versus "what was said about mine" — and neither
+replaces the other.
+
+**Freeing the name was the second half of it.** The version name used to carry the review anchor,
+because it was the only link a row had. Now the picture carries the recording and the **name opens
+that version in ShotGrid** — each link going where its own shape already suggests, which one link
+could not do. The anchor stays as the name's fallback rather than being dropped: a provider with
+no web UI (the mock one, or ShotGrid with no `SHOTGRID_URL`) would otherwise leave the row with no
+link at all, and a shot nobody discussed has no thumbnail to carry one either.
 
 **The collector makes them, after it has finished.** Once the archive is recorded and the upstream
 copy released, it asks DNA for the cut list, takes one frame per shot two seconds into that shot's

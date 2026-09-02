@@ -42,7 +42,42 @@ def test_the_header_offers_the_playlist():
     assert 'href="https://dna.example.com/review/abc/dailies-comp-2026-08-30"' in html
 
 
-def test_each_version_name_links_to_its_own_shot():
+def test_a_version_name_opens_that_version_in_the_production_tracker():
+    """The name is the version, so it opens the version. The thumbnail carries the recording.
+
+    Before the thumbnail existed the name had to be both, and it could only be one — a reader
+    who wanted the version itself had to go and find it. Now each link goes where its own shape
+    already suggests.
+    """
+    base = "https://dna.example.com/review/abc/dailies-comp-2026-08-30"
+    html = build_notes_html(
+        playlist_name="Dailies Comp 2026-08-30",
+        project_name="ABC Show",
+        sent_by="sup@example.com",
+        versions=[
+            Version(
+                id=900,
+                name="abc_0100_comp_v012",
+                prodtrack_detail_url="https://sg.example.com/detail/Version/900",
+            )
+        ],
+        drafts_by_version={},
+        review_url=base,
+    )
+    assert 'href="https://sg.example.com/detail/Version/900"' in html
+    assert f"{base}#abc_0100_comp_v012" not in html, (
+        "the name must not also carry the review anchor — that is the thumbnail's job, and two "
+        "links to different places under one piece of text is how a reader learns not to trust "
+        "either"
+    )
+
+
+def test_the_review_anchor_is_the_fallback_when_there_is_no_tracker_page():
+    """A provider with no web UI must not leave the shot with no link at all.
+
+    The mock provider is one, and so is ShotGrid with no SHOTGRID_URL set. A shot nobody
+    discussed has no thumbnail either, so without this it would carry nothing.
+    """
     base = "https://dna.example.com/review/abc/dailies-comp-2026-08-30"
     html = _html(base)
     assert f'href="{base}#abc_0100_comp_v012"' in html
