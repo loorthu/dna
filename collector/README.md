@@ -24,6 +24,28 @@ That order is the design. Until the archive is recorded, Vexa holds the only cop
 delete is refused by DNA until a path and a hash exist, and refused again here before the request
 is even formed.
 
+## Poster frames
+
+Once the handover is finished — archive recorded, upstream copy released — the collector asks DNA
+for the playlist's cut list and grabs one still per shot, a couple of seconds into the span where
+that shot came up. Each frame gets a play badge composited over its middle and is written beside
+the archive, so nginx serves it at `/recordings/` like the recording; the bytes are also pushed to
+DNA, because the notes email is composed on the other side of the airgap and **embeds** the
+thumbnail rather than linking it. A linked one would be broken for the readers most likely to open
+the mail on a phone: Gmail's web client fetches every image through a Google proxy, and that proxy
+cannot reach this host.
+
+The badge is drawn in Python, not by an image library or by ffmpeg's `geq` — `geq` is a GPL-only
+filter, so its presence would be a property of whichever build the wheel happens to bundle, and a
+PNG is a handful of CRC'd chunks around a zlib stream. It is the same on every host and is covered
+by an offline test.
+
+**None of this can cost a recording.** It runs strictly after the ordering rule has completed, one
+shot at a time, and every failure — no cut list, no ffmpeg, DNA unreachable — is logged and
+dropped. A missing thumbnail costs a visual cue; a thumbnailer wedged into the middle of the
+custody chain would cost the meeting. Frames are only taken from a `ready` cut list, so a
+recording that is still being made is never guessed at.
+
 ## Why it mirrors during the meeting rather than downloading at the end
 
 The assembled master only exists once the meeting is over, and pulling several hundred MB in one
@@ -48,8 +70,9 @@ it produces a byte-identical file to one that ran straight through.
 
 The logic — resuming, verification, the mux command, the ordering rule — is
 `backend/src/dna/recording_collector.py`, covered by `backend/tests/test_recording_collector.py`
-in the backend suite. Only the runnable shell (the DNA HTTP client and the poll loop) is in this
-directory, and the Dockerfile copies the module in from the backend rather than vendoring a
+in the backend suite; the thumbnailer is `recording_posters.py` beside it, covered by
+`test_recording_posters.py`. Only the runnable shell (the DNA HTTP client and the poll loop) is in
+this directory, and the Dockerfile copies both modules in from the backend rather than vendoring a
 second copy that could drift.
 
 ## ffmpeg
@@ -74,6 +97,7 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 | `COLLECTOR_POLL_SECONDS` | `10` | |
 | `COLLECTOR_MAX_PLAYLISTS` | `25` | work-queue depth per pass |
 | `COLLECTOR_UID` / `COLLECTOR_GID` | `1000` / `1000` | who the archives end up owned by |
+| `RECORDING_POSTER_LEAD_SECONDS` | `2` | how far into a shot's span its thumbnail is taken from |
 
 Staging is a named volume rather than a bind or a tmpfs precisely because a half-mirrored meeting
 has to survive a container restart.

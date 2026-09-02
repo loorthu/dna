@@ -67,3 +67,28 @@ def test_a_version_with_no_name_still_gets_a_link():
         review_url="https://dna.example.com/review/abc/dailies",
     )
     assert "#version-42" in html
+
+
+def test_the_header_offers_the_playlist_in_the_production_tracker():
+    """A different question from the review page, so it gets its own row rather than replacing it.
+
+    The review page answers "what was said about my shot"; the playlist answers "show me the
+    versions". A supervisor reading the email wants the second one often enough that having to
+    go and find it is the difference between the email being the whole handoff and not.
+    """
+    html = build_notes_html(
+        playlist_name="Dailies Comp 2026-08-30",
+        project_name="ABC Show",
+        sent_by="sup@example.com",
+        versions=VERSIONS,
+        drafts_by_version={},
+        review_url="https://dna.example.com/review/abc/dailies-comp-2026-08-30",
+        playlist_url="https://sg.example.com/detail/Playlist/4471",
+    )
+    assert 'href="https://sg.example.com/detail/Playlist/4471"' in html
+    assert "Review Page" in html, "the two links are offered together, not instead"
+
+
+def test_a_provider_with_no_web_ui_simply_omits_the_playlist_row():
+    assert "detail/Playlist" not in _html()
+    assert "Playlist:" not in _html()

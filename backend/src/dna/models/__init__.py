@@ -44,6 +44,7 @@ from dna.models.qc_check import (
     RunQCChecksRequest,
     RunQCChecksResponse,
 )
+from dna.models.recording_poster import RecordingPoster
 from dna.models.requests import (
     AddVersionOutcome,
     AddVersionsToPlaylistRequest,
@@ -133,6 +134,7 @@ __all__ = [
     "DraftNoteLink",
     "DraftNoteUpdate",
     "NoteOrigin",
+    "RecordingPoster",
     "ReviewCut",
     "ReviewLink",
     "ReviewNote",

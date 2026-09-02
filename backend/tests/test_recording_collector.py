@@ -56,6 +56,22 @@ class FakeClient:
         self.corrupt_seq: int | None = None
         self.hide_seq: int | None = None
         self.audio_error: Exception | None = None
+        # The cut list the poster frames are taken from, and what was pushed back.
+        self.cuts: dict = {
+            "status": "ready",
+            "versions": [
+                {
+                    "version_id": 900,
+                    "cuts": [{"video_in_seconds": 40.0, "video_out_seconds": 90.0}],
+                },
+                {
+                    "version_id": 901,
+                    "cuts": [{"video_in_seconds": 120.0, "video_out_seconds": 200.0}],
+                },
+            ],
+        }
+        self.cuts_error: Exception | None = None
+        self.posters: list[tuple[int, str, bytes]] = []
 
     async def list_chunks(self, playlist_id: int, after: int) -> dict:
         self.calls.append(f"list({after})")
@@ -104,6 +120,19 @@ class FakeClient:
         self.deleted.append(playlist_id)
         return {"ok": True}
 
+    async def get_cuts(self, playlist_id: int) -> dict:
+        self.calls.append("cuts")
+        if self.cuts_error:
+            raise self.cuts_error
+        return self.cuts
+
+    async def upload_poster(
+        self, playlist_id: int, version_id: int, filename: str, image: bytes
+    ) -> dict:
+        self.calls.append(f"poster({version_id})")
+        self.posters.append((version_id, filename, image))
+        return {"ok": True}
+
 
 def make_collector(tmp_path, client, run_ffmpeg=None):
     staging = tmp_path / "staging"
@@ -112,9 +141,15 @@ def make_collector(tmp_path, client, run_ffmpeg=None):
     archive.mkdir()
 
     def fake_ffmpeg(command: list[str]) -> tuple[int, str]:
+        out = command[-1]
+        if "-filter_complex" in command:
+            # A poster grab. The real one decodes a frame and composites the badge; all the flow
+            # needs is a distinct, non-empty file appearing where it was asked for.
+            with open(out, "wb") as handle:
+                handle.write(b"JPEG:" + os.path.basename(out).encode())
+            return 0, ""
         # Stand in for the real mux: concatenate the two inputs so the output is a distinct,
         # non-empty file whose content depends on both, which is all the flow needs to be true.
-        out = command[-1]
         with open(out, "wb") as handle:
             handle.write(open(command[5], "rb").read() + open(command[7], "rb").read())
         return 0, ""
@@ -125,6 +160,17 @@ def make_collector(tmp_path, client, run_ffmpeg=None):
         archive_root=str(archive),
         ffmpeg_path="ffmpeg",
         run_ffmpeg=run_ffmpeg or fake_ffmpeg,
+    )
+
+
+def make_collector_reusing(collector, client):
+    """A second collector over the same directories — a restart, or the next meeting."""
+    return RecordingCollector(
+        client=client,
+        staging_dir=collector.staging_dir,
+        archive_root=collector.archive_root,
+        ffmpeg_path=collector.ffmpeg_path,
+        run_ffmpeg=collector._run_ffmpeg,
     )
 
 
@@ -689,3 +735,130 @@ async def test_a_state_with_no_recording_learns_it_from_the_index(tmp_path):
     await collector.ingest_new_parts(state)
 
     assert state.recording_id == REC
+
+
+# ── poster frames ───────────────────────────────────────────────────────────────────────────────
+#
+# Decoration, derived from a file that already exists — which is the whole point of the tests
+# below. Every one of them is really asking the same question: can anything about a thumbnail
+# reach back and touch the recording? It must not, so each failure mode is driven through the
+# full pass and the archive is checked afterwards.
+
+
+@pytest.mark.asyncio
+async def test_a_poster_is_written_for_each_shot_after_the_handover(tmp_path):
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+
+    result = await collector.poll_once(1)
+
+    assert result["posters"] == 2
+    assert client.calls.index("delete") < client.calls.index("cuts"), (
+        "frames are grabbed only once the custody chain has finished — nothing about a "
+        "thumbnail may sit between archiving and releasing the upstream copy"
+    )
+    archive = os.path.basename(collector.archive_path(1, REC))
+    stem = archive.rsplit(".", 1)[0]
+    assert [name for _, name, _ in client.posters] == [
+        f"{stem}-v900.jpg",
+        f"{stem}-v901.jpg",
+    ]
+    for version_id, name, image in client.posters:
+        # Both copies exist: the share's, which nginx serves, and DNA's, which the notes email
+        # embeds because a mail client cannot always reach the share.
+        on_share = os.path.join(collector.archive_root, name)
+        assert os.path.exists(on_share)
+        assert image == open(on_share, "rb").read()
+
+
+@pytest.mark.asyncio
+async def test_the_badge_is_drawn_once_into_staging_not_onto_the_share(tmp_path):
+    """The share holds meeting media that outlives the container; a build artefact does not."""
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+
+    await collector.poll_once(1)
+
+    assert os.path.exists(collector.badge_path())
+    assert collector.badge_path().startswith(collector.staging_dir)
+    assert not [n for n in os.listdir(collector.archive_root) if n.endswith(".png")]
+
+
+@pytest.mark.asyncio
+async def test_a_cut_list_that_is_not_ready_yields_no_posters_and_no_complaint(
+    tmp_path,
+):
+    client = FakeClient([b"AAAA"], complete=True)
+    client.cuts = {"status": "no_segments", "versions": []}
+    collector = make_collector(tmp_path, client)
+
+    result = await collector.poll_once(1)
+
+    assert result["status"] == "archived" and result["posters"] == 0
+    assert client.posters == []
+    assert os.path.exists(collector.archive_path(1, REC))
+
+
+@pytest.mark.asyncio
+async def test_one_shot_whose_frame_cannot_be_grabbed_does_not_cost_the_others(
+    tmp_path,
+):
+    def refuse_second_poster(command: list[str]) -> tuple[int, str]:
+        out = command[-1]
+        if "-filter_complex" in command:
+            if out.endswith("-v901.jpg"):
+                return 1, "Output file is empty"
+            with open(out, "wb") as handle:
+                handle.write(b"JPEG")
+            return 0, ""
+        with open(out, "wb") as handle:
+            handle.write(open(command[5], "rb").read() + open(command[7], "rb").read())
+        return 0, ""
+
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client, run_ffmpeg=refuse_second_poster)
+
+    result = await collector.poll_once(1)
+
+    assert result["posters"] == 1
+    assert [version_id for version_id, _, _ in client.posters] == [900]
+
+
+@pytest.mark.asyncio
+async def test_a_thumbnailer_that_fails_outright_still_leaves_the_recording_archived(
+    tmp_path,
+):
+    """The one that matters. Losing the recording because a picture failed would be absurd."""
+    client = FakeClient([b"AAAA"], complete=True)
+    client.cuts_error = RuntimeError("cut list unavailable")
+    collector = make_collector(tmp_path, client)
+
+    result = await collector.poll_once(1)
+
+    assert result["status"] == "archived"
+    assert result["posters"] == 0
+    assert client.deleted == [1], "the upstream copy was still released"
+    assert os.path.exists(collector.archive_path(1, REC))
+
+
+@pytest.mark.asyncio
+async def test_posters_are_named_by_recording_so_a_second_meeting_replaces_nothing(
+    tmp_path,
+):
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+    await collector.poll_once(1)
+
+    second = FakeClient([b"CCCC"], complete=True)
+    second.recording_id = REC + 1
+    await make_collector_reusing(collector, second).poll_once(1)
+
+    on_share = sorted(
+        name for name in os.listdir(collector.archive_root) if name.endswith(".jpg")
+    )
+    assert on_share == [
+        f"playlist-1-rec{REC}-v900.jpg",
+        f"playlist-1-rec{REC}-v901.jpg",
+        f"playlist-1-rec{REC + 1}-v900.jpg",
+        f"playlist-1-rec{REC + 1}-v901.jpg",
+    ]

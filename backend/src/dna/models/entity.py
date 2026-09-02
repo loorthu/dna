@@ -234,6 +234,10 @@ class Playlist(EntityBase):
             "versions themselves are too expensive to carry; None means nobody counted."
         ),
     )
+    prodtrack_detail_url: Optional[str] = Field(
+        default=None,
+        description="Web UI URL for this playlist in the production tracking system",
+    )
 
     @field_validator("versions", mode="before")
     @classmethod

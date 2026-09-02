@@ -541,6 +541,51 @@ it can see exactly what is outstanding. That is the same stance the readiness ga
 "Send anyway", except this one does not even need the escape hatch. `EmailNotesDialog.test.tsx`
 pins the behaviour, including that Send stays enabled.
 
+### The notes email shows the clip rather than describing it
+
+The email listed shots as text, and nothing in it said that a clip of the discussion was one click
+away. Every version name already linked to its own anchor on the review page — but a link that
+looks like a link gets read as "more admin", and the recording is the part of this system nobody
+knew existed. So each shot now carries a **160×90 still of the moment it came up**, with a play
+badge over it, sitting under the File Spec cell to the left of its notes and linking to the same
+anchor the name does. The header gained a **Playlist** row pointing at ShotGrid, next to the
+existing Review Page row: the two answer different questions — "show me the versions" versus "what
+was said about mine" — and neither replaces the other.
+
+**The collector makes them, after it has finished.** Once the archive is recorded and the upstream
+copy released, it asks DNA for the cut list, takes one frame per shot two seconds into that shot's
+opening span, composites the badge and writes the JPEG beside the archive. Nothing about this sits
+inside the ordering rule, and every failure is logged and dropped — `test_recording_collector.py`
+drives a cut list that raises, an ffmpeg that refuses one shot, and a cut list that is not ready,
+and asserts the archive survives all three. A missing thumbnail costs a cue; a thumbnailer wedged
+into the custody chain would cost the meeting.
+
+**Two seconds in, not the first frame.** The span opens the instant the operator marked the shot,
+which is routinely a beat before the shared screen catches up — so the literal first frame
+frequently shows the *previous* shot, which is worse than no thumbnail. Clamped to the middle of
+short spans, because ffmpeg answers a seek past the end with no file at all and that would lose
+the poster for exactly the shots that got the briefest mention.
+`RECORDING_POSTER_LEAD_SECONDS` moves it; how slow a screen share is belongs to the room.
+
+**The images are embedded in the mail, not linked.** They are written to the share and served at
+`/recordings/` like the recording, and the email does not use that copy: it carries the bytes as
+`cid:` parts. A hosted thumbnail is fetched by the reader's mail client, and Gmail's web client
+does not fetch it itself — it asks a Google proxy, which cannot see an internal host. The link on
+the thumbnail still works from anywhere inside the network, because that one is followed by the
+reader's own browser. So the collector pushes ~30 kB per shot to DNA, which is the one place DNA
+deliberately keeps media it otherwise only relays. A twenty-shot email is about half a megabyte.
+
+**The badge is drawn by hand**, in `recording_posters.py` — a white triangle on a translucent disc,
+supersampled 4×4 for a clean rim, emitted as a PNG built from zlib and `struct`. The alternatives
+were an image library (a new dependency in an image that has one job) or ffmpeg's `geq`, which is
+a GPL-only filter and therefore a property of whichever build `imageio-ffmpeg` happens to bundle
+rather than of this code. It is stdlib-only for the same reason `recording_collector` is: the
+collector image copies both modules out of the backend package.
+
+Also: `ShotgridProvider.get_entity` now writes `prodtrack_detail_url` from the same field mapping
+the query was built from, instead of a branch that only handled versions. The playlist's link had
+been missing the whole time because nothing had asked for it.
+
 ### Still open, not addressed here
 
 - `publish_notes` takes `_: CurrentUserDep` and never uses `request.user_email` to filter, so any

@@ -256,6 +256,31 @@ def test_playlist_with_linked_versions_list(shotgrid_provider):
     assert playlist.versions[1].name == "shot_020_anim_v002"
 
 
+def test_a_playlist_carries_a_link_to_its_own_page(shotgrid_provider):
+    """The notes email offers it in the header, so it has to arrive with the playlist.
+
+    Built from the same field mapping the query was, rather than from a branch per entity type —
+    which is why it appeared for versions years before anyone asked for the playlist's.
+    """
+    shotgrid_provider.sg.find_one.return_value = {
+        "type": "Playlist",
+        "id": 4471,
+        "code": "dailies_comp_2026_08_30",
+        "description": None,
+        "project": {"id": 1, "name": "Test Project", "type": "Project"},
+        "created_at": "2026-08-30",
+        "updated_at": "2026-08-30",
+        "versions": [],
+    }
+
+    playlist = shotgrid_provider.get_entity("playlist", 4471, resolve_links=False)
+
+    assert (
+        playlist.prodtrack_detail_url
+        == "https://test.shotgunstudio.com/detail/Playlist/4471"
+    )
+
+
 def test_playlist_with_empty_versions_list(shotgrid_provider):
     """Test that a playlist with no versions handles empty list correctly."""
     playlist_data = {

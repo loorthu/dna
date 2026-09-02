@@ -32,6 +32,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
+from dna.recording_posters import (
+    BADGE_SIZE,
+    build_poster_command,
+    first_cuts,
+    poster_filename,
+    poster_lead_seconds,
+    poster_time_seconds,
+    render_play_badge_png,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -181,6 +191,10 @@ class CollectorClient(Protocol):
         recording_id: Optional[int] = None,
     ) -> dict[str, Any]: ...
     async def delete_upstream(self, playlist_id: int) -> dict[str, Any]: ...
+    async def get_cuts(self, playlist_id: int) -> dict[str, Any]: ...
+    async def upload_poster(
+        self, playlist_id: int, version_id: int, filename: str, image: bytes
+    ) -> dict[str, Any]: ...
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -628,6 +642,87 @@ class RecordingCollector:
             )
         await self.client.delete_upstream(state.playlist_id)
 
+    # -- poster frames -------------------------------------------------------------------------
+
+    def badge_path(self) -> str:
+        """The play badge, rendered once per process into staging and reused.
+
+        In staging rather than beside the archives because it is scratch, not a recording: the
+        share holds meeting media that outlives this container, and a build artefact of the
+        thumbnailer does not belong in it.
+        """
+        path = os.path.join(self.staging_dir, f"play-badge-{BADGE_SIZE}.png")
+        if not os.path.exists(path):
+            with open(path, "wb") as handle:
+                handle.write(render_play_badge_png(BADGE_SIZE))
+        return path
+
+    async def write_posters(self, state: CollectorState) -> dict[int, str]:
+        """One still per shot, written beside the archive and pushed to DNA.
+
+        Called only once the archive is recorded and the upstream copy released — the custody
+        chain is finished before a single frame is grabbed, so nothing here can reorder it.
+
+        Failures are per shot and never raise. A poster is a visual cue derived from a file that
+        already exists; losing one costs the cue, and the same frame can always be grabbed again
+        from the archive. Losing the recording because a thumbnail failed would be absurd.
+        """
+        archive = state.archived_path
+        if not archive or not os.path.exists(archive):
+            return {}
+
+        payload = await self.client.get_cuts(state.playlist_id)
+        spans = first_cuts(payload)
+        if not spans:
+            logger.info(
+                "Playlist %s: no poster frames (cut list is %s)",
+                state.playlist_id,
+                payload.get("status"),
+            )
+            return {}
+
+        badge = self.badge_path()
+        lead = poster_lead_seconds()
+        written: dict[int, str] = {}
+        for version_id, video_in, video_out in spans:
+            name = poster_filename(archive, version_id)
+            destination = os.path.join(self.archive_root, name)
+            at = poster_time_seconds(video_in, video_out, lead)
+            try:
+                command = build_poster_command(
+                    self.ffmpeg_path, archive, badge, destination, at
+                )
+                code, stderr = await asyncio.to_thread(self._run_ffmpeg, command)
+                if code != 0 or not os.path.exists(destination):
+                    raise CollectorError(
+                        f"ffmpeg exited {code} at {at:.1f}s: {stderr.strip()[:200]}"
+                    )
+                with open(destination, "rb") as handle:
+                    image = handle.read()
+                # DNA gets the bytes, not the name. The notes email is composed on the other side
+                # of the airgap and embeds the image in the message, because a mail client asking
+                # this host for it only works from inside — Gmail's web client fetches images
+                # through a Google proxy that cannot reach the share.
+                await self.client.upload_poster(
+                    state.playlist_id, version_id, name, image
+                )
+                written[version_id] = name
+            except Exception as e:
+                logger.warning(
+                    "Playlist %s version %s: no poster frame (%s)",
+                    state.playlist_id,
+                    version_id,
+                    e,
+                )
+        if written:
+            logger.info(
+                "Playlist %s: %d poster frame(s) written to %s",
+                state.playlist_id,
+                len(written),
+                self.archive_root,
+            )
+        return written
+
     async def poll_once(self, playlist_id: int) -> dict[str, Any]:
         """One pass for one playlist: mirror what is new, and finish if the recording is done.
 
@@ -658,7 +753,17 @@ class RecordingCollector:
                 "bytes": state.bytes_written,
             }
         result = await self.finalize(state)
-        return {"status": "archived", **result}
+        # After finalize, never inside it: the archive is recorded and the upstream copy released
+        # by the time this runs, so a thumbnailer that cannot reach DNA, cannot read the cut list
+        # or cannot run ffmpeg costs a picture and nothing else.
+        try:
+            posters = await self.write_posters(state)
+        except Exception as e:
+            logger.warning(
+                "Playlist %s: archived, but no poster frames (%s)", playlist_id, e
+            )
+            posters = {}
+        return {"status": "archived", "posters": len(posters), **result}
 
 
 def _run_ffmpeg_subprocess(command: list[str]) -> tuple[int, str]:

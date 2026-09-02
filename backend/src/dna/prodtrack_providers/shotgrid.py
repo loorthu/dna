@@ -347,15 +347,21 @@ class ShotgridProvider(ProdtrackProviderBase):
         entity = self._convert_sg_entity_to_dna_entity(
             sg_entity, entity_mapping, entity_type, resolve_links=resolve_links
         )
+        base = (self.url or "").rstrip("/")
+        # The page a person opens to see the thing itself. Written from the SAME mapping the
+        # query was built from, so every entity type that models the field gets one — the
+        # alternative was a branch per type, and the playlist's went missing for a year because
+        # nobody had needed it until the notes email offered it in its header.
+        if base and "prodtrack_detail_url" in type(entity).model_fields:
+            entity.prodtrack_detail_url = (  # type: ignore[attr-defined]
+                f"{base}/detail/{entity_mapping['entity_id']}/{entity.id}"
+            )
         if entity_type == "version":
             version = cast(Version, entity)
-            base = (self.url or "").rstrip("/")
-            if base:
-                version.prodtrack_detail_url = f"{base}/detail/Version/{version.id}"
-                if version.entity:
-                    version.prodtrack_entity_detail_url = (
-                        f"{base}/detail/{version.entity.type}/{version.entity.id}"
-                    )
+            if base and version.entity:
+                version.prodtrack_entity_detail_url = (
+                    f"{base}/detail/{version.entity.type}/{version.entity.id}"
+                )
         return entity
 
     def _resolve_linked_field(self, data):

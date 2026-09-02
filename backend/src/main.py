@@ -1387,7 +1387,12 @@ async def email_notes(
     prodtrack: ProdtrackProviderDep,
     current_user_email: CurrentUserDep,
 ) -> None:
-    from dna.email_service import build_notes_html, send_notes_email
+    from dna.email_service import (
+        InlineImage,
+        build_notes_html,
+        poster_cid,
+        send_notes_email,
+    )
 
     versions = prodtrack.get_versions_for_playlist(playlist_id)
 
@@ -1402,6 +1407,7 @@ async def email_notes(
 
     playlist_name = f"Playlist {playlist_id}"
     playlist_code = ""
+    playlist_url: Optional[str] = None
     project_id: Optional[int] = None
     try:
         playlist = prodtrack.get_entity("playlist", playlist_id, resolve_links=False)
@@ -1410,6 +1416,10 @@ async def email_notes(
             playlist_code = playlist.code
         if playlist and getattr(playlist, "project", None):
             project_id = playlist.project.get("id")
+        # The playlist in the production tracker, for the reader who wants the versions
+        # themselves rather than what was said about them. Absent on a provider that has no web
+        # UI to point at, and the header simply omits the row.
+        playlist_url = getattr(playlist, "prodtrack_detail_url", None)
     except Exception:
         pass
 
@@ -1435,6 +1445,38 @@ async def email_notes(
 
     subject = request.subject or playlist_name
 
+    # Poster frames, carried IN the message rather than linked. The collector wrote them beside
+    # the archive on the air-gapped host and pushed the bytes here; a mail client asking that host
+    # for an image only works from inside the network, and Gmail's web client — which fetches
+    # every image through a Google proxy — never does. Only versions this email is actually
+    # writing about are attached, so a poster left over from a version since removed from the
+    # playlist does not ride along.
+    wanted = {version.id for version in versions}
+    inline_images: list[InlineImage] = []
+    poster_cids: dict[int, str] = {}
+    try:
+        for poster in await storage.get_recording_posters(playlist_id):
+            if poster.version_id not in wanted or not poster.image:
+                continue
+            cid = poster_cid(playlist_id, poster.version_id)
+            poster_cids[poster.version_id] = cid
+            inline_images.append(
+                InlineImage(
+                    cid=cid,
+                    data=poster.image,
+                    filename=poster.filename or f"{cid}.jpg",
+                    subtype=poster.content_type.split("/")[-1] or "jpeg",
+                )
+            )
+    except Exception:
+        # A thumbnail is a cue, not the message. The notes go out without pictures rather than
+        # not at all.
+        logging.getLogger(__name__).warning(
+            "Playlist %s: could not load poster frames for the notes email",
+            playlist_id,
+            exc_info=True,
+        )
+
     html_body = build_notes_html(
         playlist_name=playlist_name,
         project_name=project_name,
@@ -1442,11 +1484,17 @@ async def email_notes(
         versions=versions,
         drafts_by_version=drafts_by_version,
         review_url=review_url(playlist_id, playlist_code, project_code, project_name),
+        playlist_url=playlist_url,
+        poster_cids=poster_cids,
     )
 
     try:
         send_notes_email(
-            to=request.to, subject=subject, html_content=html_body, cc=request.cc
+            to=request.to,
+            subject=subject,
+            html_content=html_body,
+            cc=request.cc,
+            inline_images=inline_images,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1678,8 +1726,9 @@ def _playlist_reset_enabled() -> bool:
     tags=["Playlist Metadata"],
     summary="Forget everything stored about a playlist",
     description=(
-        "Clears this playlist's segments, metadata and (unless keep_notes) draft notes, so an "
-        "end-to-end test can be re-run from scratch. Off unless DNA_ENABLE_PLAYLIST_RESET=true.\n\n"
+        "Clears this playlist's segments, metadata, recording poster frames and (unless "
+        "keep_notes) draft notes, so an end-to-end test can be re-run from scratch. Off unless "
+        "DNA_ENABLE_PLAYLIST_RESET=true.\n\n"
         "Touches only DNA's own store. The production tracking system is never contacted: the "
         "notes and versions there are not DNA's to delete, only to mirror."
     ),
@@ -2400,6 +2449,68 @@ async def record_recording_archive(
         raise HTTPException(status_code=404, detail=str(e))
     except ArchiveRecordingMismatch as e:
         raise HTTPException(status_code=409, detail=str(e))
+
+
+def _poster_max_bytes() -> int:
+    """The cap on one poster. A 320×180 JPEG is ~30 kB; half a megabyte is a wide margin around
+    that and still small enough that a wrong caller cannot fill the database with it."""
+    try:
+        return int(os.getenv("RECORDING_POSTER_MAX_BYTES", 512 * 1024))
+    except ValueError:
+        return 512 * 1024
+
+
+@app.post(
+    "/recordings/{playlist_id}/posters/{version_id}",
+    tags=["Recordings"],
+    summary="Store one shot's poster frame from the meeting recording",
+    description=(
+        "A JPEG still of the moment this version came up in the meeting, posted by the collector "
+        "after it has archived the recording. The body is the image itself; `filename` names the "
+        "copy the collector left on the share.\n\n"
+        "DNA keeps no copy of the recording, and keeps these on purpose. The notes email is "
+        "composed here and EMBEDS the thumbnail in the message, because a mail client fetching "
+        "an image from the share only works from inside the network — Gmail's web client asks a "
+        "Google proxy to fetch it, and that proxy cannot reach an internal host. A few tens of "
+        "kB per shot is what makes the picture arrive."
+    ),
+)
+async def upload_recording_poster(
+    playlist_id: int,
+    version_id: int,
+    request: Request,
+    storage_provider: StorageProviderDep,
+    _: CurrentUserDep,
+    filename: Optional[str] = None,
+) -> dict:
+    image = await request.body()
+    if not image:
+        raise HTTPException(status_code=400, detail="Empty poster body")
+    limit = _poster_max_bytes()
+    if len(image) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Poster is {len(image)} bytes; the limit is {limit}",
+        )
+
+    # The recording it is a still OF is not the caller's to assert: the archive that was just
+    # recorded names it, so it is read from there. A poster that outlived its meeting is then
+    # visible as one, rather than looking current.
+    metadata = await storage_provider.get_playlist_metadata(playlist_id)
+    poster = await storage_provider.upsert_recording_poster(
+        playlist_id,
+        version_id,
+        image,
+        content_type=request.headers.get("content-type") or "image/jpeg",
+        filename=filename,
+        recording_id=metadata.archived_recording_id if metadata else None,
+    )
+    return {
+        "playlist_id": playlist_id,
+        "version_id": version_id,
+        "filename": poster.filename,
+        "bytes": len(image),
+    }
 
 
 @app.delete(

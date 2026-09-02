@@ -14,6 +14,8 @@ Configuration, all via environment:
     COLLECTOR_POLL_SECONDS   seconds between passes         (default 10)
     COLLECTOR_MAX_PLAYLISTS  work-queue depth per pass       (default 25)
     COLLECTOR_SITE           which side's recordings to collect; unset = the unrouted ones
+    RECORDING_POSTER_LEAD_SECONDS
+                             how far into a shot's span its thumbnail is taken from (default 2)
 """
 
 import asyncio
@@ -115,6 +117,31 @@ class DnaCollectorClient:
 
     async def delete_upstream(self, playlist_id: int) -> dict[str, Any]:
         response = await self.client.delete(f"/recordings/{playlist_id}")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_cuts(self, playlist_id: int) -> dict[str, Any]:
+        # Where each version was discussed, which is where the poster frames are taken from.
+        # Asked for AFTER the archive is recorded, so the answer is `ready` rather than
+        # `archiving` — the same endpoint the player uses, so a thumbnail cannot point at a
+        # moment the player would not open.
+        response = await self.client.get(f"/recordings/cuts/{playlist_id}")
+        response.raise_for_status()
+        return response.json()
+
+    async def upload_poster(
+        self, playlist_id: int, version_id: int, filename: str, image: bytes
+    ) -> dict[str, Any]:
+        # The BYTES, unlike the archive, of which DNA is told only the name. A poster is a few
+        # tens of kB and the notes email — composed on DNA's side — embeds it in the message
+        # rather than linking it, because a mail client asking this host for an image only works
+        # from inside the network. The name travels too, so the copy on the share stays findable.
+        response = await self.client.post(
+            f"/recordings/{playlist_id}/posters/{version_id}",
+            params={"filename": filename},
+            headers={"Content-Type": "image/jpeg"},
+            content=image,
+        )
         response.raise_for_status()
         return response.json()
 

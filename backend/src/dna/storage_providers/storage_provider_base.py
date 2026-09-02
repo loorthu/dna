@@ -14,6 +14,7 @@ if TYPE_CHECKING:
         PublishedTranscriptUpdate,
     )
     from dna.models.qc_check import NoteQCCheck, NoteQCCheckCreate, NoteQCCheckUpdate
+    from dna.models.recording_poster import RecordingPoster
     from dna.models.stored_segment import StoredSegment, StoredSegmentCreate
     from dna.models.user_settings import UserSettings, UserSettingsUpdate
 
@@ -160,6 +161,31 @@ class StorageProviderBase:
 
         Deliberately scoped to this store. The production tracking system holds notes DNA only
         mirrors, and nothing here may reach into it.
+        """
+        raise NotImplementedError()
+
+    async def upsert_recording_poster(
+        self,
+        playlist_id: int,
+        version_id: int,
+        image: bytes,
+        content_type: str = "image/jpeg",
+        filename: Optional[str] = None,
+        recording_id: Optional[int] = None,
+    ) -> "RecordingPoster":
+        """Store one shot's poster frame, replacing whatever was there for that version.
+
+        Replacing rather than appending: a playlist that hosts a second meeting produces a second
+        set of frames, and the old ones are stills of a review that is over. There is exactly one
+        current poster per version, and this is it.
+        """
+        raise NotImplementedError()
+
+    async def get_recording_posters(self, playlist_id: int) -> list["RecordingPoster"]:
+        """Every stored poster frame for one playlist, in no particular order.
+
+        Fetched whole rather than per version because the one caller — the notes email — needs
+        all of them at once and already knows which versions it is writing about.
         """
         raise NotImplementedError()
 

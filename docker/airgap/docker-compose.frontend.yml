@@ -104,6 +104,9 @@ services:
       # a meeting is the one that must archive it, or the file lands on a host that is not the
       # one serving playback. Leave empty when only one collector exists anywhere.
       - COLLECTOR_SITE=${COLLECTOR_SITE:-}
+      # Where in each shot's span the poster frame comes from. Not a tuning knob for the
+      # recording — it only moves which frame the notes email shows as that shot's thumbnail.
+      - RECORDING_POSTER_LEAD_SECONDS=${RECORDING_POSTER_LEAD_SECONDS:-2}
     volumes:
       # Staging is a NAMED volume, not a bind or a tmpfs: a half-mirrored meeting has to
       # survive a container restart, which is the whole point of the resume logic.

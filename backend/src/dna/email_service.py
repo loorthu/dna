@@ -13,7 +13,9 @@ import base64
 import html
 import os
 import smtplib
+from dataclasses import dataclass
 from datetime import datetime
+from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
@@ -71,34 +73,77 @@ def _get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def _send_gmail(
-    to: str, subject: str, html_content: str, cc: Optional[str] = None
-) -> None:
-    msg = MIMEMultipart("mixed")
-    msg["to"] = to
-    msg["from"] = EMAIL_SENDER
-    msg["subject"] = subject
-    if cc:
-        msg["cc"] = cc
-    msg.attach(MIMEText(html_content, "html", "utf-8"))
-    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
-    service = _get_gmail_service()
-    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+@dataclass(frozen=True)
+class InlineImage:
+    """An image carried IN the message and referenced by `cid:`, not fetched from a URL.
+
+    Embedded rather than linked because the images are poster frames served by the air-gapped
+    host: a mail client only reaches it from inside the network, and Gmail's web client never
+    does — it asks a Google proxy to fetch every image, and that proxy cannot see an internal
+    address. A linked thumbnail is therefore broken for exactly the readers most likely to open
+    the email on their phone.
+    """
+
+    cid: str
+    data: bytes
+    filename: str
+    subtype: str = "jpeg"
 
 
-def _send_smtp(
-    to: str, subject: str, html_content: str, cc: Optional[str] = None
-) -> None:
-    recipients = [to]
-    if cc:
-        recipients += [a.strip() for a in cc.split(",") if a.strip()]
-    msg = MIMEMultipart("mixed")
+def _build_message(
+    to: str,
+    subject: str,
+    html_content: str,
+    cc: Optional[str] = None,
+    inline_images: Optional[list[InlineImage]] = None,
+) -> MIMEMultipart:
+    """The message both transports send.
+
+    `multipart/related` when there are inline images and `multipart/mixed` when there are not:
+    "related" is what tells a client the parts are pieces of the HTML rather than attachments,
+    and a message with no images gets exactly the structure it always had.
+    """
+    msg = MIMEMultipart("related" if inline_images else "mixed")
     msg["Subject"] = subject
     msg["From"] = EMAIL_SENDER
     msg["To"] = to
     if cc:
         msg["Cc"] = cc
     msg.attach(MIMEText(html_content, "html", "utf-8"))
+    for image in inline_images or []:
+        part = MIMEImage(image.data, _subtype=image.subtype)
+        # Angle brackets: the header is a message-id, and `src="cid:x"` refers to `<x>`. Without
+        # them some clients simply do not match the two, and the thumbnail silently vanishes.
+        part.add_header("Content-ID", f"<{image.cid}>")
+        part.add_header("Content-Disposition", "inline", filename=image.filename)
+        msg.attach(part)
+    return msg
+
+
+def _send_gmail(
+    to: str,
+    subject: str,
+    html_content: str,
+    cc: Optional[str] = None,
+    inline_images: Optional[list[InlineImage]] = None,
+) -> None:
+    msg = _build_message(to, subject, html_content, cc=cc, inline_images=inline_images)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+    service = _get_gmail_service()
+    service.users().messages().send(userId="me", body={"raw": raw}).execute()
+
+
+def _send_smtp(
+    to: str,
+    subject: str,
+    html_content: str,
+    cc: Optional[str] = None,
+    inline_images: Optional[list[InlineImage]] = None,
+) -> None:
+    recipients = [to]
+    if cc:
+        recipients += [a.strip() for a in cc.split(",") if a.strip()]
+    msg = _build_message(to, subject, html_content, cc=cc, inline_images=inline_images)
     smtp = smtplib.SMTP()
     if SMTP_PORT is not None:
         smtp.connect(SMTP_HOST, SMTP_PORT)
@@ -113,14 +158,18 @@ def _send_smtp(
 
 
 def send_notes_email(
-    to: str, subject: str, html_content: str, cc: Optional[str] = None
+    to: str,
+    subject: str,
+    html_content: str,
+    cc: Optional[str] = None,
+    inline_images: Optional[list[InlineImage]] = None,
 ) -> None:
     if not EMAIL_SENDER:
         raise ValueError("EMAIL_SENDER is not set — add it to docker-compose.local.yml")
     if EMAIL_PROVIDER == "smtp":
-        _send_smtp(to, subject, html_content, cc=cc)
+        _send_smtp(to, subject, html_content, cc=cc, inline_images=inline_images)
     else:
-        _send_gmail(to, subject, html_content, cc=cc)
+        _send_gmail(to, subject, html_content, cc=cc, inline_images=inline_images)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +190,16 @@ def _attr(obj, *keys: str) -> Optional[str]:
     return None
 
 
+def poster_cid(playlist_id: int, version_id: int) -> str:
+    """The Content-ID one shot's poster is carried under.
+
+    Written by one function because two things have to agree on it exactly: the `<img src="cid:…">`
+    in the body, and the Content-ID header on the attached part. A mismatch is silent — the client
+    shows a broken image and nothing anywhere reports why — so neither side spells it itself.
+    """
+    return f"dna-poster-{playlist_id}-{version_id}"
+
+
 def build_notes_html(
     playlist_name: str,
     project_name: str,
@@ -148,6 +207,8 @@ def build_notes_html(
     versions: list[Version],
     drafts_by_version: dict[int, list[DraftNote]],
     review_url: Optional[str] = None,
+    playlist_url: Optional[str] = None,
+    poster_cids: Optional[dict[int, str]] = None,
 ) -> str:
     """The notes email, and — when the deployment knows its own address — the way back into it.
 
@@ -157,12 +218,23 @@ def build_notes_html(
     written here, because the page derives its own from the same function: a link is only worth
     sending if the thing it lands on agrees about what it is called.
 
-    Omitted (DNA_APP_BASE_URL unset) the email is exactly what it was before. A mail client has no
-    origin to resolve a bare path against, so a deployment that has not been told where it is
-    served from sends plain text rather than links that go nowhere.
+    `playlist_url` is the same review, in the production tracker — the place a supervisor goes to
+    see the versions themselves rather than what was said about them. The two are offered side by
+    side in the header because they answer different questions and neither replaces the other.
+
+    `poster_cids` maps a version to the Content-ID of a still taken from the moment that shot came
+    up in the meeting. It is what makes the clip look like a clip: the row already links to the
+    recording, but nothing in a page of text says a video is one click away, and a frame with a
+    play button on it says so before anything is read. Versions with no poster keep the layout
+    they always had, so a playlist with no recording is unchanged.
+
+    Everything optional here degrades to the email as it was before. A mail client has no origin
+    to resolve a bare path against, so a deployment that has not been told where it is served
+    from (DNA_APP_BASE_URL unset) sends plain text rather than links that go nowhere.
     """
     date_str = datetime.now().strftime("%B %d, %Y, %I:%M %p")
     anchors = version_anchors(versions) if review_url else {}
+    poster_cids = poster_cids or {}
 
     review_row = ""
     if review_url:
@@ -170,6 +242,13 @@ def build_notes_html(
       <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Review Page:</td>
           <td style="padding:3px 0;"><a href="{_h(review_url)}"
              style="color:#1a5fb4;">Open notes, transcript and recording</a></td></tr>"""
+
+    playlist_row = ""
+    if playlist_url:
+        playlist_row = f"""
+      <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Playlist:</td>
+          <td style="padding:3px 0;"><a href="{_h(playlist_url)}"
+             style="color:#1a5fb4;">{_h(playlist_name)} in ShotGrid</a></td></tr>"""
 
     header = f"""
     <table style="border-collapse:collapse;width:100%;margin-bottom:20px;font-size:13px;">
@@ -180,7 +259,7 @@ def build_notes_html(
       <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Screening Date:</td>
           <td style="padding:3px 0;">{date_str}</td></tr>
       <tr><td style="padding:3px 8px 3px 0;font-weight:bold;">Notes By:</td>
-          <td style="padding:3px 0;">{_h(sent_by)}</td></tr>{review_row}
+          <td style="padding:3px 0;">{_h(sent_by)}</td></tr>{playlist_row}{review_row}
     </table>"""
 
     rows = []
@@ -219,6 +298,31 @@ def build_notes_html(
         row_bg = "#ffffff" if idx % 2 == 1 else "#f9f9f9"
         td = f"border:1px solid #ddd;background:{row_bg};"
 
+        # The thumbnail and the notes share a row, the picture on the left under the file spec.
+        # Sized in the tag as well as the style because a mail client that strips CSS still has
+        # to reserve the space, and one that blocks images shows the alt text in it — which is
+        # why the alt text is the invitation rather than a description of the picture.
+        thumbnail_cell = ""
+        cid = poster_cids.get(version.id)
+        if cid:
+            image = (
+                f'<img src="cid:{_h(cid)}" width="160" height="90" '
+                f'alt="&#9654; Play this shot in the meeting recording" '
+                f'style="display:block;width:160px;height:90px;border:1px solid #ccc;'
+                f'border-radius:3px;" />'
+            )
+            if review_url and anchor:
+                image = (
+                    f'<a href="{_h(review_url)}#{_h(anchor)}" '
+                    f'style="text-decoration:none;">{image}</a>'
+                )
+            thumbnail_cell = f'<td style="padding:8px;vertical-align:top;{td}width:176px;">{image}</td>'
+
+        notes_row = (
+            f'{thumbnail_cell}<td colspan="{3 if thumbnail_cell else 4}" '
+            f'style="padding:10px 8px;vertical-align:top;{td}">{notes_html}</td>'
+        )
+
         rows.append(
             f"""
         <tr>
@@ -236,7 +340,7 @@ def build_notes_html(
             {frame_path or '<span style="color:#aaa;">—</span>'}</td>
         </tr>
         <tr>
-          <td colspan="4" style="padding:10px 8px;{td}">{notes_html}</td>
+          {notes_row}
         </tr>"""
         )
 

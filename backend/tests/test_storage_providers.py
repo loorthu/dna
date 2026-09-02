@@ -87,6 +87,20 @@ class TestStorageProviderBase:
             await provider.upsert_playlist_metadata(1, data)
 
     @pytest.mark.asyncio
+    async def test_upsert_recording_poster_raises_not_implemented(self):
+        """Test that upsert_recording_poster raises NotImplementedError."""
+        provider = StorageProviderBase()
+        with pytest.raises(NotImplementedError):
+            await provider.upsert_recording_poster(1, 900, b"jpeg")
+
+    @pytest.mark.asyncio
+    async def test_get_recording_posters_raises_not_implemented(self):
+        """Test that get_recording_posters raises NotImplementedError."""
+        provider = StorageProviderBase()
+        with pytest.raises(NotImplementedError):
+            await provider.get_recording_posters(1)
+
+    @pytest.mark.asyncio
     async def test_delete_playlist_metadata_raises_not_implemented(self):
         """Test that delete_playlist_metadata raises NotImplementedError."""
         provider = StorageProviderBase()
@@ -587,6 +601,64 @@ class TestMongoDBStorageProvider:
 
         assert result.meeting_id == "abc-123"
         mock_collection.find_one_and_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_upsert_recording_poster_replaces_the_frame_for_that_version(
+        self, provider
+    ):
+        """One current poster per version — a second meeting replaces the first's stills."""
+        mock_collection = mock.MagicMock()
+        mock_collection.find_one_and_update = mock.AsyncMock(
+            return_value={
+                "_id": "abc123",
+                "playlist_id": 1,
+                "version_id": 900,
+                "image": b"\xff\xd8JPEG",
+                "content_type": "image/jpeg",
+                "filename": "playlist-1-rec7-v900.jpg",
+            }
+        )
+        mock_client = mock.MagicMock()
+        mock_db = mock.MagicMock()
+        mock_client.dna = mock_db
+        mock_db.recording_posters = mock_collection
+        provider._client = mock_client
+
+        result = await provider.upsert_recording_poster(
+            1, 900, b"\xff\xd8JPEG", filename="playlist-1-rec7-v900.jpg"
+        )
+
+        assert result.filename == "playlist-1-rec7-v900.jpg"
+        query, update = mock_collection.find_one_and_update.call_args[0][:2]
+        assert query == {"playlist_id": 1, "version_id": 900}
+        assert mock_collection.find_one_and_update.call_args[1]["upsert"] is True
+        assert update["$set"]["image"] == b"\xff\xd8JPEG"
+
+    @pytest.mark.asyncio
+    async def test_a_reupload_without_a_filename_keeps_the_name_on_the_share(
+        self, provider
+    ):
+        """None means "the collector did not say", not "forget where the other copy is"."""
+        mock_collection = mock.MagicMock()
+        mock_collection.find_one_and_update = mock.AsyncMock(
+            return_value={
+                "_id": "a",
+                "playlist_id": 1,
+                "version_id": 900,
+                "image": b"x",
+            }
+        )
+        mock_client = mock.MagicMock()
+        mock_db = mock.MagicMock()
+        mock_client.dna = mock_db
+        mock_db.recording_posters = mock_collection
+        provider._client = mock_client
+
+        await provider.upsert_recording_poster(1, 900, b"x")
+
+        update = mock_collection.find_one_and_update.call_args[0][1]
+        assert "filename" not in update["$set"]
+        assert "recording_id" not in update["$set"]
 
     @pytest.mark.asyncio
     async def test_upsert_playlist_metadata_sets_resumed_at_on_unpause(self, provider):

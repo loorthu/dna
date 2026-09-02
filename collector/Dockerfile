@@ -19,9 +19,12 @@ RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
         -r requirements.txt
 
 # The shared collection logic. An EMPTY package marker rather than the backend's own __init__,
-# which pulls in the whole application's imports; recording_collector deliberately depends on
-# nothing but the standard library, which is what lets it be lifted out like this.
+# which pulls in the whole application's imports; both modules deliberately depend on nothing but
+# the standard library, which is what lets them be lifted out like this. recording_posters is the
+# thumbnailer — it draws the play badge itself for the same reason, so no image library and no
+# GPL-only ffmpeg filter has to be present for a poster frame to come out identical on every host.
 COPY --from=dna recording_collector.py /app/dna/recording_collector.py
+COPY --from=dna recording_posters.py /app/dna/recording_posters.py
 RUN touch /app/dna/__init__.py
 
 COPY main.py .

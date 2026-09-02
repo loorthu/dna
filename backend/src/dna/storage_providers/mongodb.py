@@ -22,6 +22,7 @@ from dna.models.qc_check import (
     NoteQCCheckCreate,
     NoteQCCheckUpdate,
 )
+from dna.models.recording_poster import RecordingPoster
 from dna.models.stored_segment import StoredSegment, StoredSegmentCreate
 from dna.models.user_settings import UserSettings, UserSettingsUpdate
 from dna.storage_providers.storage_provider_base import StorageProviderBase
@@ -56,6 +57,14 @@ class MongoDBStorageProvider(StorageProviderBase):
         await self.qc_checks_collection.create_index(
             [("user_email", 1)],
             name="qc_checks_by_user",
+        )
+        # Unique, because there is exactly one current poster per version — a second meeting on
+        # the same playlist replaces the frames rather than accumulating a second set that the
+        # email would then have to choose between.
+        await self.recording_posters_collection.create_index(
+            [("playlist_id", 1), ("version_id", 1)],
+            unique=True,
+            name="recording_posters_key",
         )
         self._indexes_ensured = True
 
@@ -93,6 +102,10 @@ class MongoDBStorageProvider(StorageProviderBase):
     @property
     def qc_checks_collection(self) -> Any:
         return self.db.qc_checks
+
+    @property
+    def recording_posters_collection(self) -> Any:
+        return self.db.recording_posters
 
     def _build_query(
         self, user_email: str, playlist_id: int, version_id: int
@@ -448,12 +461,17 @@ class MongoDBStorageProvider(StorageProviderBase):
     async def delete_playlist_data(
         self, playlist_id: int, include_notes: bool = True
     ) -> dict[str, int]:
-        """Delete a playlist's segments, metadata and (optionally) draft notes."""
+        """Delete a playlist's segments, metadata, poster frames and (optionally) draft notes."""
         query = {"playlist_id": playlist_id}
         deleted = {
             "segments": (await self.segments_collection.delete_many(query)).deleted_count,
             "playlist_metadata": (
                 await self.playlist_metadata_collection.delete_many(query)
+            ).deleted_count,
+            # Machine-produced and regenerable from the archive, like the metadata beside them —
+            # and stills of a meeting whose transcript is being forgotten are of nothing.
+            "recording_posters": (
+                await self.recording_posters_collection.delete_many(query)
             ).deleted_count,
             "draft_notes": 0,
         }
@@ -462,6 +480,47 @@ class MongoDBStorageProvider(StorageProviderBase):
                 await self.draft_notes.delete_many(query)
             ).deleted_count
         return deleted
+
+    async def upsert_recording_poster(
+        self,
+        playlist_id: int,
+        version_id: int,
+        image: bytes,
+        content_type: str = "image/jpeg",
+        filename: Optional[str] = None,
+        recording_id: Optional[int] = None,
+    ) -> RecordingPoster:
+        """Store one shot's poster frame, replacing whatever was there for that version."""
+        query = {"playlist_id": playlist_id, "version_id": version_id}
+        update_fields: dict[str, Any] = {
+            "image": image,
+            "content_type": content_type,
+            "updated_at": datetime.now(timezone.utc),
+        }
+        # None means "the collector did not say", not "clear it": a re-upload that omits the
+        # filename should leave the name of the copy on the share alone.
+        if filename is not None:
+            update_fields["filename"] = filename
+        if recording_id is not None:
+            update_fields["recording_id"] = recording_id
+
+        result = await self.recording_posters_collection.find_one_and_update(
+            query,
+            {"$set": update_fields, "$setOnInsert": query},
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
+        result.pop("_id", None)
+        return RecordingPoster(**result)
+
+    async def get_recording_posters(self, playlist_id: int) -> list[RecordingPoster]:
+        """Every stored poster frame for one playlist."""
+        cursor = self.recording_posters_collection.find({"playlist_id": playlist_id})
+        posters = []
+        async for doc in cursor:
+            doc.pop("_id", None)
+            posters.append(RecordingPoster(**doc))
+        return posters
 
     async def get_user_settings(self, user_email: str) -> Optional[UserSettings]:
         """Get user settings by email."""
