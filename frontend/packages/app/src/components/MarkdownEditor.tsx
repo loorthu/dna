@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useCallback, type FocusEvent } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  type FocusEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 import styled from 'styled-components';
 import { useEditor, EditorContent } from '@tiptap/react';
@@ -41,6 +47,8 @@ interface MarkdownEditorProps {
   minHeight?: number;
   projectId?: number | null;
   onMentionInsert?: (entity: SearchResult) => void;
+  /** Show the content but refuse edits — used for rows excluded from a publish. */
+  readOnly?: boolean;
 }
 
 const turndownService = new TurndownService({
@@ -392,6 +400,7 @@ export function MarkdownEditor({
   minHeight = 80,
   projectId,
   onMentionInsert,
+  readOnly = false,
 }: MarkdownEditorProps) {
   const isUpdatingRef = useRef(false);
   const lastValueRef = useRef(value);
@@ -453,7 +462,10 @@ export function MarkdownEditor({
         return;
       }
       const related = e.relatedTarget;
-      if (related instanceof Element && related.closest('[data-mention-dropdown]')) {
+      if (
+        related instanceof Element &&
+        related.closest('[data-mention-dropdown]')
+      ) {
         return;
       }
       if (related instanceof Node && e.currentTarget.contains(related)) {
@@ -601,7 +613,21 @@ export function MarkdownEditor({
       lastValueRef.current = markdown;
       onChange?.(markdown);
     },
+    editable: !readOnly,
   });
+
+  // `editable` is only read when the editor is created, so a row toggled after
+  // mount needs telling. Two guards, both load-bearing:
+  //  - skip when it already matches, so mount (where `useEditor` has just set it
+  //    from the same prop) does nothing at all;
+  //  - `emitUpdate: false`, because `setEditable` fires an update by default and
+  //    an update means `onChange(getHTML())`. The draft arrives after mount, so
+  //    that update ran against an empty document and saved a blank over the
+  //    note. Do not drop either guard.
+  useEffect(() => {
+    if (!editor || editor.isEditable === !readOnly) return;
+    editor.setEditable(!readOnly, false);
+  }, [editor, readOnly]);
 
   useEffect(() => {
     if (!editor || value === lastValueRef.current) return;
@@ -636,97 +662,99 @@ export function MarkdownEditor({
       onBlur={onContentBlur ? handleEditorSubtreeBlur : undefined}
     >
       <EditorContent_ editor={editor} />
-      <Toolbar>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBold().run()}
-          $active={editor.isActive('bold')}
-          title="Bold"
-        >
-          <Bold />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleItalic().run()}
-          $active={editor.isActive('italic')}
-          title="Italic"
-        >
-          <Italic />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleStrike().run()}
-          $active={editor.isActive('strike')}
-          title="Strikethrough"
-        >
-          <Strikethrough />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleCode().run()}
-          $active={editor.isActive('code')}
-          title="Inline Code"
-        >
-          <Code />
-        </ToolbarButton>
-        <Divider />
-        <ToolbarButton
-          onClick={() =>
-            editor.chain().focus().toggleHeading({ level: 1 }).run()
-          }
-          $active={editor.isActive('heading', { level: 1 })}
-          title="Heading 1"
-        >
-          <Heading1 />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() =>
-            editor.chain().focus().toggleHeading({ level: 2 }).run()
-          }
-          $active={editor.isActive('heading', { level: 2 })}
-          title="Heading 2"
-        >
-          <Heading2 />
-        </ToolbarButton>
-        <Divider />
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBulletList().run()}
-          $active={editor.isActive('bulletList')}
-          title="Bullet List"
-        >
-          <List />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          $active={editor.isActive('orderedList')}
-          title="Numbered List"
-        >
-          <ListOrdered />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().toggleBlockquote().run()}
-          $active={editor.isActive('blockquote')}
-          title="Quote"
-        >
-          <Quote />
-        </ToolbarButton>
-        <ToolbarButton
-          onClick={() => editor.chain().focus().setHorizontalRule().run()}
-          title="Horizontal Rule"
-        >
-          <Minus />
-        </ToolbarButton>
-        <Divider />
-        <ToolbarButton title="Attach Image" onClick={handleAttachClick}>
-          <Image />
-        </ToolbarButton>
-        {attachmentCount > 0 && (
-          <AttachmentPill
-            key={attachmentFlashKey}
-            $animated={animatePill}
-            onClick={onToggleAttachmentTray}
-            title="View attached images"
+      {!readOnly && (
+        <Toolbar>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleBold().run()}
+            $active={editor.isActive('bold')}
+            title="Bold"
           >
-            {attachmentCount} {attachmentCount === 1 ? 'Image' : 'Images'}
-          </AttachmentPill>
-        )}
-      </Toolbar>
+            <Bold />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleItalic().run()}
+            $active={editor.isActive('italic')}
+            title="Italic"
+          >
+            <Italic />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleStrike().run()}
+            $active={editor.isActive('strike')}
+            title="Strikethrough"
+          >
+            <Strikethrough />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleCode().run()}
+            $active={editor.isActive('code')}
+            title="Inline Code"
+          >
+            <Code />
+          </ToolbarButton>
+          <Divider />
+          <ToolbarButton
+            onClick={() =>
+              editor.chain().focus().toggleHeading({ level: 1 }).run()
+            }
+            $active={editor.isActive('heading', { level: 1 })}
+            title="Heading 1"
+          >
+            <Heading1 />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() =>
+              editor.chain().focus().toggleHeading({ level: 2 }).run()
+            }
+            $active={editor.isActive('heading', { level: 2 })}
+            title="Heading 2"
+          >
+            <Heading2 />
+          </ToolbarButton>
+          <Divider />
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+            $active={editor.isActive('bulletList')}
+            title="Bullet List"
+          >
+            <List />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleOrderedList().run()}
+            $active={editor.isActive('orderedList')}
+            title="Numbered List"
+          >
+            <ListOrdered />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+            $active={editor.isActive('blockquote')}
+            title="Quote"
+          >
+            <Quote />
+          </ToolbarButton>
+          <ToolbarButton
+            onClick={() => editor.chain().focus().setHorizontalRule().run()}
+            title="Horizontal Rule"
+          >
+            <Minus />
+          </ToolbarButton>
+          <Divider />
+          <ToolbarButton title="Attach Image" onClick={handleAttachClick}>
+            <Image />
+          </ToolbarButton>
+          {attachmentCount > 0 && (
+            <AttachmentPill
+              key={attachmentFlashKey}
+              $animated={animatePill}
+              onClick={onToggleAttachmentTray}
+              title="View attached images"
+            >
+              {attachmentCount} {attachmentCount === 1 ? 'Image' : 'Images'}
+            </AttachmentPill>
+          )}
+        </Toolbar>
+      )}
       <input
         ref={fileInputRef}
         type="file"
