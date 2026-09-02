@@ -351,3 +351,181 @@ Attaching a second CDP client alongside the bot's own did not disturb the record
   belongs in the Dockerfiles behind a build arg, or every contributor on the VPN rediscovers it.
 - Playback is served from `RECORDING_NETWORK_PATH`, which on this laptop is a scratch directory.
   A real mount has to exist on prod before Phase 7 means anything.
+
+---
+
+## Narrowing the Publish path to what our ShotGrid actually does (2026-09-01)
+
+Audited what clicking **Publish** sends to ShotGrid, then turned off the parts that were being
+offered without working. All of it is reversible; nothing about the note body, subject, status or
+attachment path changed.
+
+**What Publish does reach SG with:** a `Note` created under the author's own login (script key +
+`sudo_as_login`), linked to the Version plus the Playlist plus the version's parent Shot/Asset;
+`Version.sg_status_list`; and file attachments. A duplicate guard on
+`project + version link + subject + content` means an identical re-publish returns the existing
+note rather than making a second one.
+
+**Publish sends no mail from DNA.** `email_service.py` is reached only by the separate **Email**
+button (`POST /email-notes`). ShotGrid may still notify off its own rules — DNA sets no
+addressings, so what goes out is down to our site's subscriptions on the linked entities.
+
+### Turned off, and why
+
+| Thing | Where | Why |
+|---|---|---|
+| To / CC on a note | `ADDRESSING_FIELDS_ENABLED` in `NoteOptionsInline.tsx` | `publish_notes` passes `to_users=[], cc_users=[]` (`main.py`, `# TODO: Parse to/cc`). The fields promised a notification that never went out, and To's *(required)* marker gated nothing. A constant, not a flag: no deployment makes them work. |
+| Links on a note | `VITE_FEATURE_NOTE_LINKS` | Links reach SG only on a note's **first** publish; `update_note` writes content and subject only, so links added afterwards silently go nowhere. Publish already attaches Version + Playlist + parent Shot/Asset by itself, so the field only ever added reach beyond those. |
+| Subject on a note | `VITE_FEATURE_NOTE_SUBJECT` | ShotGrid writes subjects; reviewers do not. Measured below. |
+| Note QC | `VITE_FEATURE_NOTE_QC` | An ASWF feature we are not using. It was on: `get_qc_checks` **auto-seeded** an "Action Item Check" per user on first read, so everyone who had opened the Publish dialog had one, costing an LLM call per draft each time it opened. Seeding removed; the four already-seeded rows were deleted from Mongo (all the default, no custom ones). |
+| Transcript checkboxes in Publish | `VITE_FEATURE_TRANSCRIPT_PUBLISH` | The backend flag was already `false` everywhere, but the dialog still showed per-version checkboxes, **default-checked**, firing calls that 404'd into `Promise.allSettled` and vanished. |
+
+QC got its own flag rather than riding on `aiEnabled`, so **AI note generation still works** with QC
+off. All four default off; unset behaves as off.
+
+`NoteOptionsInline` now renders nothing when all four are off, a plain labelled Subject input when
+Subject is the only one on, and the original chip + pencil panel as soon as a second field returns.
+No separate cleanup is needed when any of these get implemented.
+
+With the fields gone the publish dialog was mostly whitespace, so it was reworked:
+
+- the embedded editor has no padding or header of its own — the row already provides both;
+- its **height auto-sizes to the note** (116–320px) instead of reserving a fixed 140px box, and the
+  drag handle still pins it to whatever a reader drags it to, as on the playlist page
+  (`autoHeight = isEmbedded && defaultHeight == null && !isResized`). The floor is tied to the
+  240px 16:9 thumbnail beside it, so a one-line note sits level with its frame rather than at half
+  its height;
+- **the drag used to jump on first press.** Taking a row off auto-height pins `editorHeight`, and
+  that state was still sitting at the untouched 140px default — the measured height had gone only
+  into the ref used for delta maths. `handleResizeMouseDown` now seeds the state from the
+  measurement before flipping `isResized`, so the switch is invisible and the drag starts where the
+  reader sees the box. Verified by pressing every handle in the page and asserting the height does
+  not change;
+- the note row is a checkbox beside the editor — the owner's name is dropped, since one note-taker
+  is the norm here, and reappears only when a version carries more than one note;
+- an **unticked row is dimmed and desaturated** (everything but the checkbox) and its editor goes
+  read-only with the toolbar and resize handle hidden, so a row excluded from the publish reads as
+  excluded rather than differing by one faint tick. The grid row does the same, and its note cell is
+  disabled and struck through;
+- the header is one line — version name, state badge, then the artist in muted weight after a
+  divider — instead of spending a second line on the artist alone;
+- the version's state badge sits on that line, on the same rule the grid uses: shown only when it
+  is not a draft;
+- the thumbnail moved out of the header and **into the note row** at 240px wide, after the
+  checkbox, instead of a 48px square in the header. It sits inside the row rather than spanning the
+  card so that the tick stays the leftmost control, matching the grid; a version carrying more than
+  one note therefore repeats the frame, which is the price of that alignment;
+- the dialog widened to 1120px, which both views now use.
+
+The standalone editor is untouched — it keeps the fixed default height, since `autoHeight` requires
+`isEmbedded`.
+
+### Grid view (experiment)
+
+A **Cards / Grid** toggle in the dialog header, remembered per browser in `localStorage` under
+`dna-publish-view`. Grid is one row per note — checkbox, JTS number + thumbnail, artist, and the
+note body in a plain editable text box — for scanning what is about to reach
+ShotGrid, fixing a line, ticking rows off and publishing. Cards remains the view for composing:
+the grid's cell is a bare textarea, with no markdown toolbar, mentions or image paste. Both views
+share the same draft state and flush-before-publish path, so edits made in either are saved by the
+same code.
+
+Watch the grid's column minimums (`GRID_COLUMNS`): they have to sum to less than the dialog's inner
+width or the note cell overflows its row. That is what happened at the first attempt.
+
+The State column is gone, and so is Note by. The badge now sits beside the JTS number and renders
+**only when the row is not a draft** — measured, not guessed: across eight real playlists all 44
+dialog-eligible notes were `D`, so a State column was constant, while `E`/`P` is the case worth
+catching because publish then takes `update_note` and **overwrites** an existing ShotGrid note
+rather than creating one. The card view's header badge follows the same rule. The letter and label
+mappings live in `noteStatus.ts`, beside the rule that produces the status. `VersionCard` imports them rather than keeping its own copy, so the
+sidebar, the cards and the grid cannot drift.
+
+The first column is the **JTS number**, not the version name — `Version.external_ref`, which is our
+`sg_jts` field reaching DNA through `PRODTRACK_VERSION_EXTERNAL_REF_FIELD=sg_jts` (already set here;
+see the env note above). It happens to match the bracketed prefix in a version's `code`
+(`[188467] kpop-den020-animref-1`), but the field is the right source, and sites without it
+configured fall back to the name. Full version name on hover. The width that freed went to an 80×50
+thumbnail and to the note column.
+
+Verified live in the browser rather than by reading: a four-line note grows its editor while its
+neighbours stay one line tall, and a grid-cell edit was confirmed to reach Mongo and then reverted.
+The test playlist's four notes are back to `first`/`second`/`third`/`fourth`, unchanged flags.
+
+### Why Subject is hidden — what ShotGrid actually holds
+
+Worth writing down, because it looked at first like DNA was pre-filling the field. It is not. What
+you see is a real ShotGrid note mirrored down by `_sync_published_notes`.
+
+ShotGrid seeds **one empty Note per version** when a playlist is created, subject set to the
+playlist name, authored by the playlist creator, already linked to Version + Shot + Playlist. DNA's
+sync copies that subject into the draft row, so the editor shows it.
+
+Surveyed the newest 400 notes in each of `nite` and `kpop`:
+
+- **800/800 have a subject.** Not one is empty.
+- Of the playlist-linked ones, the subject is the playlist name **326/326 (100%) in kpop** and
+  **237/246 (96%) in nite**.
+- Every one of the 9 nite exceptions is a **playlist renamed after its notes were seeded** — the
+  event log shows e.g. playlist 462992 created as "Lookdev AM Dailies" at 19:17:43, note 5832316
+  seeded at 19:18:33, playlist renamed to "PM Dailies" at 19:21:08. The subject kept "AM".
+- **154/400 nite and 74/400 kpop notes have no playlist link at all**, and use entirely different
+  conventions: `Artist Note: /nite/seq/sf/sf0160 Animation`,
+  `KD 12 /nite/char/goblin/modeling - Modeling (Medium)`.
+
+So a subject at SPI is a **tool-generated identifying label**, on at least three conventions, and a
+playlist note's is the playlist name *frozen at seeding time* — a record of which session the note
+came from, which deliberately does not follow renames. A reviewer retyping one in DNA would produce
+the only hand-written subject on the site and erase that record. Hence hidden rather than editable.
+
+Publish still echoes the mirrored subject back unchanged, and that is correct: `update_note` sends
+whatever came down, so the frozen value survives. Do **not** "improve" this by regenerating the
+subject from the current playlist name — that would overwrite the provenance those 9 notes carry.
+
+### What publish does to these seeded notes
+
+They arrive with `published_note_id` set, so publish never takes the create path:
+
+- untouched (`published: true, edited: false`) → skipped, nothing written;
+- **the moment a body is typed**, `edited` flips and publish calls `update_note`, writing content
+  and subject onto **that same SG note**.
+
+So DNA fills in ShotGrid's blank placeholder rather than making a second note — which is why the
+duplicate guard almost never fires in practice. Two consequences: clearing a subject does not clear
+it upstream (`if subject:` skips empties), and an edited draft with an empty body writes
+`content: ""` — harmless on a seeded blank, but it would wipe a note that had content.
+
+### Two documentation bugs found while doing it
+
+- `DEPLOYMENT.md` told you to create `sg_versions` (multi-entity) on the transcript custom entity.
+  The code writes **`sg_version_in_review`** (`shotgrid.py`). Provisioning to the doc would have
+  failed on the first transcript publish. Corrected.
+- The same section documented `VITE_ENABLE_TRANSCRIPT_PUBLISH`, which **existed nowhere in the
+  code** — it was only ever a doc. The flag above is that promise actually implemented, under the
+  repo's `VITE_FEATURE_*` naming.
+
+### A note-wiping trap in the editor, worth not re-treading
+
+Making an excluded row's editor read-only wiped four draft note bodies in Mongo before it was
+caught. TipTap's `setEditable(editable)` **emits an update by default**, and an update means
+`onChange(getHTML())`. The effect that syncs the flag ran on mount, when the editor still held the
+empty string it was created with — the draft arrives from the query a moment later — so the empty
+document was saved straight over the note, with `edited: true` for good measure.
+
+`MarkdownEditor` now guards it twice: skip when `editor.isEditable` already matches (so mount does
+nothing at all, since `useEditor` set it from the same prop), and pass `emitUpdate: false`. Neither
+guard is decorative. Anything else that pokes the editor imperatively deserves the same suspicion —
+the save path is a debounced autosave, so a stray transaction becomes a write.
+
+ShotGrid was never touched: only the Mongo draft rows were affected, and three were restored from
+the upstream notes. The fourth had never been published, so it came back off a screenshot.
+
+### Still open, not addressed here
+
+- `publish_notes` takes `_: CurrentUserDep` and never uses `request.user_email` to filter, so any
+  authenticated user can publish anyone else's note — and it lands in SG under *that* person's
+  login via sudo.
+- Publish is not gated by `useRecordingReadiness`; only the Email dialog is, though
+  `RecordingReadiness.tsx` says it was factored so Publish could adopt it.
+- Note failures are `print`ed and counted, never surfaced with a reason — watch the backend log on
+  the first live run.
