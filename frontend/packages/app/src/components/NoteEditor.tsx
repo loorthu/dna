@@ -11,6 +11,7 @@ import styled from 'styled-components';
 import { X, Image, ImageOff } from 'lucide-react';
 import { SearchResult, Version } from '@dna/core';
 import { NoteOptionsInline } from './NoteOptionsInline';
+import { useNoteOptionsVisible } from './noteOptions';
 import { MarkdownEditor } from './MarkdownEditor';
 import { MentionIndexProvider } from '../contexts/MentionIndexContext';
 import type { LocalDraftNote } from '../hooks';
@@ -36,6 +37,8 @@ interface NoteEditorProps {
   onNoteContentBlur?: () => void;
   /** Override the initial editor height (pixels). Defaults to DEFAULT_HEIGHT. */
   defaultHeight?: number;
+  /** Show the note but refuse edits — used for rows excluded from a publish. */
+  readOnly?: boolean;
 }
 
 export interface NoteEditorHandle {
@@ -43,6 +46,14 @@ export interface NoteEditorHandle {
 }
 
 const DEFAULT_HEIGHT = 140;
+// Sized against the 240px 16:9 thumbnail (135px) this sits beside in the publish
+// dialog's card view: this box carries the toolbar too, and the drag handle and
+// row padding add ~20px, so ~116 lands the row level with the frame. A one-line
+// note next to a big thumbnail looked broken at half the height.
+const EMBEDDED_MIN_HEIGHT = 116;
+// Embedded rows grow with their content instead of reserving a fixed box, up to
+// this cap — past it a single long note would crowd out every other row.
+const EMBEDDED_MAX_HEIGHT = 320;
 const MIN_HEIGHT = 60;
 
 const EditorWrapper = styled.div<{
@@ -53,9 +64,8 @@ const EditorWrapper = styled.div<{
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  padding-bottom: 8px;
+  gap: ${({ $embedded }) => ($embedded ? '8px' : '16px')};
+  padding: ${({ $embedded }) => ($embedded ? '0' : '20px 20px 8px')};
   background: ${({ theme }) => theme.colors.bg.surface};
   border: ${({ $embedded, $isDragOver, theme }) =>
     $embedded
@@ -64,17 +74,24 @@ const EditorWrapper = styled.div<{
           $isDragOver ? theme.colors.accent.main : theme.colors.border.subtle
         }`};
   box-shadow: ${({ $embedded, $isDragOver, theme }) =>
-    $embedded && $isDragOver ? `inset 0 0 0 2px ${theme.colors.accent.main}` : 'none'};
+    $embedded && $isDragOver
+      ? `inset 0 0 0 2px ${theme.colors.accent.main}`
+      : 'none'};
   border-radius: ${({ theme }) => theme.radii.lg};
-  transition: border-color ${({ theme }) => theme.transitions.fast},
+  transition:
+    border-color ${({ theme }) => theme.transitions.fast},
     box-shadow ${({ theme }) => theme.transitions.fast};
 `;
 
-const EditorContent = styled.div<{ $height: number }>`
+const EditorContent = styled.div<{ $height: number; $auto?: boolean }>`
   display: flex;
   flex-direction: column;
-  height: ${({ $height }) => $height}px;
-  min-height: ${MIN_HEIGHT}px;
+  /* Embedded rows size to their note: a one-line note should not reserve the
+     same box as a twenty-line one when a dialog stacks dozens of them. */
+  height: ${({ $auto, $height }) => ($auto ? 'auto' : `${$height}px`)};
+  min-height: ${({ $auto }) => ($auto ? EMBEDDED_MIN_HEIGHT : MIN_HEIGHT)}px;
+  ${({ $auto }) =>
+    $auto ? `max-height: ${EMBEDDED_MAX_HEIGHT}px; overflow-y: auto;` : ''}
 `;
 
 const EditorHeader = styled.div`
@@ -324,10 +341,15 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
       variant = 'default',
       onNoteContentBlur,
       defaultHeight,
+      readOnly = false,
     },
     ref
   ) {
     const isEmbedded = variant === 'embedded';
+    const optionsVisible = useNoteOptionsVisible();
+    // Embedded hides the title row, so with the options row empty too the
+    // header would be a bare flex box contributing only its gap.
+    const showHeader = !isEmbedded || optionsVisible;
 
     const currentVersionAsSearchResult: SearchResult | undefined =
       useMemo(() => {
@@ -348,7 +370,18 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
       };
     }, [currentVersion?.user]);
 
-    const [editorHeight, setEditorHeight] = useState(defaultHeight ?? DEFAULT_HEIGHT);
+    const [editorHeight, setEditorHeight] = useState(
+      defaultHeight ?? DEFAULT_HEIGHT
+    );
+    const [isResized, setIsResized] = useState(false);
+    // Measured so a drag starts from the auto-fitted size, not from a default
+    // the reader never saw.
+    const contentRef = useRef<HTMLDivElement>(null);
+
+    // Embedded rows start fitted to their note, then pin to whatever the reader
+    // drags them to — same handle as the standalone editor, just a better
+    // starting size than one fixed box per row.
+    const autoHeight = isEmbedded && defaultHeight == null && !isResized;
     const [attachments, setAttachments] = useState<StagedAttachment[]>([]);
     const [isAttachmentTrayOpen, setIsAttachmentTrayOpen] = useState(false);
     const [attachFlashKey, setAttachFlashKey] = useState(0);
@@ -404,7 +437,12 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
         const entries: StagedAttachment[] = results.map((result, i) =>
           result.status === 'fulfilled'
             ? result.value
-            : ({ id: newIds[i], previewUrl: '', backendId: newIds[i], broken: true } as StagedAttachment)
+            : ({
+                id: newIds[i],
+                previewUrl: '',
+                backendId: newIds[i],
+                broken: true,
+              } as StagedAttachment)
         );
 
         const next = [...attachmentsRef.current, ...entries];
@@ -526,14 +564,19 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
       (e: React.MouseEvent) => {
         e.preventDefault();
         dragStartY.current = e.clientY;
-        dragStartHeight.current = editorHeight;
+        // Taking the drag off the auto-fitted box means pinning a height, and
+        // the height it must pin is the one on screen. Seeding state from the
+        // measurement is what stops the first press jumping to DEFAULT_HEIGHT,
+        // which the reader never saw.
+        const measured = contentRef.current?.offsetHeight ?? editorHeight;
+        dragStartHeight.current = measured;
+        setEditorHeight(measured);
+        setIsResized(true);
 
+        const floor = isEmbedded ? EMBEDDED_MIN_HEIGHT : MIN_HEIGHT;
         const onMouseMove = (moveEvent: MouseEvent) => {
           const delta = moveEvent.clientY - dragStartY.current;
-          const newHeight = Math.max(
-            MIN_HEIGHT,
-            dragStartHeight.current + delta
-          );
+          const newHeight = Math.max(floor, dragStartHeight.current + delta);
           setEditorHeight(newHeight);
         };
 
@@ -549,7 +592,7 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
         document.addEventListener('mousemove', onMouseMove);
         document.addEventListener('mouseup', onMouseUp);
       },
-      [editorHeight]
+      [editorHeight, isEmbedded]
     );
 
     useImperativeHandle(
@@ -630,47 +673,53 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
           $height={editorHeight}
           $isDragOver={isDragOver}
           $embedded={isEmbedded}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onPaste={handlePaste}
+          onDragOver={readOnly ? undefined : handleDragOver}
+          onDragLeave={readOnly ? undefined : handleDragLeave}
+          onDrop={readOnly ? undefined : handleDrop}
+          onPaste={readOnly ? undefined : handlePaste}
         >
           {isDragOver && (
             <DropOverlay>
               <Image size={32} />
             </DropOverlay>
           )}
-          <EditorHeader>
-            {!isEmbedded && (
-              <TitleRow>
-                <EditorTitle>Notes</EditorTitle>
-                <NoteDraftStatusBadges draft={draftNote} layout="title" />
-              </TitleRow>
-            )}
-            <NoteOptionsInline
-              toValue={editableTo}
-              ccValue={draftNote?.cc ?? []}
-              subjectValue={draftNote?.subject ?? ''}
-              linksValue={editableLinks}
-              projectId={projectId ?? undefined}
-              currentVersion={currentVersionAsSearchResult}
-              lockedTo={versionSubmitter ? [versionSubmitter] : []}
-              onToChange={(v) => {
-                const to = versionSubmitter ? [versionSubmitter, ...v] : v;
-                handleFieldChange('to', to);
-              }}
-              onCcChange={(v) => handleFieldChange('cc', v)}
-              onSubjectChange={(v) => handleFieldChange('subject', v)}
-              onLinksChange={(v) => {
-                const links = currentVersionAsSearchResult
-                  ? [currentVersionAsSearchResult, ...v]
-                  : v;
-                handleFieldChange('links', links);
-              }}
-            />
-          </EditorHeader>
+          {showHeader && (
+            <EditorHeader>
+              {!isEmbedded && (
+                <TitleRow>
+                  <EditorTitle>Notes</EditorTitle>
+                  <NoteDraftStatusBadges draft={draftNote} layout="title" />
+                </TitleRow>
+              )}
+              <NoteOptionsInline
+                toValue={editableTo}
+                ccValue={draftNote?.cc ?? []}
+                subjectValue={draftNote?.subject ?? ''}
+                linksValue={editableLinks}
+                projectId={projectId ?? undefined}
+                currentVersion={currentVersionAsSearchResult}
+                lockedTo={versionSubmitter ? [versionSubmitter] : []}
+                onToChange={(v) => {
+                  const to = versionSubmitter ? [versionSubmitter, ...v] : v;
+                  handleFieldChange('to', to);
+                }}
+                onCcChange={(v) => handleFieldChange('cc', v)}
+                onSubjectChange={(v) => handleFieldChange('subject', v)}
+                onLinksChange={(v) => {
+                  const links = currentVersionAsSearchResult
+                    ? [currentVersionAsSearchResult, ...v]
+                    : v;
+                  handleFieldChange('links', links);
+                }}
+              />
+            </EditorHeader>
+          )}
 
-          <EditorContent $height={editorHeight}>
+          <EditorContent
+            ref={contentRef}
+            $height={editorHeight}
+            $auto={autoHeight}
+          >
             <MarkdownEditor
               value={draftNote?.content ?? ''}
               onChange={(v) => handleFieldChange('content', v)}
@@ -681,7 +730,8 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
               animatePill={animatePill}
               onToggleAttachmentTray={() => setIsAttachmentTrayOpen((o) => !o)}
               placeholder="Write your notes here... (supports **markdown**, type @ to mention)"
-              minHeight={MIN_HEIGHT}
+              minHeight={autoHeight ? EMBEDDED_MIN_HEIGHT : MIN_HEIGHT}
+              readOnly={readOnly}
               projectId={projectId}
               onMentionInsert={handleMentionInsert}
             />
@@ -726,10 +776,12 @@ export const NoteEditor = forwardRef<NoteEditorHandle, NoteEditorProps>(
             </AttachmentTray>
           )}
 
-          <ResizeHandle
-            onMouseDown={handleResizeMouseDown}
-            title="Drag to resize"
-          />
+          {!readOnly && (
+            <ResizeHandle
+              onMouseDown={handleResizeMouseDown}
+              title="Drag to resize"
+            />
+          )}
         </EditorWrapper>
       </MentionIndexProvider>
     );

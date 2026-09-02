@@ -30,11 +30,18 @@ import {
 } from '../hooks/useDraftNote';
 import { useNoteQCChecks } from '../hooks/useNoteQCChecks';
 import { DraftNote, Version, SearchResult, NoteQCResult } from '@dna/core';
-import { NoteEditor, NoteDraftStatusBadges } from './NoteEditor';
+import { NoteEditor } from './NoteEditor';
 import { UserAvatar } from './UserAvatar';
 import { NoteQCResultPill } from './NoteQCResultPill';
 import { NoteQCDiffModal } from './NoteQCDiffModal';
 import { useFeatureFlags } from '../contexts';
+import {
+  noteProvenance,
+  noteStatus,
+  noteStatusLabel,
+  noteStatusLetter,
+  type NoteStatus,
+} from './noteStatus';
 
 interface PublishNotesDialogProps {
   open: boolean;
@@ -114,9 +121,18 @@ const VersionCardHeader = styled.div`
   border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
 `;
 
-const Thumb = styled.div`
-  width: 48px;
-  height: 48px;
+const CardBody = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+`;
+
+/* Inside the note row, after the checkbox — the tick has to be the leftmost
+   control in both views, so the frame cannot sit outside the row. */
+const BigThumb = styled.div`
+  width: 240px;
+  aspect-ratio: 16 / 9;
   border-radius: ${({ theme }) => theme.radii.md};
   overflow: hidden;
   flex-shrink: 0;
@@ -131,13 +147,239 @@ const Thumb = styled.div`
   }
 `;
 
-const NoteRowBlock = styled.div`
+const VersionName = styled.span`
+  font-size: 13px;
+  font-weight: 600;
+  color: ${({ theme }) => theme.colors.text.primary};
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+`;
+
+const HeaderDivider = styled.span`
+  width: 1px;
+  height: 12px;
+  flex-shrink: 0;
+  background: ${({ theme }) => theme.colors.border.default};
+`;
+
+const ArtistName = styled.span`
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.text.muted};
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+`;
+
+/* An unticked row is not going to ShotGrid, and that has to read at a glance —
+   a faint checkbox was too easy to miss. Everything but the checkbox fades and
+   desaturates, and the editor beneath is made read-only to match. */
+const NoteRowBlock = styled.div<{ $excluded?: boolean }>`
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
   padding-bottom: 8px;
+  transition: opacity ${({ theme }) => theme.transitions.fast};
+
+  ${({ $excluded }) =>
+    $excluded &&
+    `
+    > *:not(:first-child) {
+      opacity: 0.4;
+      filter: grayscale(0.8);
+    }
+  `}
   border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
 
   &:last-child {
     border-bottom: none;
     padding-bottom: 0;
+  }
+`;
+
+const NoteRowMeta = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 6px;
+`;
+
+const NoteRowEditor = styled.div`
+  flex: 1;
+  min-width: 0;
+`;
+
+/* --- Grid view -------------------------------------------------------------
+   One row per note rather than a card per version: the point is to scan what is
+   about to reach ShotGrid, fix a line, and tick rows off. Editing here is a
+   plain text box — no markdown toolbar, mentions or image paste — so the card
+   view remains the one for composing. */
+const PUBLISH_VIEW_KEY = 'dna-publish-view';
+
+// Minimums stay small deliberately: they have to add up to less than the
+// dialog's inner width or the note cell overflows its own row.
+const GRID_COLUMNS = '30px 190px 110px minmax(260px, 1fr)';
+
+const GridWrap = styled.div`
+  border: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  border-radius: ${({ theme }) => theme.radii.lg};
+  overflow: hidden;
+`;
+
+const GridHeader = styled.div`
+  display: grid;
+  grid-template-columns: ${GRID_COLUMNS};
+  gap: 10px;
+  padding: 8px 12px;
+  background: ${({ theme }) => theme.colors.bg.surfaceHover};
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: ${({ theme }) => theme.colors.text.muted};
+  position: sticky;
+  top: 0;
+  z-index: 1;
+`;
+
+const GridRow = styled.div<{ $selected: boolean }>`
+  display: grid;
+  grid-template-columns: ${GRID_COLUMNS};
+  gap: 10px;
+  align-items: start;
+  padding: 8px 12px;
+  border-bottom: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  /* A selected row is the norm, so the unselected one is what gets marked. */
+  background: ${({ $selected, theme }) =>
+    $selected ? theme.colors.bg.surfaceHover : 'transparent'};
+  transition: opacity ${({ theme }) => theme.transitions.fast};
+
+  ${({ $selected }) =>
+    !$selected &&
+    `
+    > *:not(:first-child) {
+      opacity: 0.4;
+      filter: grayscale(0.8);
+    }
+  `}
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+const GridCell = styled.div`
+  min-width: 0;
+  font-size: 12px;
+  color: ${({ theme }) => theme.colors.text.secondary};
+  padding-top: 3px;
+  overflow-wrap: anywhere;
+`;
+
+const GridStatusDot = styled.div<{ $status: NoteStatus }>`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+  cursor: default;
+  background-color: ${({ theme, $status }) =>
+    $status === 'published'
+      ? theme.colors.status.success
+      : $status === 'edited'
+        ? theme.colors.status.warning
+        : theme.colors.status.info};
+`;
+
+const GridVersionCell = styled(GridCell)`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 0;
+  font-variant-numeric: tabular-nums;
+  color: ${({ theme }) => theme.colors.text.primary};
+`;
+
+const GridThumb = styled.div`
+  width: 80px;
+  height: 50px;
+  border-radius: ${({ theme }) => theme.radii.sm};
+  overflow: hidden;
+  flex-shrink: 0;
+  background: ${({ theme }) => theme.colors.bg.base};
+  border: 1px solid ${({ theme }) => theme.colors.border.default};
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+`;
+
+/* Grows with its content so a long note is readable without opening anything,
+   and stops at a height that keeps neighbouring rows on screen. */
+const GridNoteInput = styled.textarea`
+  width: 100%;
+  min-height: 73px;
+  max-height: 340px;
+  resize: vertical;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-family: ${({ theme }) => theme.fonts.sans};
+  color: ${({ theme }) => theme.colors.text.primary};
+  background: ${({ theme }) => theme.colors.bg.base};
+  border: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  border-radius: ${({ theme }) => theme.radii.sm};
+  outline: none;
+
+  &::placeholder {
+    color: ${({ theme }) => theme.colors.text.muted};
+  }
+
+  &:focus {
+    border-color: ${({ theme }) => theme.colors.accent.main};
+    box-shadow: 0 0 0 2px ${({ theme }) => theme.colors.accent.subtle};
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    text-decoration: line-through;
+    background: transparent;
+    border-style: dashed;
+  }
+`;
+
+const ViewToggle = styled.div`
+  display: inline-flex;
+  border: 1px solid ${({ theme }) => theme.colors.border.subtle};
+  border-radius: ${({ theme }) => theme.radii.sm};
+  overflow: hidden;
+`;
+
+const ViewToggleButton = styled.button<{ $active: boolean }>`
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: ${({ theme }) => theme.fonts.sans};
+  cursor: pointer;
+  border: none;
+  background: ${({ $active, theme }) =>
+    $active ? theme.colors.accent.subtle : 'transparent'};
+  color: ${({ $active, theme }) =>
+    $active ? theme.colors.text.primary : theme.colors.text.muted};
+
+  &:hover {
+    color: ${({ theme }) => theme.colors.text.primary};
   }
 `;
 
@@ -249,6 +491,8 @@ interface PublishNoteRowProps {
   qcIgnored: Set<string>;
   onQcToggleIgnore: (checkId: string) => void;
   onQcRefreshDraft: () => Promise<void>;
+  /** Only true when the version carries more than one note. */
+  showOwner: boolean;
 }
 
 function PublishNoteRow({
@@ -264,8 +508,9 @@ function PublishNoteRow({
   qcIgnored,
   onQcToggleIgnore,
   onQcRefreshDraft,
+  showOwner,
 }: PublishNoteRowProps) {
-  const { aiEnabled } = useFeatureFlags();
+  const { noteQcEnabled } = useFeatureFlags();
   const registerFlush = useContext(RegisterFlushContext);
   const [fixOpen, setFixOpen] = useState(false);
   const [fixResult, setFixResult] = useState<NoteQCResult | null>(null);
@@ -302,7 +547,7 @@ function PublishNoteRow({
     return registerFlush(flushDebouncedSave);
   }, [registerFlush, flushDebouncedSave]);
 
-  const title = `${displayNameFromEmail(draftOwnerEmail)}'s Note`;
+  const title = displayNameFromEmail(draftOwnerEmail);
 
   const draftForModal = draftNote ?? backendToLocal(rowDraft);
 
@@ -330,8 +575,8 @@ function PublishNoteRow({
   }, [flushDebouncedSave, onQcRefreshDraft]);
 
   return (
-    <NoteRowBlock>
-      {aiEnabled && (
+    <NoteRowBlock $excluded={!selected}>
+      {noteQcEnabled && (
         <NoteQCDiffModal
           open={fixOpen}
           onOpenChange={(o) => {
@@ -343,61 +588,150 @@ function PublishNoteRow({
           onApply={handleQcApply}
         />
       )}
-      <Flex align="center" gap="2" mb="2" wrap="wrap" style={{ width: '100%' }}>
+      <NoteRowMeta>
         <Checkbox
           checked={selected}
           onCheckedChange={(c) => onSelectedChange(c === true)}
         />
-        <Flex
-          align="center"
-          gap="2"
-          wrap="wrap"
-          style={{ flex: 1, minWidth: 0 }}
-        >
-          <Text size="2" weight="medium" style={{ minWidth: 0 }}>
+        {/* One note-taker is the norm here, so naming them on every row is
+            noise. It only earns its place when a version has more than one
+            note and the rows would otherwise be indistinguishable. */}
+        {showOwner && (
+          <Text size="1" color="gray" truncate style={{ maxWidth: 110 }}>
             {title}
           </Text>
-          <NoteDraftStatusBadges
-            draft={
-              draftNote
-                ? {
-                    published: draftNote.published,
-                    publishedNoteId: draftNote.publishedNoteId,
-                    content: draftNote.content,
-                    subject: draftNote.subject,
-                    origin: draftNote.origin,
-                  }
-                : null
-            }
-            layout="inline"
+        )}
+        {noteQcEnabled && (
+          <NoteQCResultPill
+            draftKey={draftKey}
+            results={qcResults}
+            loading={qcLoading || qcRowRefreshing}
+            ignored={qcIgnored}
+            onToggleIgnore={(checkId) => onQcToggleIgnore(checkId)}
+            onFix={(r) => {
+              setFixResult(r);
+              setFixOpen(true);
+            }}
+            localDraft={draftForModal}
+            onFixAll={handleQcApply}
           />
-          {aiEnabled && (
-            <NoteQCResultPill
-              draftKey={draftKey}
-              results={qcResults}
-              loading={qcLoading || qcRowRefreshing}
-              ignored={qcIgnored}
-              onToggleIgnore={(checkId) => onQcToggleIgnore(checkId)}
-              onFix={(r) => {
-                setFixResult(r);
-                setFixOpen(true);
-              }}
-              localDraft={draftForModal}
-              onFixAll={handleQcApply}
-            />
-          )}
-        </Flex>
-      </Flex>
-      <NoteEditor
-        projectId={version.project?.id ?? null}
-        currentVersion={version}
-        draftNote={draftNote}
-        updateDraftNote={updateDraftNote}
-        saveAttachmentIds={saveAttachmentIds}
-        variant="embedded"
-        onNoteContentBlur={handleNoteContentBlur}
-      />
+        )}
+      </NoteRowMeta>
+      <BigThumb>
+        {version.thumbnail ? <img src={version.thumbnail} alt="" /> : null}
+      </BigThumb>
+      <NoteRowEditor>
+        <NoteEditor
+          projectId={version.project?.id ?? null}
+          currentVersion={version}
+          draftNote={draftNote}
+          updateDraftNote={updateDraftNote}
+          saveAttachmentIds={saveAttachmentIds}
+          variant="embedded"
+          onNoteContentBlur={handleNoteContentBlur}
+          readOnly={!selected}
+        />
+      </NoteRowEditor>
     </NoteRowBlock>
+  );
+}
+
+interface PublishGridRowProps {
+  playlistId: number;
+  version: Version;
+  draftOwnerEmail: string;
+  rowDraft: DraftNote;
+  selected: boolean;
+  onSelectedChange: (checked: boolean) => void;
+}
+
+function PublishGridRow({
+  playlistId,
+  version,
+  draftOwnerEmail,
+  rowDraft,
+  selected,
+  onSelectedChange,
+}: PublishGridRowProps) {
+  const registerFlush = useContext(RegisterFlushContext);
+
+  const currentVersionAsSearchResult: SearchResult = useMemo(
+    () => ({
+      type: 'Version',
+      id: version.id,
+      name: version.name || `Version ${version.id}`,
+    }),
+    [version.id, version.name]
+  );
+
+  const versionSubmitter: SearchResult | undefined = useMemo(() => {
+    if (!version.user) return undefined;
+    return { type: 'User', id: version.user.id, name: version.user.name || '' };
+  }, [version.user]);
+
+  const { draftNote, updateDraftNote, flushDebouncedSave } = useDraftNote({
+    playlistId,
+    versionId: version.id,
+    userEmail: draftOwnerEmail,
+    currentVersion: currentVersionAsSearchResult,
+    submitter: versionSubmitter,
+  });
+
+  useEffect(() => {
+    return registerFlush(flushDebouncedSave);
+  }, [registerFlush, flushDebouncedSave]);
+
+  const draft = draftNote ?? backendToLocal(rowDraft);
+  // Same rule as the sidebar's letters and the card view's badges.
+  const status = noteStatus({
+    published: draft.published,
+    publishedNoteId: draft.publishedNoteId,
+    content: draft.content,
+    subject: draft.subject,
+    origin: draft.origin,
+  });
+
+  return (
+    <GridRow $selected={selected}>
+      <GridCell>
+        <Checkbox
+          checked={selected}
+          onCheckedChange={(c) => onSelectedChange(c === true)}
+        />
+      </GridCell>
+      <GridVersionCell title={version.name || `Version ${version.id}`}>
+        <GridThumb>
+          {version.thumbnail && <img src={version.thumbnail} alt="" />}
+        </GridThumb>
+        {/* The site's JTS number (Version.sg_jts, surfaced as external_ref).
+            Sites without that field configured fall back to the name. */}
+        <span>
+          {version.external_ref || version.name || `Version ${version.id}`}
+        </span>
+        {/* A new note is the norm and needs no marking. `E`/`P` mean this row
+            already has an upstream note, so publishing will overwrite it rather
+            than create one — the case worth catching before the button. */}
+        {status && status !== 'draft' && (
+          <GridStatusDot $status={status} title={noteStatusLabel(status)}>
+            {noteStatusLetter(status)}
+          </GridStatusDot>
+        )}
+      </GridVersionCell>
+      <GridCell>{version.user?.name ?? '—'}</GridCell>
+      <GridCell style={{ paddingTop: 0 }}>
+        <GridNoteInput
+          value={draft.content ?? ''}
+          disabled={!selected}
+          placeholder={
+            selected
+              ? 'Empty — nothing will be sent for this row'
+              : 'Not publishing'
+          }
+          onChange={(e) => updateDraftNote({ content: e.target.value })}
+          onBlur={() => void flushDebouncedSave()}
+        />
+      </GridCell>
+    </GridRow>
   );
 }
 
@@ -423,7 +757,7 @@ function VersionTranscriptRow({
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
-  const { transcriptionEnabled } = useFeatureFlags();
+  const { transcriptionEnabled, transcriptPublishEnabled } = useFeatureFlags();
   const { segments, isLoading } = useSegments({ playlistId, versionId });
   const [expanded, setExpanded] = useState(false);
   const segmentsCount = segments.length;
@@ -432,7 +766,9 @@ function VersionTranscriptRow({
     [segments]
   );
 
-  if (!transcriptionEnabled) return null;
+  // Transcription being on only means segments exist; pushing them upstream is a
+  // separate opt-in that needs the backend flag and a provisioned SG entity.
+  if (!transcriptionEnabled || !transcriptPublishEnabled) return null;
 
   return (
     <>
@@ -525,6 +861,15 @@ function VersionPublishCard({
   onQcToggleIgnore,
   onQcRefreshDraft,
 }: VersionPublishCardProps) {
+  // Server rows rather than live drafts: the header is a summary, and the list
+  // refreshes on autosave anyway.
+  const headerStatus = useMemo<NoteStatus | null>(() => {
+    const found = drafts
+      .map((d) => noteStatus(noteProvenance(d)))
+      .filter((x): x is NoteStatus => x !== null);
+    return found.find((x) => x !== 'draft') ?? found[0] ?? null;
+  }, [drafts]);
+
   const sortedDrafts = useMemo(
     () =>
       [...drafts].sort((a, b) => {
@@ -539,34 +884,35 @@ function VersionPublishCard({
   return (
     <VersionCard>
       <VersionCardHeader>
-        <Thumb>
-          {version.thumbnail ? <img src={version.thumbnail} alt="" /> : null}
-        </Thumb>
-        <Flex direction="column" gap="1" style={{ flex: 1, minWidth: 0 }}>
-          <Text
-            weight="bold"
-            size="2"
-            style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
-          >
-            {version.name || `Version ${version.id}`}
-          </Text>
-          <Flex align="center" gap="2">
-            {version.user ? (
-              <>
-                <UserAvatar name={version.user.name} size="1" />
-                <Text size="1" color="gray">
-                  {version.user.name}
-                </Text>
-              </>
-            ) : (
-              <Text size="1" color="gray">
-                Unknown submitter
-              </Text>
-            )}
-          </Flex>
+        {/* Version and artist share the line: the version is the heading, the
+            artist trails it in muted weight, so one line carries both. */}
+        <Flex align="center" gap="2" style={{ flex: 1, minWidth: 0 }}>
+          <VersionName>{version.name || `Version ${version.id}`}</VersionName>
+          {/* Same rule as the grid: a new note is the norm, so only mark the
+              versions where publishing would overwrite an existing SG note. */}
+          {headerStatus && headerStatus !== 'draft' && (
+            <GridStatusDot
+              $status={headerStatus}
+              title={noteStatusLabel(headerStatus)}
+            >
+              {noteStatusLetter(headerStatus)}
+            </GridStatusDot>
+          )}
+          {version.user ? (
+            <>
+              <HeaderDivider />
+              <UserAvatar name={version.user.name} size="1" />
+              <ArtistName>{version.user.name}</ArtistName>
+            </>
+          ) : (
+            <>
+              <HeaderDivider />
+              <ArtistName>Unknown submitter</ArtistName>
+            </>
+          )}
         </Flex>
       </VersionCardHeader>
-      <Flex direction="column" gap="3" p="3">
+      <CardBody>
         {sortedDrafts.map((d) => (
           <PublishNoteRow
             key={draftRowKey(d)}
@@ -584,6 +930,7 @@ function VersionPublishCard({
               onQcToggleIgnore(draftRowKey(d), checkId)
             }
             onQcRefreshDraft={() => onQcRefreshDraft(d)}
+            showOwner={sortedDrafts.length > 1}
           />
         ))}
         <VersionTranscriptRow
@@ -592,7 +939,7 @@ function VersionPublishCard({
           checked={transcriptChecked}
           onCheckedChange={onTranscriptToggle}
         />
-      </Flex>
+      </CardBody>
     </VersionCard>
   );
 }
@@ -607,8 +954,27 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
   onPendingChange,
   showTitle = true,
 }) => {
-  const { aiEnabled } = useFeatureFlags();
+  const { noteQcEnabled, transcriptPublishEnabled } = useFeatureFlags();
   const [emailOpen, setEmailOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'cards' | 'grid'>(() => {
+    try {
+      return localStorage.getItem(PUBLISH_VIEW_KEY) === 'grid'
+        ? 'grid'
+        : 'cards';
+    } catch {
+      // Private windows and blocked site data throw on access; the default is fine.
+      return 'cards';
+    }
+  });
+
+  const changeViewMode = useCallback((mode: 'cards' | 'grid') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(PUBLISH_VIEW_KEY, mode);
+    } catch {
+      /* remembering the choice is a convenience, not a requirement */
+    }
+  }, []);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [transcriptSelected, setTranscriptSelected] = useState<
     Record<number, boolean>
@@ -639,7 +1005,11 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
     refreshDraft: qcRefreshDraft,
     hasBlockingErrors: qcHasBlockingErrors,
     refreshingDraftKey: qcRefreshingDraftKey,
-  } = useNoteQCChecks({ open: open && aiEnabled, playlistId, drafts: notes });
+  } = useNoteQCChecks({
+    open: open && noteQcEnabled,
+    playlistId,
+    drafts: notes,
+  });
 
   const flushFnsRef = useRef(new Set<() => Promise<void>>());
   const registerFlush = useCallback((fn: () => Promise<void>) => {
@@ -708,6 +1078,21 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
 
     return ordered;
   }, [notes, versions]);
+
+  const gridRows = useMemo(
+    () =>
+      versionCards.flatMap(({ version, drafts }) =>
+        [...drafts]
+          .sort((a, b) => {
+            const aMine = a.user_email === userEmail;
+            const bMine = b.user_email === userEmail;
+            if (aMine !== bMine) return aMine ? -1 : 1;
+            return a.user_email.localeCompare(b.user_email);
+          })
+          .map((draft) => ({ version, draft }))
+      ),
+    [versionCards, userEmail]
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -803,9 +1188,11 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
       version_id: d.version_id,
     }));
 
-    const selectedTranscriptVersionIds = versionCards
-      .filter(({ version }) => transcriptSelected[version.id] ?? true)
-      .map(({ version }) => version.id);
+    const selectedTranscriptVersionIds = transcriptPublishEnabled
+      ? versionCards
+          .filter(({ version }) => transcriptSelected[version.id] ?? true)
+          .map(({ version }) => version.id)
+      : [];
 
     const [notesResult, transcriptResults] = await Promise.all([
       publishNotes({ playlistId, request: { user_email: userEmail, targets } }),
@@ -913,39 +1300,65 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
             {showTitle && (
               <Dialog.Title style={{ margin: 0 }}>Publish Notes</Dialog.Title>
             )}
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger>
-                <IconButton
-                  variant="ghost"
-                  color="gray"
-                  aria-label="Batch note selection"
-                  disabled={notes.length === 0}
+            <Flex align="center" gap="2">
+              <ViewToggle>
+                <ViewToggleButton
+                  type="button"
+                  $active={viewMode === 'cards'}
+                  onClick={() => changeViewMode('cards')}
                 >
-                  <MoreVertical size={18} />
-                </IconButton>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Content align="end">
-                <DropdownMenu.Item
-                  onSelect={() =>
-                    handleBatchSelect(allNotesSelected ? 'none' : 'all')
-                  }
+                  Cards
+                </ViewToggleButton>
+                <ViewToggleButton
+                  type="button"
+                  $active={viewMode === 'grid'}
+                  onClick={() => changeViewMode('grid')}
                 >
-                  {allNotesSelected ? 'Deselect all notes' : 'Select all notes'}
-                </DropdownMenu.Item>
-                <DropdownMenu.Item onSelect={() => handleBatchSelect('mine')}>
-                  Select only my notes
-                </DropdownMenu.Item>
-                <DropdownMenu.Item onSelect={() => handleBatchSelect('others')}>
-                  Select only notes from others
-                </DropdownMenu.Item>
-                <DropdownMenu.Separator />
-                <DropdownMenu.Item onSelect={handleBatchTranscriptSelect}>
-                  {allTranscriptsSelected
-                    ? 'Deselect all transcripts'
-                    : 'Select all transcripts'}
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Root>
+                  Grid
+                </ViewToggleButton>
+              </ViewToggle>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger>
+                  <IconButton
+                    variant="ghost"
+                    color="gray"
+                    aria-label="Batch note selection"
+                    disabled={notes.length === 0}
+                  >
+                    <MoreVertical size={18} />
+                  </IconButton>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content align="end">
+                  <DropdownMenu.Item
+                    onSelect={() =>
+                      handleBatchSelect(allNotesSelected ? 'none' : 'all')
+                    }
+                  >
+                    {allNotesSelected
+                      ? 'Deselect all notes'
+                      : 'Select all notes'}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item onSelect={() => handleBatchSelect('mine')}>
+                    Select only my notes
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    onSelect={() => handleBatchSelect('others')}
+                  >
+                    Select only notes from others
+                  </DropdownMenu.Item>
+                  {transcriptPublishEnabled && (
+                    <>
+                      <DropdownMenu.Separator />
+                      <DropdownMenu.Item onSelect={handleBatchTranscriptSelect}>
+                        {allTranscriptsSelected
+                          ? 'Deselect all transcripts'
+                          : 'Select all transcripts'}
+                      </DropdownMenu.Item>
+                    </>
+                  )}
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+            </Flex>
           </Flex>
 
           <ScrollBody>
@@ -953,6 +1366,28 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
               <Text size="2" color="gray">
                 No notes to publish.
               </Text>
+            ) : viewMode === 'grid' ? (
+              <GridWrap>
+                <GridHeader>
+                  <span />
+                  <span>JTS</span>
+                  <span>Artist</span>
+                  <span>Note going to ShotGrid</span>
+                </GridHeader>
+                {gridRows.map(({ version, draft }) => (
+                  <PublishGridRow
+                    key={draftRowKey(draft)}
+                    playlistId={playlistId}
+                    version={version}
+                    draftOwnerEmail={draft.user_email}
+                    rowDraft={draft}
+                    selected={selected[draftRowKey(draft)] ?? false}
+                    onSelectedChange={(c) =>
+                      handleToggle(draftRowKey(draft), c)
+                    }
+                  />
+                ))}
+              </GridWrap>
             ) : (
               versionCards.map(({ version, drafts }) => (
                 <VersionPublishCard

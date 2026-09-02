@@ -610,7 +610,8 @@ function AITab({
   onRegenerateOnVersionChange,
   onRegenerateOnTranscriptUpdate,
 }: AITabProps) {
-  const { aiEnabled, setAiEnabled, aiLocked } = useFeatureFlags();
+  const { aiEnabled, setAiEnabled, aiLocked, noteQcEnabled } =
+    useFeatureFlags();
 
   if (isLoading) {
     return (
@@ -625,9 +626,7 @@ function AITab({
       <FeatureEnableRow>
         <FeatureEnableLabel>
           <FeatureEnableName>Enable Feature</FeatureEnableName>
-          <FeatureEnableDesc>
-            Show AI note suggestions and Note QC checks
-          </FeatureEnableDesc>
+          <FeatureEnableDesc>Show AI note suggestions</FeatureEnableDesc>
         </FeatureEnableLabel>
         <LockableSwitch
           checked={aiEnabled}
@@ -709,10 +708,12 @@ function AITab({
         </CheckboxRow>
       </Section>
 
-      <Section>
-        <SectionTitle>Note QC</SectionTitle>
-        <NoteQCTab userEmail={userEmail} />
-      </Section>
+      {noteQcEnabled && (
+        <Section>
+          <SectionTitle>Note QC</SectionTitle>
+          <NoteQCTab userEmail={userEmail} />
+        </Section>
+      )}
     </ModalContent>
   );
 }
