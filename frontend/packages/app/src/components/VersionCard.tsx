@@ -5,7 +5,11 @@ import { Eye } from 'lucide-react';
 import type { Version } from '@dna/core';
 import { UserAvatar } from './UserAvatar';
 // Defined with the rule that decides it, not with the card that draws it.
-import type { NoteStatus } from './noteStatus';
+import {
+  noteStatusLabel,
+  noteStatusLetter,
+  type NoteStatus,
+} from './noteStatus';
 
 export type { NoteStatus };
 
@@ -228,28 +232,6 @@ export function VersionCard({
 }: VersionCardProps) {
   const displayName = version.name || `Version ${version.id}`;
 
-  const getStatusLetter = (status: NoteStatus) => {
-    switch (status) {
-      case 'published':
-        return 'P';
-      case 'edited':
-        return 'E';
-      case 'draft':
-        return 'D';
-    }
-  };
-
-  const getStatusLabel = (status: NoteStatus) => {
-    switch (status) {
-      case 'published':
-        return 'Published';
-      case 'edited':
-        return 'Published (Edited)';
-      case 'draft':
-        return 'Draft';
-    }
-  };
-
   return (
     <Card
       $selected={selected}
@@ -274,8 +256,8 @@ export function VersionCard({
         {noteStatus && (
           <StatusBadge
             status={noteStatus}
-            label={getStatusLabel(noteStatus)}
-            letter={getStatusLetter(noteStatus)}
+            label={noteStatusLabel(noteStatus)}
+            letter={noteStatusLetter(noteStatus)}
           />
         )}
         {inReview && (

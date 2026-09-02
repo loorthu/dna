@@ -63,3 +63,31 @@ export function noteStatus(
   if (note.content || note.subject) return 'draft';
   return null;
 }
+
+/**
+ * The one-letter form used wherever a note's state has to fit in a corner: the
+ * sidebar's version cards and the publish grid's State column. Kept beside the
+ * rule that produces the status so the two spellings cannot drift apart.
+ */
+export function noteStatusLetter(status: NoteStatus): string {
+  switch (status) {
+    case 'published':
+      return 'P';
+    case 'edited':
+      return 'E';
+    case 'draft':
+      return 'D';
+  }
+}
+
+/** Spelled out, for tooltips and anywhere there is room for the full thing. */
+export function noteStatusLabel(status: NoteStatus): string {
+  switch (status) {
+    case 'published':
+      return 'Published';
+    case 'edited':
+      return 'Published (Edited)';
+    case 'draft':
+      return 'Draft';
+  }
+}
