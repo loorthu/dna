@@ -520,6 +520,27 @@ the save path is a debounced autosave, so a stray transaction becomes a write.
 ShotGrid was never touched: only the Mongo draft rows were affected, and three were restored from
 the upstream notes. The fourth had never been published, so it came back off a screenshot.
 
+### Email sits after Publish, and says so
+
+**Email** moved from the far side of the footer to sit **after Publish selected**, in the order the
+work happens: review and publish here, then send the artist what ShotGrid now holds. It takes the
+rightmost slot without becoming the primary action, because the two already differ in weight —
+Publish is solid, Email is soft — so reading order and visual hierarchy do not have to fight. Opening it
+with notes still unpublished shows an amber warning naming the count — the mail is built from the
+draft rows, not from ShotGrid, so anything unpublished goes out in it while ShotGrid still has the
+old text.
+
+The post-publish summary offers **Email** too, as the primary action there rather than the aside it
+is beforehand — telling the artist is the step after publishing, and the summary is where you are
+standing when it becomes true. That meant lifting `EmailNotesDialog` out of the pre-publish branch
+so both screens can open it; `PublishNotesDialog.test.tsx` publishes, reaches the summary and opens
+the dialog from it, which fails if it ever slips back inside the branch.
+
+It warns and does not block. Sending before publishing is unusual, not wrong, and the person doing
+it can see exactly what is outstanding. That is the same stance the readiness gate takes with its
+"Send anyway", except this one does not even need the escape hatch. `EmailNotesDialog.test.tsx`
+pins the behaviour, including that Send stays enabled.
+
 ### Still open, not addressed here
 
 - `publish_notes` takes `_: CurrentUserDep` and never uses `request.user_email` to filter, so any

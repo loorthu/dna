@@ -47,7 +47,9 @@ vi.mock('./NoteEditor', async (importOriginal) => {
 });
 
 vi.mock('./UserAvatar', () => ({
-  UserAvatar: ({ name }: { name?: string }) => <span data-testid="avatar">{name}</span>,
+  UserAvatar: ({ name }: { name?: string }) => (
+    <span data-testid="avatar">{name}</span>
+  ),
 }));
 
 const mockedUseDraftNote = vi.mocked(useDraftNote);
@@ -115,7 +117,9 @@ beforeEach(() => {
   }));
 });
 
-function renderDialog(props: Partial<ComponentProps<typeof PublishNotesDialog>> = {}) {
+function renderDialog(
+  props: Partial<ComponentProps<typeof PublishNotesDialog>> = {}
+) {
   return render(
     <PublishNotesDialog
       open
@@ -204,12 +208,16 @@ describe('PublishNotesDialog', () => {
       versions: [version10, version20],
     });
 
-    expect(screen.getByRole('button', { name: /Publish selected \(2\)/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Publish selected \(2\)/i })
+    ).toBeInTheDocument();
 
     const checkboxes = screen.getAllByRole('checkbox');
     await user.click(checkboxes[0]!);
 
-    expect(screen.getByRole('button', { name: /Publish selected \(1\)/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Publish selected \(1\)/i })
+    ).toBeInTheDocument();
   });
 
   it('batch menu selects only my notes', async () => {
@@ -222,8 +230,12 @@ describe('PublishNotesDialog', () => {
       versions: [version10],
     });
 
-    await user.click(screen.getByRole('button', { name: /Batch note selection/i }));
-    await user.click(await screen.findByRole('menuitem', { name: /Select only my notes/i }));
+    await user.click(
+      screen.getByRole('button', { name: /Batch note selection/i })
+    );
+    await user.click(
+      await screen.findByRole('menuitem', { name: /Select only my notes/i })
+    );
 
     const checkboxes = screen.getAllByRole('checkbox');
     expect(checkboxes[0]).toBeChecked();
@@ -240,8 +252,14 @@ describe('PublishNotesDialog', () => {
       versions: [version10],
     });
 
-    await user.click(screen.getByRole('button', { name: /Batch note selection/i }));
-    await user.click(await screen.findByRole('menuitem', { name: /Select only notes from others/i }));
+    await user.click(
+      screen.getByRole('button', { name: /Batch note selection/i })
+    );
+    await user.click(
+      await screen.findByRole('menuitem', {
+        name: /Select only notes from others/i,
+      })
+    );
 
     const checkboxes = screen.getAllByRole('checkbox');
     expect(checkboxes[0]).not.toBeChecked();
@@ -261,10 +279,16 @@ describe('PublishNotesDialog', () => {
     const checkboxes = screen.getAllByRole('checkbox');
     await user.click(checkboxes[0]!);
 
-    await user.click(screen.getByRole('button', { name: /Batch note selection/i }));
-    await user.click(await screen.findByRole('menuitem', { name: /Select all notes/i }));
+    await user.click(
+      screen.getByRole('button', { name: /Batch note selection/i })
+    );
+    await user.click(
+      await screen.findByRole('menuitem', { name: /Select all notes/i })
+    );
 
-    expect(screen.getByRole('button', { name: /Publish selected \(2\)/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Publish selected \(2\)/i })
+    ).toBeInTheDocument();
   });
 
   it('sends targets for only checked rows on publish', async () => {
@@ -282,15 +306,13 @@ describe('PublishNotesDialog', () => {
 
     await user.click(screen.getByRole('button', { name: /Publish selected/i }));
 
-    expect(mockPublishNotes).toHaveBeenCalledWith(
-      {
-        playlistId: 100,
-        request: {
-          user_email: 'me@test.com',
-          targets: [{ user_email: 'other@test.com', version_id: 10 }],
-        },
-      }
-    );
+    expect(mockPublishNotes).toHaveBeenCalledWith({
+      playlistId: 100,
+      request: {
+        user_email: 'me@test.com',
+        targets: [{ user_email: 'other@test.com', version_id: 10 }],
+      },
+    });
   });
 
   it('calls flushDebouncedSave from each row before publish', async () => {
@@ -333,5 +355,24 @@ describe('PublishNotesDialog', () => {
 
     expect(flushA).toHaveBeenCalled();
     expect(flushB).toHaveBeenCalled();
+  });
+
+  it('offers Email from the summary once the notes have landed', async () => {
+    // Telling the artist is the step after publishing, so the summary should not
+    // make you close it and start again to get there.
+    const user = userEvent.setup();
+    renderDialog({
+      notes: [draft({ _id: 'a', version_id: 10 })],
+      versions: [version10],
+    });
+
+    await user.click(screen.getByRole('button', { name: /Publish selected/i }));
+
+    expect(await screen.findByText('Publishing Complete!')).toBeTruthy();
+    const email = screen.getByRole('button', { name: 'Email' });
+    expect(email.hasAttribute('disabled')).toBe(false);
+
+    await user.click(email);
+    expect(await screen.findByText('Email Notes')).toBeTruthy();
   });
 });

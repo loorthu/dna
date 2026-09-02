@@ -1279,10 +1279,15 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
             </ResultList>
           </SummaryBox>
 
-          <Flex justify="end" mt="4">
+          <Flex justify="end" gap="3" mt="4">
             <Dialog.Close>
-              <Button onClick={handleClose}>Close</Button>
+              <Button variant="soft" color="gray" onClick={handleClose}>
+                Close
+              </Button>
             </Dialog.Close>
+            {/* The next step once ShotGrid has the notes, so here it is the
+                primary action rather than the aside it is before publishing. */}
+            <Button onClick={() => setEmailOpen(true)}>Email</Button>
           </Flex>
         </Flex>
       ) : (
@@ -1427,7 +1432,30 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
           )}
 
           <FooterBar>
-            <Flex justify="between" align="center" gap="3">
+            <Flex justify="end" align="center" gap="3">
+              <Dialog.Close>
+                <Button variant="soft" color="gray" disabled={isPending}>
+                  Cancel
+                </Button>
+              </Dialog.Close>
+              <Button
+                disabled={
+                  isPending ||
+                  notes.length === 0 ||
+                  selectedCount === 0 ||
+                  publishBlockedByQc
+                }
+                onClick={() => void handlePublishSelected()}
+              >
+                {isPending && <SpinnerIcon size={14} />}
+                {isPending
+                  ? 'Publishing...'
+                  : `Publish selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
+              </Button>
+              {/* After Publish, because that is the order the work happens in:
+                  review and publish here, then send the artist what ShotGrid now
+                  holds. It trails the primary action without competing with it —
+                  Publish is solid, this one is soft. */}
               <Button
                 variant="soft"
                 onClick={() => setEmailOpen(true)}
@@ -1435,37 +1463,19 @@ export const PublishNotesTabContent: React.FC<PublishNotesTabContentProps> = ({
               >
                 Email
               </Button>
-              <Flex gap="3">
-                <Dialog.Close>
-                  <Button variant="soft" color="gray" disabled={isPending}>
-                    Cancel
-                  </Button>
-                </Dialog.Close>
-                <Button
-                  disabled={
-                    isPending ||
-                    notes.length === 0 ||
-                    selectedCount === 0 ||
-                    publishBlockedByQc
-                  }
-                  onClick={() => void handlePublishSelected()}
-                >
-                  {isPending && <SpinnerIcon size={14} />}
-                  {isPending
-                    ? 'Publishing...'
-                    : `Publish selected${selectedCount > 0 ? ` (${selectedCount})` : ''}`}
-                </Button>
-              </Flex>
             </Flex>
           </FooterBar>
-          <EmailNotesDialog
-            open={emailOpen}
-            onClose={() => setEmailOpen(false)}
-            playlistId={playlistId}
-            userEmail={userEmail}
-          />
         </>
       )}
+      {/* Outside the branch: reachable both before publishing and from the
+          summary afterwards, which is where the artist usually gets told. */}
+      <EmailNotesDialog
+        unpublishedCount={notes.length}
+        open={emailOpen}
+        onClose={() => setEmailOpen(false)}
+        playlistId={playlistId}
+        userEmail={userEmail}
+      />
     </RegisterFlushContext.Provider>
   );
 };

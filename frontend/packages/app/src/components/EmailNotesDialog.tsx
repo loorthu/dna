@@ -7,7 +7,7 @@ import {
   Text,
   TextField,
 } from '@radix-ui/themes';
-import { Info } from 'lucide-react';
+import { Info, TriangleAlert } from 'lucide-react';
 import { useEmailNotes } from '../hooks/useEmailNotes';
 import { useRecordingReadiness } from '../hooks/useRecordingReadiness';
 import { RecordingReadinessPanel } from './RecordingReadiness';
@@ -17,6 +17,12 @@ interface EmailNotesDialogProps {
   onClose: () => void;
   playlistId: number;
   userEmail: string;
+  /**
+   * Notes still waiting to be published. The email is built from the drafts, not
+   * from ShotGrid, so anything unpublished goes out in it while ShotGrid still
+   * has the old text — worth saying, not worth blocking.
+   */
+  unpublishedCount?: number;
 }
 
 export function EmailNotesDialog({
@@ -24,6 +30,7 @@ export function EmailNotesDialog({
   onClose,
   playlistId,
   userEmail,
+  unpublishedCount = 0,
 }: EmailNotesDialogProps) {
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
@@ -59,7 +66,10 @@ export function EmailNotesDialog({
   };
 
   return (
-    <Dialog.Root open={open} onOpenChange={(o) => !o && !isPending && onClose()}>
+    <Dialog.Root
+      open={open}
+      onOpenChange={(o) => !o && !isPending && onClose()}
+    >
       <Dialog.Content maxWidth="480px">
         <Dialog.Title>Email Notes</Dialog.Title>
         <Dialog.Description style={{ display: 'none' }}>
@@ -69,7 +79,9 @@ export function EmailNotesDialog({
         {sent ? (
           <Flex direction="column" gap="4">
             <Callout.Root color="green">
-              <Callout.Icon><Info size={16} /></Callout.Icon>
+              <Callout.Icon>
+                <Info size={16} />
+              </Callout.Icon>
               <Callout.Text>Email sent successfully.</Callout.Text>
             </Callout.Root>
             <Flex justify="end">
@@ -80,9 +92,25 @@ export function EmailNotesDialog({
           </Flex>
         ) : (
           <Flex direction="column" gap="3">
+            {unpublishedCount > 0 && (
+              <Callout.Root color="amber">
+                <Callout.Icon>
+                  <TriangleAlert size={16} />
+                </Callout.Icon>
+                <Callout.Text>
+                  {unpublishedCount === 1
+                    ? '1 note has not been published to ShotGrid yet.'
+                    : `${unpublishedCount} notes have not been published to ShotGrid yet.`}{' '}
+                  They will still be in this email, so it and ShotGrid will not
+                  match. Publishing first is usually what you want.
+                </Callout.Text>
+              </Callout.Root>
+            )}
             <RecordingReadinessPanel readiness={readiness} />
             <label>
-              <Text size="2" weight="medium" mb="1" as="div">To</Text>
+              <Text size="2" weight="medium" mb="1" as="div">
+                To
+              </Text>
               <TextField.Root
                 placeholder="recipient@example.com"
                 value={to}
@@ -90,7 +118,9 @@ export function EmailNotesDialog({
               />
             </label>
             <label>
-              <Text size="2" weight="medium" mb="1" as="div">CC <Text color="gray">(optional)</Text></Text>
+              <Text size="2" weight="medium" mb="1" as="div">
+                CC <Text color="gray">(optional)</Text>
+              </Text>
               <TextField.Root
                 placeholder="cc@example.com"
                 value={cc}
@@ -98,7 +128,9 @@ export function EmailNotesDialog({
               />
             </label>
             <label>
-              <Text size="2" weight="medium" mb="1" as="div">Subject <Text color="gray">(optional)</Text></Text>
+              <Text size="2" weight="medium" mb="1" as="div">
+                Subject <Text color="gray">(optional)</Text>
+              </Text>
               <TextField.Root
                 placeholder="Auto-generated from playlist name"
                 value={subject}
@@ -108,7 +140,9 @@ export function EmailNotesDialog({
 
             {isError && (
               <Callout.Root color="red">
-                <Callout.Icon><Info size={16} /></Callout.Icon>
+                <Callout.Icon>
+                  <Info size={16} />
+                </Callout.Icon>
                 <Callout.Text>
                   {(error as Error)?.message || 'Failed to send email'}
                 </Callout.Text>

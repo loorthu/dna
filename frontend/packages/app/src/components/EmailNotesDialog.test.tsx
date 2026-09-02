@@ -85,13 +85,14 @@ const NOT_SERVED_HERE: RecordingReadiness = {
   ],
 };
 
-function renderDialog() {
+function renderDialog(props: { unpublishedCount?: number } = {}) {
   return render(
     <EmailNotesDialog
       open
       onClose={() => {}}
       playlistId={1}
       userEmail="me@test.com"
+      {...props}
     />
   );
 }
@@ -176,5 +177,46 @@ describe('EmailNotesDialog readiness gate', () => {
     renderDialog();
 
     expect(screen.queryByText(/Send anyway/)).toBeNull();
+  });
+});
+
+describe('EmailNotesDialog unpublished-notes warning', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Isolate this from the readiness gate, which blocks on its own terms.
+    mockedReadiness.mockReturnValue(NOTHING_PENDING);
+  });
+
+  it('says nothing when everything has been published', () => {
+    renderDialog({ unpublishedCount: 0 });
+    expect(screen.queryByText(/not been published/i)).toBeNull();
+  });
+
+  it('warns but still sends when notes are unpublished', async () => {
+    // The whole point: the expected order is publish then email, but a person who
+    // knows what they are doing must not be stopped — only told.
+    const user = userEvent.setup();
+    renderDialog({ unpublishedCount: 3 });
+
+    expect(
+      screen.getByText(/3 notes have not been published to ShotGrid yet/i)
+    ).toBeTruthy();
+
+    const send = screen.getByRole('button', { name: 'Send' });
+    await user.type(
+      screen.getByPlaceholderText('recipient@example.com'),
+      'a@b.com'
+    );
+    expect(send.hasAttribute('disabled')).toBe(false);
+
+    await user.click(send);
+    expect(mockSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts one note in the singular', () => {
+    renderDialog({ unpublishedCount: 1 });
+    expect(
+      screen.getByText(/1 note has not been published to ShotGrid yet/i)
+    ).toBeTruthy();
   });
 });
