@@ -1,6 +1,6 @@
 import styled from 'styled-components';
 import { Text, Flex } from '@radix-ui/themes';
-import { Check, Loader2, Minus, CircleHelp } from 'lucide-react';
+import { Check, Loader2, Minus, CircleHelp, TriangleAlert } from 'lucide-react';
 import type {
   ReadinessCheck,
   ReadinessState,
@@ -51,6 +51,10 @@ const Spinner = styled(Loader2)`
 const ICON_COLOR: Record<ReadinessState, string> = {
   pass: 'var(--green-9)',
   waiting: 'var(--amber-9)',
+  // The same amber as `waiting` — the difference that matters is the SHAPE, a standing triangle
+  // against a turning spinner. Amber and not red for the reason the player uses it: nothing is
+  // broken or lost, the recording is safe upstream and simply is not filed.
+  blocked: 'var(--amber-9)',
   checking: 'var(--gray-8)',
   unknown: 'var(--gray-8)',
   skipped: 'var(--gray-8)',
@@ -63,6 +67,11 @@ function StateIcon({ state }: { state: ReadinessState }) {
   if (state === 'waiting' || state === 'checking') {
     return <Spinner size={14} color={color} style={ICON_STYLE} />;
   }
+  if (state === 'blocked') {
+    // Deliberately NOT the spinner. This one does not resolve on its own, and an animation that
+    // never stops reads as progress right up until someone gives up on it.
+    return <TriangleAlert size={14} color={color} style={ICON_STYLE} />;
+  }
   if (state === 'pass') {
     return <Check size={14} color={color} style={ICON_STYLE} />;
   }
@@ -74,14 +83,22 @@ function StateIcon({ state }: { state: ReadinessState }) {
 
 function CheckRow({ check }: { check: ReadinessCheck }) {
   const muted = check.state === 'skipped' || check.state === 'unknown';
+  const blocked = check.state === 'blocked';
   return (
-    <Row>
+    <Row role={blocked ? 'alert' : undefined}>
       <StateIcon state={check.state} />
       <Flex direction="column">
-        <Text size="2" color={muted ? 'gray' : undefined}>
+        <Text
+          size="2"
+          color={muted ? 'gray' : undefined}
+          weight={blocked ? 'medium' : undefined}
+        >
           {check.label}
         </Text>
-        <Text size="1" color="gray">
+        {/* The detail is grey on every other row because it elaborates a label that already said
+            the important part. Here it is the only place the thing to DO appears, so it is the
+            one detail that must not read as small print. */}
+        <Text size="1" color={blocked ? 'amber' : 'gray'}>
           {check.detail}
         </Text>
       </Flex>

@@ -65,6 +65,15 @@ export type ReadinessState =
   | 'pass'
   /** Not settled yet, but it will be on its own — this is what holds the gate. */
   | 'waiting'
+  /**
+   * Settled, and settled badly: nothing will change until a PERSON does something.
+   *
+   * Apart from `waiting` because the two ask opposite things of whoever is looking. Waiting says
+   * "give it a minute" and is drawn as a spinner, which is honest for a collection still in
+   * progress and a lie about one that has stopped — a spinner that turns forever is how a
+   * recording nobody was going to file looked exactly like one about to arrive.
+   */
+  | 'blocked'
   /** The answer has been asked for and has not arrived. Holds the gate; resolves in a moment. */
   | 'checking'
   /** Could not be determined at all. Reported, but never allowed to block. */
@@ -246,13 +255,13 @@ export function recordingReadiness(
       };
     }
     if (cuts === 'blocked') {
-      // Waiting on a PERSON, not on time — so it is the one waiting row that says what to do
-      // rather than how long to give it. It reached here as a `pass` once, because everything
-      // that was not pending or archiving was assumed archived: the gate opened on a recording
-      // that does not exist, and the email went out linking to it.
+      // Waiting on a PERSON, not on time — so it says what to do rather than how long to give
+      // it. It reached here as a `pass` once, because everything that was not pending or
+      // archiving was assumed archived: the gate opened on a recording that does not exist,
+      // and the email went out linking to it.
       return {
         id,
-        state: 'waiting',
+        state: 'blocked',
         label,
         detail:
           cutsDetail ??
@@ -322,8 +331,11 @@ export function recordingReadiness(
   return {
     applicable: true,
     checks,
+    // `blocked` holds the gate exactly as `waiting` does. It is a different thing to SAY and the
+    // same thing to decide: in both, the archive is not there and the link would not resolve.
     blocking: checks.some(
-      (c) => c.state === 'waiting' || c.state === 'checking'
+      (c) =>
+        c.state === 'waiting' || c.state === 'checking' || c.state === 'blocked'
     ),
     passed: counted.filter((c) => c.state === 'pass').length,
     total: counted.length,

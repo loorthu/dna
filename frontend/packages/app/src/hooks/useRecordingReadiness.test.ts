@@ -34,7 +34,7 @@ describe('a recording the collector cannot file', () => {
       })
     );
 
-    expect(stateOf(result, 'archived')).toBe('waiting');
+    expect(stateOf(result, 'archived')).toBe('blocked');
     expect(result.blocking).toBe(true);
   });
 
@@ -50,6 +50,37 @@ describe('a recording the collector cannot file', () => {
     expect(result.checks.find((c) => c.id === 'archived')?.detail).toMatch(
       /nite\/lib\.recording/
     );
+  });
+
+  it('is not the same state as an ordinary wait', () => {
+    // They hold the gate alike and mean opposite things to whoever is looking: one resolves on
+    // its own in about a minute, the other never does. The panel draws them differently, which
+    // it can only do if they are different here.
+    const stuck = recordingReadiness(
+      inputs({
+        cuts: 'blocked',
+        cutsDetail: 'no directory',
+        probe: { state: 'not_yet' },
+      })
+    );
+    const waiting = recordingReadiness(
+      inputs({ cuts: 'archiving', probe: { state: 'not_yet' } })
+    );
+
+    expect(stateOf(stuck, 'archived')).not.toBe(stateOf(waiting, 'archived'));
+    expect(stuck.blocking).toBe(waiting.blocking);
+  });
+
+  it('is not counted among the passed checks', () => {
+    const result = recordingReadiness(
+      inputs({
+        cuts: 'blocked',
+        cutsDetail: 'no directory',
+        probe: { state: 'not_yet' },
+      })
+    );
+
+    expect(result.passed).toBeLessThan(result.total);
   });
 
   it('still counts the bot as gone — the upload finished before it blocked', () => {
