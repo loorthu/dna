@@ -194,7 +194,8 @@ class StorageProviderBase:
         raise NotImplementedError()
 
     async def get_qc_checks(self, user_email: str) -> list["NoteQCCheck"]:
-        """List QC checks for a user; seeds default checks when none exist."""
+        """List QC checks for a user. Returns empty when the user has none —
+        nothing is seeded on read."""
         raise NotImplementedError()
 
     async def create_qc_check(

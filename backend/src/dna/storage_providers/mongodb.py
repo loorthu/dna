@@ -18,7 +18,6 @@ from dna.models.published_transcript import (
     PublishedTranscriptUpdate,
 )
 from dna.models.qc_check import (
-    DEFAULT_ACTION_ITEM_CHECK,
     NoteQCCheck,
     NoteQCCheckCreate,
     NoteQCCheckUpdate,
@@ -558,34 +557,14 @@ class MongoDBStorageProvider(StorageProviderBase):
         return PublishedTranscript(**result)
 
     async def get_qc_checks(self, user_email: str) -> list[NoteQCCheck]:
+        """Return the user's QC checks. Nothing is seeded: a site that has not
+        opted into note QC should get an empty list, not a check it never asked
+        for. `DEFAULT_ACTION_ITEM_CHECK` remains as the suggested starting point
+        for sites that do want it, created explicitly via `create_qc_check`.
+        """
         query = {"user_email": user_email}
         cursor = self.qc_checks_collection.find(query)
         results: list[NoteQCCheck] = []
-        async for doc in cursor:
-            doc["_id"] = str(doc["_id"])
-            results.append(NoteQCCheck(**doc))
-        if results:
-            return sorted(results, key=lambda c: (c.name.lower(), c.id))
-        now = datetime.now(timezone.utc)
-        default = DEFAULT_ACTION_ITEM_CHECK
-        await self.qc_checks_collection.find_one_and_update(
-            {"user_email": user_email, "name": default.name},
-            {
-                "$setOnInsert": {
-                    "user_email": user_email,
-                    "name": default.name,
-                    "prompt": default.prompt,
-                    "severity": default.severity,
-                    "enabled": default.enabled,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            },
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        cursor = self.qc_checks_collection.find(query)
-        results = []
         async for doc in cursor:
             doc["_id"] = str(doc["_id"])
             results.append(NoteQCCheck(**doc))
