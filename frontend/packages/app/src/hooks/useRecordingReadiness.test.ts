@@ -14,12 +14,58 @@ function inputs(overrides: Partial<ReadinessInputs> = {}): ReadinessInputs {
     botStatus: 'completed',
     recordingCapable: true,
     cuts: 'ready',
+    cutsDetail: null,
     cutsLoading: false,
     cutsError: false,
     probe: { state: 'served' },
     ...overrides,
   };
 }
+
+describe('a recording the collector cannot file', () => {
+  it('holds the gate instead of passing as archived', () => {
+    // It passed before: everything that was not `pending` or `archiving` was taken for archived,
+    // so the gate opened on a recording that is not on the share and the email linked to it.
+    const result = recordingReadiness(
+      inputs({
+        cuts: 'blocked',
+        cutsDetail: 'nite/lib.recording/pix/ref/dna does not exist.',
+        probe: { state: 'not_yet' },
+      })
+    );
+
+    expect(stateOf(result, 'archived')).toBe('waiting');
+    expect(result.blocking).toBe(true);
+  });
+
+  it('says what is wrong, since waiting alone gives nobody the fix', () => {
+    const result = recordingReadiness(
+      inputs({
+        cuts: 'blocked',
+        cutsDetail: 'nite/lib.recording/pix/ref/dna does not exist.',
+        probe: { state: 'not_yet' },
+      })
+    );
+
+    expect(result.checks.find((c) => c.id === 'archived')?.detail).toMatch(
+      /nite\/lib\.recording/
+    );
+  });
+
+  it('still counts the bot as gone — the upload finished before it blocked', () => {
+    // Otherwise one problem holds two rows and neither of them names it.
+    const result = recordingReadiness(
+      inputs({
+        cuts: 'blocked',
+        cutsDetail: 'no directory',
+        botStatus: undefined,
+        probe: { state: 'not_yet' },
+      })
+    );
+
+    expect(stateOf(result, 'bot_left')).toBe('pass');
+  });
+});
 
 function stateOf(
   result: ReturnType<typeof recordingReadiness>,

@@ -52,6 +52,10 @@ const BOT_IN_MEETING: BotStatusEnum[] = [
  */
 const UPLOAD_COMPLETE: RecordingCutsStatus[] = [
   'archiving',
+  // Reached only from `archiving`: the collector had the whole recording and then could not file
+  // it. The bot is as gone as it is in any other state here, and leaving it out would hold the
+  // bot row shut too — two rows waiting on one problem, neither of them naming it.
+  'blocked',
   'ready',
   'no_segments',
 ];
@@ -112,6 +116,8 @@ export interface ReadinessInputs {
   /** Whether this deployment records at all — with no recorder there is no archive to wait for. */
   recordingCapable: boolean;
   cuts: RecordingCutsStatus | undefined;
+  /** Why, when `cuts` is `blocked`. The only actionable part of that answer. */
+  cutsDetail: string | null | undefined;
   cutsLoading: boolean;
   cutsError: boolean;
   probe: MediaProbe;
@@ -140,6 +146,7 @@ export function recordingReadiness(
     botStatus,
     recordingCapable,
     cuts,
+    cutsDetail,
     cutsLoading,
     cutsError,
     probe,
@@ -236,6 +243,20 @@ export function recordingReadiness(
         label,
         detail:
           'Upload finished — the collector is taking custody (about a minute).',
+      };
+    }
+    if (cuts === 'blocked') {
+      // Waiting on a PERSON, not on time — so it is the one waiting row that says what to do
+      // rather than how long to give it. It reached here as a `pass` once, because everything
+      // that was not pending or archiving was assumed archived: the gate opened on a recording
+      // that does not exist, and the email went out linking to it.
+      return {
+        id,
+        state: 'waiting',
+        label,
+        detail:
+          cutsDetail ??
+          'The collector cannot file this recording. It is safe, but not on the share yet.',
       };
     }
     return {
@@ -361,6 +382,7 @@ export function useRecordingReadiness(
     botStatus: session?.status ?? fetchedStatus?.status,
     recordingCapable,
     cuts: cuts.data?.status,
+    cutsDetail: cuts.data?.status_detail,
     cutsLoading: recordingCapable && cuts.isLoading,
     cutsError: cuts.isError,
     probe,

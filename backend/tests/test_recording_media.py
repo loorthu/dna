@@ -673,13 +673,13 @@ class _Entity:
         self.__dict__.update(fields)
 
 
-def _prodtrack(code="NITE_Review", show="nite", project_id=71):
+def _prodtrack(code="NITE_Review", show="nite", project_id=71, name="Night Show"):
     """A tracking system that knows one playlist and the show it belongs to."""
     entities = {
         ("playlist", PLAYLIST_ID): _Entity(
             code=code, project={"type": "Project", "id": project_id}
         ),
-        ("project", project_id): _Entity(code=show, name="Night Show"),
+        ("project", project_id): _Entity(code=show, name=name),
     }
 
     class Prodtrack:
@@ -799,6 +799,66 @@ class TestTheArchivesDestination:
 
         with pytest.raises(ArchiveDestinationUnknown, match="tracking system"):
             await _destination(storage, provider, Down()).relative_path(PLAYLIST_ID)
+
+    async def test_a_project_with_no_tank_name_falls_back_to_its_name(
+        self, storage, provider
+    ):
+        """tank_name is optional in ShotGrid, and a site that never filled it in uses the
+        project's name as the directory — the same string in practice.
+
+        Safe to guess only because the collector refuses to CREATE a show's directory: a wrong
+        guess archives nothing and reports the path it expected, rather than filing a recording
+        somewhere nobody looks.
+        """
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+        no_tank_name = _prodtrack(show=None, name="kpop")
+
+        answer = await _destination(storage, provider, no_tank_name).relative_path(
+            PLAYLIST_ID
+        )
+
+        assert answer["show"] == "kpop"
+        assert answer["relative_path"].startswith("kpop/")
+
+    async def test_tank_name_still_wins_when_it_is_set(self, storage, provider):
+        """The directory and the display name are different strings, and only one is a path."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+
+        answer = await _destination(
+            storage, provider, _prodtrack(show="nite", name="Night Show")
+        ).relative_path(PLAYLIST_ID)
+
+        assert answer["relative_path"].startswith("nite/")
+
+    async def test_a_project_with_neither_cannot_be_filed(self, storage, provider):
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+        nameless = _prodtrack(show=None, name=None)
+
+        with pytest.raises(
+            ArchiveDestinationUnknown, match="neither a tank_name nor a name"
+        ):
+            await _destination(storage, provider, nameless).relative_path(PLAYLIST_ID)
 
     async def test_a_playlist_belonging_to_no_project_has_no_show_to_file_under(
         self, storage, provider

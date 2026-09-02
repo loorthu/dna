@@ -399,16 +399,26 @@ class ArchiveDestinationService:
                 f"Playlist {playlist_id} belongs to no project — there is no show to file it under"
             )
         try:
-            show = getattr(
-                self.prodtrack.get_entity("project", project_id), "code", None
-            )
+            project_entity = self.prodtrack.get_entity("project", project_id)
         except Exception as e:
             raise ArchiveDestinationUnknown(
                 f"Project {project_id} could not be read from the tracking system: {e}"
             )
+        # tank_name (mapped to `code`) is the project's DIRECTORY, so it is the right answer
+        # wherever it is set. It is optional in ShotGrid, though, and sites that never filled it
+        # in use the project's name as the directory instead — which is the same string in
+        # practice, because both come from whatever the show was called when it was set up.
+        #
+        # Guessing is safe HERE and nowhere else: the collector refuses to create a show's
+        # directory, so a wrong guess archives nothing and reports the exact path it expected.
+        # The failure is a message naming a directory, not a recording filed out of sight.
+        show = getattr(project_entity, "code", None) or getattr(
+            project_entity, "name", None
+        )
         if not show:
             raise ArchiveDestinationUnknown(
-                f"Project {project_id} has no tank_name; its show directory is unknown"
+                f"Project {project_id} has neither a tank_name nor a name; its show directory "
+                f"is unknown"
             )
         return show, code
 

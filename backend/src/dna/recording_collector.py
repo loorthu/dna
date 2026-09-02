@@ -44,6 +44,11 @@ from dna.recording_posters import (
 
 logger = logging.getLogger(__name__)
 
+# How many consecutive failed passes make a stall rather than a blip. At the default ten-second
+# poll this is about half a minute — long enough that a slow share or a backend restarting does
+# not reach the player, short enough that nobody watches a progress step for an hour wondering.
+FAILURES_BEFORE_REPORTING = 3
+
 
 class CollectorError(Exception):
     """The collection could not be completed. Always safe to retry — nothing was deleted."""
@@ -333,6 +338,8 @@ class RecordingCollector:
         # ten seconds for as long as it stays blocked. Deliberately in memory: a restart
         # re-reporting once is harmless, and is the right behaviour if DNA was the thing down.
         self._reported: dict[int, str] = {}
+        # Consecutive failed passes per playlist, for telling a blip apart from a stall.
+        self._failures: dict[int, int] = {}
 
     # -- paths ----------------------------------------------------------------------------------
 
@@ -811,6 +818,23 @@ class RecordingCollector:
             )
         return written
 
+    async def report_persistent_failure(self, playlist_id: int, reason: str) -> None:
+        """Report a failure that has now repeated enough times to be a stall, not a blip.
+
+        Most collection failures are transient by design — the whole flow is built to be retried,
+        so a single bad pass is not worth telling anyone about. But the retry is silent, and a
+        cause that never clears turns that silence into a recording that reports itself "still
+        being collected" for the rest of the day. This is the point at which the silence becomes
+        the bug: the collector has tried, and gone on failing for the same reason.
+
+        Learned from a real one. The backend was not restarted after a deploy, so every request
+        for a name 404'd; the collector retried correctly and forever, and the only visible
+        symptom was a progress step that never turned green with nothing anywhere saying why.
+        """
+        if self._failures.get(playlist_id, 0) < FAILURES_BEFORE_REPORTING:
+            return
+        await self.report_blocked(playlist_id, reason)
+
     async def report_blocked(self, playlist_id: int, reason: str) -> None:
         """Tell DNA why this playlist is stuck, once, so the player can say so.
 
@@ -860,11 +884,18 @@ class RecordingCollector:
         try:
             result = await self.finalize(state)
         except ArchiveDirectoryMissing as e:
-            # The one failure that will not clear by retrying, so it is the one a person is told
-            # about. Re-raised afterwards: this pass still failed, and nothing has been archived
-            # or deleted.
+            # Known from the first pass never to clear by retrying, so it is reported at once
+            # rather than after a few. Re-raised afterwards: this pass still failed, and nothing
+            # has been archived or deleted.
             await self.report_blocked(playlist_id, str(e))
             raise
+        except CollectorError as e:
+            # Everything else is transient until it demonstrably is not. Counted rather than
+            # reported, so a blip stays quiet and a stall does not.
+            self._failures[playlist_id] = self._failures.get(playlist_id, 0) + 1
+            await self.report_persistent_failure(playlist_id, str(e))
+            raise
+        self._failures.pop(playlist_id, None)
         # After finalize, never inside it: the archive is recorded and the upstream copy released
         # by the time this runs, so a thumbnailer that cannot reach DNA, cannot read the cut list
         # or cannot run ffmpeg costs a picture and nothing else.

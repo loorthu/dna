@@ -19,6 +19,7 @@ import pytest
 
 from dna.recording_archive_path import archive_relative_path
 from dna.recording_collector import (
+    FAILURES_BEFORE_REPORTING,
     ArchiveDirectoryMissing,
     CollectionFailed,
     CollectorError,
@@ -691,6 +692,50 @@ async def test_a_show_with_no_recording_directory_is_not_archived_and_says_why(
     assert (
         collector.archive_root not in reason
     ), "relative to the share root: the archiving host's mount point stays on that host"
+
+
+@pytest.mark.asyncio
+async def test_a_stall_is_reported_once_it_stops_looking_like_a_blip(tmp_path):
+    """The failure that taught this: a backend not restarted after a deploy, so every request for
+    a name 404'd. The collector retried correctly and forever, and the only visible symptom was a
+    progress step that never turned green with nothing anywhere saying why.
+
+    Silence is right for one bad pass and wrong for the twentieth.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    client.archive_path_error = RuntimeError("404 Not Found")
+    collector = make_collector(tmp_path, client)
+
+    for _ in range(FAILURES_BEFORE_REPORTING - 1):
+        with pytest.raises(CollectionFailed):
+            await collector.poll_once(1)
+    assert client.blocked == [], "a blip stays quiet"
+
+    with pytest.raises(CollectionFailed):
+        await collector.poll_once(1)
+
+    assert len(client.blocked) == 1
+    assert (
+        "404" in client.blocked[0][1]
+    ), "the reason has to reach whoever can act on it"
+    assert client.archived == [] and client.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_a_pass_that_finally_works_forgets_the_failures_behind_it(tmp_path):
+    """Otherwise a playlist that stumbled twice hours ago is reported on its next single blip."""
+    client = FakeClient([b"AAAA"], complete=True)
+    client.archive_path_error = RuntimeError("transient")
+    collector = make_collector(tmp_path, client)
+    for _ in range(FAILURES_BEFORE_REPORTING - 1):
+        with pytest.raises(CollectionFailed):
+            await collector.poll_once(1)
+
+    client.archive_path_error = None
+    assert (await collector.poll_once(1))["status"] == "archived"
+
+    assert collector._failures == {}
+    assert client.blocked == []
 
 
 @pytest.mark.asyncio
