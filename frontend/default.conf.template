@@ -59,15 +59,33 @@ server {
     # hop that drops Content-Range. No auth hop either — the share is trusted, and the
     # player is a plain <video src>.
     #
-    # ^~ so the long-cache asset regex below cannot claim these instead.
+    # RECORDING_NETWORK_PATH is the share ROOT (in prod, /shots), not a directory of
+    # recordings: the collector files each one under its own show and date, so the URL
+    # carries that whole relative path and this location maps the tree rather than one
+    # folder. The MEDIA-ONLY REGEX is what keeps that from meaning "publish the share":
+    # only .mp4 and .jpg are reachable, so the rest of a show tree is not served even
+    # though it sits under the same root. nginx normalises "../" out of a URI before
+    # matching, so a path cannot climb out of the root either.
+    #
     # A 404 here is a normal state, not a fault: it means the collector has not finished
     # yet. The player asks the API what to show and this location only serves bytes.
-    location ^~ /recordings/ {
-        alias ${RECORDING_NETWORK_PATH}/;
+    location ~ "^/recordings/(?<recording_file>[A-Za-z0-9._/-]+\.(?:mp4|jpg))$" {
+        alias ${RECORDING_NETWORK_PATH}/$recording_file;
         # Written once and never modified, so it caches well — but privately: a review
         # recording should not sit in a shared proxy. Set with add_header alone, since
         # `expires` would emit a second, competing Cache-Control.
         add_header Cache-Control "private, max-age=3600";
+    }
+
+    # Anything else under /recordings/ is not a recording. A PLAIN prefix location, never `^~`:
+    # a `^~` match would preempt the regex above and take the recordings with it. Regexes are
+    # tried first, so this catches only what the one above declined.
+    #
+    # Without it those URLs reach the SPA fallback, which answers 200 with a page of HTML — and
+    # a <video src> given HTML and a 200 fails in a way that looks like a broken player rather
+    # than a missing file.
+    location /recordings/ {
+        return 404;
     }
 
     # WebSocket (live transcription events) -> backend /ws

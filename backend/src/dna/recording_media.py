@@ -22,6 +22,7 @@ import os
 from typing import Any, Optional
 
 from dna.models.playlist_metadata import PlaylistMetadataUpdate
+from dna.recording_archive_path import archive_relative_path, is_safe_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -229,15 +230,25 @@ class RecordingMediaService:
         a disagreement means the collector and DNA are looking at different recordings, and
         recording the archive anyway would mark the wrong meeting as collected.
 
-        Only the FILENAME is kept. What this side needs to know is that a durable copy exists (the
-        delete guard) and what it is called (the player's URL) — never where the archiving host
-        keeps it. That host is on the other side of the airgap and holds the only copy of the
-        media; its filesystem layout is its own business, and storing it here put a description of
-        the secure share in a database on the internet-side host for no functional gain. Callers
-        may still send an absolute path — normalising here rather than trusting them means an
-        older collector cannot reintroduce the leak.
+        What is kept is the path RELATIVE to the share root — `<show>/.../<date>/<name>.mp4`, as
+        ``ArchiveDestinationService`` named it. Not the absolute path: the leading mount point
+        belongs to the archiving host on the other side of the airgap, and storing it here would
+        put a description of the secure share in a database on the internet-side host for no
+        functional gain. Not a bare filename either, which is what this used to keep — the
+        archives are no longer in one flat directory, so the file cannot be found without the
+        show and the date.
+
+        An absolute path from a caller is reduced to its basename rather than stored: that is an
+        older collector, whose flat name is still resolvable the old way, and it must not be able
+        to write the share's real layout in here.
         """
-        network_path = os.path.basename(network_path)
+        if os.path.isabs(network_path):
+            network_path = os.path.basename(network_path)
+        if not is_safe_relative_path(network_path):
+            raise ValueError(
+                f"Playlist {playlist_id}: {network_path!r} is not a relative path under the "
+                f"share root; refusing to record it as the archive"
+            )
         metadata = await self.storage.get_playlist_metadata(playlist_id)
         ids = await self.resolve(playlist_id)
         if recording_id is not None and recording_id != ids["recording_id"]:
@@ -263,6 +274,9 @@ class RecordingMediaService:
             PlaylistMetadataUpdate(
                 recording_network_path=network_path,
                 recording_sha256=sha256,
+                # Whatever was blocking this is over — the file is on the share. A stale reason
+                # left here would keep the player explaining a problem that no longer exists.
+                clear_recording_archive_error=True,
                 archived_recording_id=ids["recording_id"],
                 archived_meeting_id=metadata.vexa_meeting_id if metadata else None,
                 # `None` means "leave unchanged" to the upsert, so a master that cannot report
@@ -292,6 +306,25 @@ class RecordingMediaService:
             "network_path": network_path,
             "sha256": sha256,
         }
+
+    async def report_blocked(self, playlist_id: int, reason: str) -> dict[str, Any]:
+        """Record why this recording cannot be archived without someone doing something.
+
+        For the failures a retry will never clear on its own — today, a show whose recording
+        directory does not exist on the share. Held against the playlist so the player can say
+        WHY it is still waiting: "still being collected", repeated forever, is indistinguishable
+        from a slow collection and tells nobody the one fact that would fix it.
+
+        Not for ordinary transient failures. The collector retries every pass, so a reason that
+        appears and clears on its own would flicker in front of a viewer who can do nothing with
+        it either way.
+        """
+        await self.storage.upsert_playlist_metadata(
+            playlist_id,
+            PlaylistMetadataUpdate(recording_archive_error=reason),
+        )
+        logger.warning("Playlist %s cannot be archived: %s", playlist_id, reason)
+        return {"playlist_id": playlist_id, "reason": reason}
 
     async def delete_upstream(self, playlist_id: int) -> dict[str, Any]:
         """Purge the upstream copy — ONLY once an archive has been recorded.
@@ -324,4 +357,84 @@ class RecordingMediaService:
             "recording_id": ids["recording_id"],
             "archived_at": ids["network_path"],
             **result,
+        }
+
+
+class ArchiveDestinationUnknown(Exception):
+    """The archive's path cannot be worked out — usually ShotGrid, sometimes a missing clock."""
+
+
+class ArchiveDestinationService:
+    """Where this playlist's recording belongs on the share, and what it is called.
+
+    Answered on THIS side of the airgap because the two facts the name is built from — the show
+    the playlist belongs to, and what the playlist is called — live in ShotGrid, which the
+    collector cannot reach. It asks; DNA decides.
+    """
+
+    def __init__(self, prodtrack_provider: Any, media_service: RecordingMediaService):
+        self.prodtrack = prodtrack_provider
+        self.media = media_service
+
+    def show_and_code(self, playlist_id: int) -> tuple[str, str]:
+        """The show's directory name and the playlist's, from ShotGrid.
+
+        The show is the project's ``tank_name`` — the name of its directory under the share root,
+        which is the thing being asked for here. Its display name is a different string and would
+        put the file somewhere that does not exist.
+        """
+        try:
+            playlist = self.prodtrack.get_entity("playlist", playlist_id)
+        except Exception as e:
+            raise ArchiveDestinationUnknown(
+                f"Playlist {playlist_id} could not be read from the tracking system: {e}"
+            )
+        code = getattr(playlist, "code", None)
+        if not code:
+            raise ArchiveDestinationUnknown(f"Playlist {playlist_id} has no name")
+        project = getattr(playlist, "project", None) or {}
+        project_id = project.get("id")
+        if not project_id:
+            raise ArchiveDestinationUnknown(
+                f"Playlist {playlist_id} belongs to no project — there is no show to file it under"
+            )
+        try:
+            show = getattr(
+                self.prodtrack.get_entity("project", project_id), "code", None
+            )
+        except Exception as e:
+            raise ArchiveDestinationUnknown(
+                f"Project {project_id} could not be read from the tracking system: {e}"
+            )
+        if not show:
+            raise ArchiveDestinationUnknown(
+                f"Project {project_id} has no tank_name; its show directory is unknown"
+            )
+        return show, code
+
+    async def relative_path(self, playlist_id: int, suffix: str = "") -> dict[str, Any]:
+        """The path under the share root, plus the facts it was built from.
+
+        ``suffix`` is the collector's escape hatch for the one case it cannot resolve alone: a
+        destination that already exists. It asks again with the recording id, rather than
+        inventing a name or overwriting a file that may be the only copy of a meeting.
+        """
+        ids = await self.media.resolve(playlist_id)
+        start = ids.get("start_time_utc")
+        if not start:
+            raise ArchiveDestinationUnknown(
+                f"Playlist {playlist_id}'s recording has no start time; it cannot be named"
+            )
+        show, code = self.show_and_code(playlist_id)
+        try:
+            path = archive_relative_path(show, code, start, suffix=suffix)
+        except ValueError as e:
+            raise ArchiveDestinationUnknown(f"Playlist {playlist_id}: {e}")
+        return {
+            "playlist_id": playlist_id,
+            "recording_id": ids["recording_id"],
+            "show": show,
+            "playlist_code": code,
+            "start_time_utc": start,
+            "relative_path": path,
         }

@@ -40,6 +40,12 @@ export function recordingMessage(
       return 'The meeting is being recorded now. The video appears here once it ends.';
     case 'archiving':
       return 'The recording is still being collected. Try again in a minute.';
+    case 'blocked':
+      // Deliberately without the reason the coordinator's player shows. That reason names a
+      // directory on a share this reader has never seen and cannot create, so quoting it here
+      // would read as an instruction they are unable to follow. What they can act on is that
+      // the video is coming and is not lost.
+      return 'The recording has not been saved to the share yet. It is safe, and appears here once that is sorted out.';
     case 'no_segments':
       return 'A recording exists, but nothing was transcribed against these shots.';
     case 'ready':

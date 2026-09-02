@@ -16,9 +16,45 @@ Vexa, so the Vexa credential never crosses over and the browser never crosses at
 
 While a meeting runs it polls DNA's per-part index, fetches each new part, checks the part
 against the sha256 the index advertises, and appends it to a staging file. When the recording is
-complete it pulls the audio master, muxes the two streams, writes the finished MP4 to the share,
-re-reads it to confirm what landed, records the path and hash in DNA, and only then asks DNA to
-delete the upstream copy.
+complete it pulls the audio master, muxes the two streams, asks DNA where the file belongs, writes
+the finished MP4 there, re-reads it to confirm what landed, records the path and hash in DNA, and
+only then asks DNA to delete the upstream copy.
+
+**DNA names the file, not the collector.** Each archive is filed as
+
+```
+<RECORDING_NETWORK_PATH>/<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist>_<start>_Recording.mp4
+```
+
+— for example `/shots/nite/lib.recording/pix/ref/dna/20260901/NITE_Director_Review_2026_09_01_13_52_PDT_Recording.mp4`
+— so it lands in the show's own reference library. The show and the playlist's name come from the
+tracking system, which only DNA can reach, so the collector asks
+`GET /recordings/{playlist_id}/archive-path` and supplies nothing but the root. If DNA cannot
+answer, the recording is **not** archived under some fallback name: the pass fails, both copies
+stay where they are, and the next pass tries again. A name that nothing can reconcile later is
+worse than a wait.
+
+The date directory and the timestamp are the **meeting's**, in studio-local time — so a restarted
+collection recomputes the same destination it was already writing to.
+
+### A show's first recording
+
+`<show>/lib.recording/pix/ref/dna` must already exist; the collector creates only the `YYYYMMDD`
+directory inside it. Everything above that belongs to the show's own tree, made by the studio with
+the ownership it means it to have — and a share that failed to mount looks exactly like a show
+nobody has set up, so creating one silently would turn either into a recording filed where no one
+will look for it.
+
+So the first recording for a new show waits for someone to run:
+
+```sh
+mkdir -p /shots/<show>/lib.recording/pix/ref/dna
+```
+
+The wait is **visible**: the collector posts the reason to DNA, the player shows it, and both keep
+polling — so the video appears on its own once the directory exists. Nothing is lost meanwhile,
+because no archive is recorded and no upstream copy is released. The reason is reported once per
+playlist rather than every pass, and cleared when the recording is finally archived.
 
 That order is the design. Until the archive is recorded, Vexa holds the only copy — so the
 delete is refused by DNA until a path and a hash exist, and refused again here before the request
@@ -29,7 +65,7 @@ is even formed.
 Once the handover is finished — archive recorded, upstream copy released — the collector asks DNA
 for the playlist's cut list and grabs one still per shot, a couple of seconds into the span where
 that shot came up. Each frame gets a play badge composited over its middle and is written beside
-the archive, so nginx serves it at `/recordings/` like the recording; the bytes are also pushed to
+the archive, in the same dated directory, so nginx serves it at `/recordings/` like the recording; the bytes are also pushed to
 DNA, because the notes email is composed on the other side of the airgap and **embeds** the
 thumbnail rather than linking it. A linked one would be broken for the readers most likely to open
 the mail on a phone: Gmail's web client fetches every image through a Google proxy, and that proxy
@@ -93,7 +129,7 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 | `DNA_API_URL` | `http://localhost:8000` | where DNA's API answers |
 | `DNA_API_TOKEN` | *(empty)* | only if the backend runs with auth |
 | `COLLECTOR_STAGING_DIR` | `/staging` | must be durable across restarts |
-| `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share nginx serves |
+| `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share ROOT nginx serves (`/shots` in prod) |
 | `COLLECTOR_POLL_SECONDS` | `10` | |
 | `COLLECTOR_MAX_PLAYLISTS` | `25` | work-queue depth per pass |
 | `COLLECTOR_UID` / `COLLECTOR_GID` | `1000` / `1000` | who the archives end up owned by |
@@ -117,9 +153,16 @@ COLLECTOR_GID=100
 It is deliberately not root. An archive is the only copy of its meeting once the upstream copy is
 released, and a root-owned file cannot be rotated, moved or deleted by whoever owns the share.
 
-Both directories are probed for writability at **startup**, and the collector refuses to run if
-either fails. Nothing is written until parts actually arrive, so without that check a misconfigured
-container looks perfectly healthy right up until the first meeting it was supposed to save.
+Staging is probed for **writability** at startup and the share root for **reachability**, and the
+collector refuses to run if either fails. Nothing is written until parts actually arrive, so
+without that check a misconfigured container looks perfectly healthy right up until the first
+meeting it was supposed to save.
+
+The share is only checked for reachability because nothing writes to its root: archives land
+several directories down, in a show's own library, and which show that is depends on the meeting.
+So write permission is discovered on the first archive of each **show** rather than at startup —
+safely, since a failed write leaves the upstream copy alone and the next pass retries, but later.
+A show being recorded for the first time is the moment to watch the logs.
 
 **Changing the uid on an existing deployment needs the staging volume recreated.** A named volume
 keeps the ownership it was created with, so it stays root-owned from before and the new uid cannot

@@ -53,6 +53,18 @@ class MuxFailed(CollectorError):
     """ffmpeg refused to combine the two streams."""
 
 
+class ArchiveDirectoryMissing(CollectorError):
+    """The show's recording directory is not on the share, and this side must not create it.
+
+    A show's directory tree is made by the studio, with the ownership and permissions the studio
+    means it to have. The first recording for a new show therefore waits for a person; every one
+    after it just works, because only the dated directory below is created here.
+
+    Distinct from its siblings because it is the one failure that will never clear by retrying,
+    which is why it is the one reported back to DNA for the player to show.
+    """
+
+
 class CollectionFailed(CollectorError):
     """This pass cannot continue, but nothing is wrong that a later pass will not resolve.
 
@@ -192,6 +204,10 @@ class CollectorClient(Protocol):
     ) -> dict[str, Any]: ...
     async def delete_upstream(self, playlist_id: int) -> dict[str, Any]: ...
     async def get_cuts(self, playlist_id: int) -> dict[str, Any]: ...
+    async def get_archive_path(
+        self, playlist_id: int, suffix: str = ""
+    ) -> dict[str, Any]: ...
+    async def report_blocked(self, playlist_id: int, reason: str) -> dict[str, Any]: ...
     async def upload_poster(
         self, playlist_id: int, version_id: int, filename: str, image: bytes
     ) -> dict[str, Any]: ...
@@ -313,13 +329,22 @@ class RecordingCollector:
         self.archive_root = archive_root
         self.ffmpeg_path = ffmpeg_path
         self._run_ffmpeg = run_ffmpeg or _run_ffmpeg_subprocess
+        # What has already been reported to DNA, so a blocked playlist is not re-posted every
+        # ten seconds for as long as it stays blocked. Deliberately in memory: a restart
+        # re-reporting once is harmless, and is the right behaviour if DNA was the thing down.
+        self._reported: dict[int, str] = {}
 
     # -- paths ----------------------------------------------------------------------------------
 
-    # Every path is scoped by RECORDING, not just playlist. A playlist outlives any one meeting,
-    # so playlist-only names made the second meeting collide with the first: staging resumed the
-    # wrong byte stream, and the archive silently overwrote a file whose upstream copy had
-    # already been released — destroying the only remaining copy.
+    # Every STAGING path is scoped by RECORDING, not just playlist. A playlist outlives any one
+    # meeting, so playlist-only names made the second meeting collide with the first: staging
+    # resumed the wrong byte stream, and the archive silently overwrote a file whose upstream
+    # copy had already been released — destroying the only remaining copy.
+    #
+    # The ARCHIVE is named by DNA instead (archive_destination below), from the show and the
+    # meeting's start clock. Those are facts about the meeting rather than ids, so the same
+    # collision cannot come back through them — two recordings of one playlist a minute apart is
+    # the only overlap, and that is handled where it is discovered.
     def _scope(self, playlist_id: int, recording_id: Optional[int]) -> str:
         return (
             f"{playlist_id}-{recording_id}"
@@ -342,12 +367,66 @@ class RecordingCollector:
             self.staging_dir, f"{self._scope(playlist_id, recording_id)}.state.json"
         )
 
-    def archive_path(self, playlist_id: int, recording_id: Optional[int] = None) -> str:
-        if recording_id is None:
-            return os.path.join(self.archive_root, f"playlist-{playlist_id}.mp4")
-        return os.path.join(
-            self.archive_root, f"playlist-{playlist_id}-rec{recording_id}.mp4"
-        )
+    async def archive_destination(
+        self, playlist_id: int, recording_id: Optional[int] = None
+    ) -> tuple[str, str]:
+        """Where this recording is filed, as (relative path, absolute path).
+
+        DNA names it — see ``ArchiveDestinationService``. This side supplies only the root, which
+        is the one part of the path that is a fact about this host.
+
+        A destination that already exists is NOT overwritten and NOT quietly renamed here: DNA is
+        asked again for a name carrying the recording id. The file already there may be the only
+        copy of a meeting, since the upstream is released the moment an archive is recorded, and
+        two recordings of one playlist within the same minute is the only way to reach this.
+        """
+        try:
+            answer = await self.client.get_archive_path(playlist_id)
+            relative = answer["relative_path"]
+        except Exception as e:
+            # Retryable, and nothing is lost by waiting: the upstream copy is intact and the
+            # staged bytes survive. Archiving under some fallback name would be worse — the file
+            # would land where nobody looks for it, under a name nothing can later reconcile.
+            raise CollectionFailed(
+                f"Playlist {playlist_id}: DNA cannot say where to archive this recording ({e})"
+            )
+        absolute = os.path.join(self.archive_root, relative)
+        self.require_archive_directory(playlist_id, relative)
+        if os.path.exists(absolute) and recording_id is not None:
+            answer = await self.client.get_archive_path(
+                playlist_id, suffix=f"_rec{recording_id}"
+            )
+            relative = answer["relative_path"]
+            absolute = os.path.join(self.archive_root, relative)
+            logger.warning(
+                "Playlist %s: archive name was already taken — filing this recording as %s",
+                playlist_id,
+                relative,
+            )
+        return relative, absolute
+
+    def require_archive_directory(self, playlist_id: int, relative: str) -> None:
+        """The show's `.../dna` directory must already exist. Only the DATED one is created here.
+
+        Deliberately not `makedirs` all the way up. Everything above the dated directory is part
+        of the show's own tree — made by the studio, owned and permissioned the way the studio
+        means it to be — and a directory this process invents there would be owned by the
+        collector's uid, in a place people expect the studio's layout. It would also hide the
+        real problem: a share that is not mounted, or a show nobody has set up for recording,
+        both look exactly like a missing directory, and silently creating one turns either into
+        a recording filed where no one will look for it.
+
+        So the first recording for a new show waits for a person, once. After that this passes
+        and the dated directory is made per meeting.
+        """
+        parent = os.path.dirname(os.path.join(self.archive_root, relative))
+        show_directory = os.path.dirname(parent)
+        if not os.path.isdir(show_directory):
+            raise ArchiveDirectoryMissing(
+                f"{os.path.dirname(os.path.dirname(relative))} does not exist on the recordings "
+                f"share. It has to be created once, by hand, before recordings for this show can "
+                f"be filed — everything below it is made automatically."
+            )
 
     # -- state ----------------------------------------------------------------------------------
 
@@ -567,11 +646,14 @@ class RecordingCollector:
         else:
             os.replace(video, out)
 
-        destination = self.archive_path(playlist_id, recording_id)
+        relative, destination = await self.archive_destination(
+            playlist_id, recording_id
+        )
         os.makedirs(os.path.dirname(destination), exist_ok=True)
-        # Never write over an existing archive. The name now carries the recording id so this
-        # should be unreachable, but the failure it guards is unrecoverable: the upstream copy is
-        # released right after archiving, so an overwrite destroys the only remaining copy.
+        # Never write over an existing archive. archive_destination has already asked for a
+        # distinguishing name if the first one was taken, so this should be unreachable — but the
+        # failure it guards is unrecoverable: the upstream copy is released right after
+        # archiving, so an overwrite destroys the only remaining copy.
         if os.path.exists(destination):
             raise CollectorError(
                 f"Playlist {playlist_id}: {destination} already exists — refusing to overwrite "
@@ -591,16 +673,17 @@ class RecordingCollector:
                 f"not {digest} — refusing to record it or release upstream"
             )
 
-        # The FILENAME, not the path. DNA needs to know a durable copy exists and what it is
-        # called; where this host keeps it is local knowledge, and this side of the airgap holds
-        # the only copy of the media. The full path stays in the local state file below, which is
-        # where the resume logic needs it.
+        # The path RELATIVE to the share root, not the absolute one. DNA needs to find the file
+        # under the root nginx serves; where THIS host mounts that root is local knowledge, and
+        # this side of the airgap holds the only copy of the media. The absolute path stays in
+        # the local state file below, which is where the resume logic needs it.
         await self.client.record_archive(
             playlist_id,
-            os.path.basename(destination),
+            relative,
             digest,
             recording_id=recording_id,
         )
+        self._reported.pop(playlist_id, None)
         state.archived_path, state.archived_sha256 = destination, digest
         state.complete = True
         self.save_state(state)
@@ -622,6 +705,7 @@ class RecordingCollector:
         return {
             "playlist_id": playlist_id,
             "network_path": destination,
+            "relative_path": relative,
             "sha256": digest,
             "audio_delay_ms": audio_delay_ms,
             "audio_delay_source": delay_source,
@@ -683,10 +767,14 @@ class RecordingCollector:
 
         badge = self.badge_path()
         lead = poster_lead_seconds()
+        # Beside the archive, in its show's dated directory — not in the share root, which is now
+        # the top of a tree of shows and belongs to nobody. A poster is a derivative of that one
+        # file and travels with it.
+        archive_dir = os.path.dirname(archive)
         written: dict[int, str] = {}
         for version_id, video_in, video_out in spans:
             name = poster_filename(archive, version_id)
-            destination = os.path.join(self.archive_root, name)
+            destination = os.path.join(archive_dir, name)
             at = poster_time_seconds(video_in, video_out, lead)
             try:
                 command = build_poster_command(
@@ -719,9 +807,26 @@ class RecordingCollector:
                 "Playlist %s: %d poster frame(s) written to %s",
                 state.playlist_id,
                 len(written),
-                self.archive_root,
+                archive_dir,
             )
         return written
+
+    async def report_blocked(self, playlist_id: int, reason: str) -> None:
+        """Tell DNA why this playlist is stuck, once, so the player can say so.
+
+        Failures here are swallowed. This is an explanation of a problem, not part of the custody
+        chain — losing the message must not turn a stalled collection into a raised exception
+        that hides which one it was.
+        """
+        if self._reported.get(playlist_id) == reason:
+            return
+        try:
+            await self.client.report_blocked(playlist_id, reason)
+            self._reported[playlist_id] = reason
+        except Exception as e:
+            logger.warning(
+                "Playlist %s: could not report why it is blocked (%s)", playlist_id, e
+            )
 
     async def poll_once(self, playlist_id: int) -> dict[str, Any]:
         """One pass for one playlist: mirror what is new, and finish if the recording is done.
@@ -752,7 +857,14 @@ class RecordingCollector:
                 "appended": appended,
                 "bytes": state.bytes_written,
             }
-        result = await self.finalize(state)
+        try:
+            result = await self.finalize(state)
+        except ArchiveDirectoryMissing as e:
+            # The one failure that will not clear by retrying, so it is the one a person is told
+            # about. Re-raised afterwards: this pass still failed, and nothing has been archived
+            # or deleted.
+            await self.report_blocked(playlist_id, str(e))
+            raise
         # After finalize, never inside it: the archive is recorded and the upstream copy released
         # by the time this runs, so a thumbnailer that cannot reach DNA, cannot read the cut list
         # or cannot run ffmpeg costs a picture and nothing else.

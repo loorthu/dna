@@ -63,9 +63,11 @@ Roughly in order of how likely each is to bite:
    builds on prod (`PIP_INDEX_URL` → Artifactory) or be carried in via
    `save.sh`/`load.sh`.
 3. **Mount permissions and path identity.** `RECORDING_NETWORK_PATH` is used *inside*
-   the collector, *inside* nginx, and is recorded in Mongo as the file's location. All
-   three must be the same string. The collector writes as root in-container; nginx must
-   be able to read what it wrote.
+   the collector, *inside* nginx, and is the root the path recorded in Mongo is relative
+   to. All three must be the same string. The collector writes as root in-container;
+   nginx must be able to read what it wrote. Note the collector no longer writes to that
+   root itself — it writes several directories down, per show, so the permission that
+   matters is on `<show>/lib.recording/pix/ref/dna/`.
 4. **Link characteristics** — bandwidth and stability for ~200–400 MB per meeting.
 5. **Clock agreement** between the Vexa host and meeting-api (see above).
 
@@ -101,7 +103,8 @@ essentials:
   `PIP_INDEX_URL`/`PIP_TRUSTED_HOST` at Artifactory.
 - **`RECORDING_NETWORK_PATH`** must be set in `docker/airgap/.env` to the real mount
   before anything starts. It defaults to `./recordings`, which is fine for a laptop and
-  wrong for prod.
+  wrong for prod, where it is **`/shots`** — the ROOT of the show tree, not a directory
+  of recordings. See *Where recordings are filed* below.
 - The collector talks to the backend **directly**, not through this host's nginx: it is
   a server-side client, so there is no single-origin requirement and no reason to add a
   proxy hop to several hundred MB per meeting.
@@ -602,3 +605,97 @@ been missing the whole time because nothing had asked for it.
   `RecordingReadiness.tsx` says it was factored so Publish could adopt it.
 - Note failures are `print`ed and counted, never surfaced with a reason — watch the backend log on
   the first live run.
+
+---
+
+## Where recordings are filed on the share (2026-09-02)
+
+Archives used to be one flat directory of `playlist-<id>-rec<n>.mp4`, with DNA keeping the bare
+filename and nginx aliasing `/recordings/` onto that directory. They now go where the people who
+were in the meeting already look:
+
+```
+/shots/<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist>_<start>_Recording.mp4
+/shots/nite/lib.recording/pix/ref/dna/20260901/NITE_Director_Review_2026_09_01_13_52_PDT_Recording.mp4
+```
+
+Only `/shots` is configuration (`RECORDING_NETWORK_PATH`); everything after it is derived.
+
+**DNA names the file, and the collector writes it.** That split is forced: the show is the
+project's `tank_name` and the name is the playlist's `code`, both of which live in ShotGrid, which
+the airgapped side has no route to. So the collector asks `GET /recordings/{playlist_id}/archive-path`
+and supplies nothing but the root. The rule itself is a pure function in
+`dna/recording_archive_path.py`, exercised in the backend suite where there is no share to write to.
+
+If DNA cannot answer — ShotGrid down, no playlist name, no start clock — the recording is **not**
+archived under a fallback name. The pass fails, both copies stay put, the next pass retries. A file
+that landed somewhere nobody looks, under a name nothing can reconcile, is worse than a wait.
+
+**The date directory and the timestamp are the meeting's, in studio-local time**, not the
+archiver's. It reads correctly (`13_52_PDT` is when it happened to the people in the room) and,
+more importantly, it is stable: the collector re-derives the destination when it resumes, and a
+directory that moved with the calendar would send a restarted collection somewhere the earlier pass
+had not written.
+
+### What this changed elsewhere, and the two things to watch
+
+- **DNA now stores the path relative to the share root**, not a basename — the show and the date
+  are part of the file's address. It still refuses anything absolute or containing a traversal;
+  what it deliberately no longer does is flatten the value, which used to be the guard.
+  *This reverses the earlier decision to keep only the filename.* The reasoning behind that one
+  still holds for the **mount point**, which is still not recorded; what is recorded is the part
+  below it, which nginx needs to serve the file at all.
+- **nginx aliases `/recordings/` onto the share ROOT**, so the URL carries the whole relative path.
+  That would otherwise mean publishing `/shots` over HTTP, so the location is a **regex restricted
+  to `.mp4` and `.jpg`** — the rest of a show tree is not reachable even though it sits under the
+  same alias. A plain-prefix `location /recordings/ { return 404; }` sits behind it so a non-media
+  URL 404s instead of falling through to the SPA and answering a `<video src>` with 200 and HTML.
+  Never write that guard as `^~`: a `^~` prefix match preempts regex locations and would take the
+  recordings with it.
+- **Rows written before this hold a bare filename** and no longer resolve, since nginx now aliases
+  a different root. They are recordings from the test deployments; nothing migrates them.
+- **The collector's startup check on the share weakened.** It used to write a probe file into
+  `RECORDING_NETWORK_PATH`; nothing writes to the root of a show tree, so it now only checks the
+  root is there and can be descended into. See *A show's first recording* below for what replaced
+  the rest of it.
+- **Two meetings on one playlist within the same minute** would claim one name. The collector does
+  not rename the file itself: it asks DNA again with a `_rec<id>` suffix, so the name still comes
+  from one place. With no recording id there is nothing to disambiguate with, and the archive is
+  refused rather than written over.
+- **Posters land beside their recording** in the dated directory, not in the share root.
+
+
+### A show's first recording needs a directory made by hand
+
+`<show>/lib.recording/pix/ref/dna` is **not** created by the collector. Everything above the dated
+directory is part of the show's own tree — made by the studio, owned and permissioned the way the
+studio means it to be — and a directory this process invented there would be owned by the
+collector's uid, in a place people expect the studio's layout. It would also paper over the two
+failures that look identical to a missing directory: a share that did not mount, and a show nobody
+has set up for recording. Either one, silently created, becomes a recording filed where nobody
+will look for it.
+
+So the first recording for a new show **waits for a person, once**:
+
+```sh
+mkdir -p /shots/<show>/lib.recording/pix/ref/dna
+```
+
+Everything below that is automatic — the collector makes the `YYYYMMDD` directory per meeting.
+
+**The wait is visible, not silent.** The collector reports the reason to DNA
+(`POST /recordings/{playlist_id}/blocked`), which holds it on the playlist and answers the cut
+list with a new status, `blocked`, plus `status_detail`. The coordinator's player shows the
+detail, because naming the directory is the only part anyone can act on; the artist review page
+deliberately does **not** — it says the recording is safe and coming, since that reader has never
+seen the share and cannot create anything on it. Both keep polling, so the video appears on its
+own once someone runs the `mkdir`.
+
+Nothing is lost while it waits. No archive is recorded and no upstream copy is released, so the
+media stays in Vexa and the next pass collects it normally. The reason is posted **once** per
+playlist rather than every ten seconds, logged loudly the first time and quietly after, and
+cleared automatically when an archive is finally recorded.
+
+`blocked` is deliberately narrow: only for what a retry will never clear. Every other failure is
+transient and stays silent, because a reason that appears and clears by itself would flicker in
+front of a viewer who can do nothing with it either way.

@@ -197,6 +197,23 @@ class EmailNotesRequest(BaseModel):
     sent_by: str = Field(description="Display name or email of the person sending")
 
 
+class RecordingBlockedRequest(BaseModel):
+    """The collector reporting that it cannot archive a recording without someone acting.
+
+    Only for what a retry will never clear on its own — today, a show whose recording directory
+    does not exist on the share. Transient failures are retried silently; a reason that appears
+    and clears by itself would flicker in front of a viewer who can do nothing with it.
+    """
+
+    reason: str = Field(
+        ...,
+        max_length=500,
+        description="What is wrong, in words the person who can fix it will recognise. Shown in "
+        "the player, so it names the directory relative to the share root rather than the "
+        "archiving host's absolute path.",
+    )
+
+
 class RecordingArchiveRequest(BaseModel):
     """The collector declaring where it durably archived a playlist's recording.
 
@@ -206,10 +223,12 @@ class RecordingArchiveRequest(BaseModel):
 
     network_path: str = Field(
         ...,
-        description="Filename of the archived media on the share. An absolute path is accepted "
-        "and reduced to its basename: DNA needs to know the copy exists and what it is called, "
-        "not where the archiving host keeps it — that host is across the airgap and holds the "
-        "only copy, so its layout should not be recorded here.",
+        description="Path of the archived media RELATIVE to the share root, as "
+        "GET /recordings/{playlist_id}/archive-path named it — "
+        "`<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<name>.mp4`. Not absolute: the mount point "
+        "belongs to the archiving host, which is across the airgap and holds the only copy, so "
+        "its layout should not be recorded here. An absolute path is still accepted from an "
+        "older collector and reduced to its basename.",
     )
     sha256: str = Field(..., description="sha256 of the archived file")
     recording_id: Optional[int] = Field(

@@ -44,13 +44,18 @@ def recording_playback_enabled() -> bool:
 def media_url_for(network_path: Optional[str]) -> Optional[str]:
     """The URL nginx serves the archived file at, or None if there is no file.
 
-    nginx aliases `/recordings/` onto RECORDING_NETWORK_PATH, so the URL is the basename under
-    that prefix — the browser never learns the share's real path, and never needs to: it plays a
-    plain <video src> off this origin, which is what makes native Range seeking work.
+    nginx aliases `/recordings/` onto RECORDING_NETWORK_PATH — the share ROOT — so the URL is
+    simply the stored relative path under that prefix. The browser never learns where the share
+    is mounted, and never needs to: it plays a plain <video src> off this origin, which is what
+    makes native Range seeking work.
+
+    Rows written before the archives were filed by show and date hold a bare filename, which
+    still reads correctly here; whether it still RESOLVES depends on the root nginx now aliases,
+    and for those it does not. They are recordings from before the layout existed.
     """
     if not network_path:
         return None
-    return f"/recordings/{os.path.basename(network_path)}"
+    return f"/recordings/{network_path.lstrip('/')}"
 
 
 class RecordingCutsService:
@@ -76,6 +81,16 @@ class RecordingCutsService:
 
         network_path = metadata.recording_network_path
         if not network_path:
+            # A collection that cannot finish without a person — today, a show whose recording
+            # directory is not on the share. Answered ahead of the upstream index because it is
+            # not a wait: repeating "still being collected" would be true and useless, and the
+            # detail is the only part anyone can act on.
+            if metadata.recording_archive_error:
+                return self._empty(
+                    "blocked",
+                    playlist_id,
+                    status_detail=metadata.recording_archive_error,
+                )
             # No archive yet. Whether that is "still recording" or "waiting on the collector"
             # is answered by the upstream recording: it exists and is incomplete while the bot
             # is still uploading, and complete once the collector's turn has come.
@@ -132,6 +147,7 @@ class RecordingCutsService:
         return {
             "playlist_id": playlist_id,
             "status": "ready",
+            "status_detail": None,
             "media_url": media_url_for(network_path),
             "duration_seconds": metadata.recording_duration_seconds,
             "recording_t0": t0.isoformat(),
@@ -188,10 +204,12 @@ class RecordingCutsService:
         *,
         media_url: Optional[str] = None,
         duration_seconds: Optional[float] = None,
+        status_detail: Optional[str] = None,
     ) -> dict[str, Any]:
         return {
             "playlist_id": playlist_id,
             "status": status,
+            "status_detail": status_detail,
             "media_url": media_url,
             "duration_seconds": duration_seconds,
             "recording_t0": None,

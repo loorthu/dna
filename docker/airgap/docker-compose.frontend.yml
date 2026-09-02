@@ -48,14 +48,15 @@ services:
       # The default is a dead local port — Follow Along's session picker is
       # simply unavailable until a site points this at its own directory.
       - REVIEW_SESSIONS_URL=${REVIEW_SESSIONS_URL:-http://127.0.0.1:9}
-      # Where the archived recordings are mounted; nginx aliases /recordings/ here.
+      # The share ROOT the recordings are filed under; nginx aliases /recordings/
+      # here and the URL carries the rest (<show>/.../<date>/<name>.mp4).
       # Substituted into default.conf.template at container start, like BACKEND_URL.
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
     volumes:
       # The archived recordings, served straight off the share by nginx (see
       # default.conf.template). Read-only: the collector writes them, this only
-      # reads. Same path inside both containers so a network_path recorded by
-      # the collector is the same string nginx resolves.
+      # reads. Same path inside both containers so the root a network_path is
+      # relative to is the same string nginx resolves.
       - ${RECORDING_NETWORK_PATH:-./recordings}:${RECORDING_NETWORK_PATH:-./recordings}:ro
     restart: unless-stopped
     healthcheck:
@@ -83,7 +84,8 @@ services:
         PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-}
     image: dna-collector:${DNA_TAG:-airgap}
     container_name: dna-collector
-    # The uid:gid archives are written as. It MUST be able to write RECORDING_NETWORK_PATH, and
+    # The uid:gid archives are written as. It MUST be able to write the show directories under
+    # RECORDING_NETWORK_PATH (it creates the dated directory itself), and
     # nginx must be able to read what it writes — so the right value is whoever owns the share,
     # not a number chosen here. Defaults to the image's unprivileged user; set COLLECTOR_UID /
     # COLLECTOR_GID in .env for the real mount. Deliberately not root: an archive is the only copy

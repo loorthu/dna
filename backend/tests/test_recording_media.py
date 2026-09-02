@@ -16,6 +16,8 @@ import pytest
 
 from dna.models.playlist_metadata import PlaylistMetadata
 from dna.recording_media import (
+    ArchiveDestinationService,
+    ArchiveDestinationUnknown,
     ArchiveNotConfirmed,
     ArchiveRecordingMismatch,
     RecordingMediaService,
@@ -249,15 +251,16 @@ async def test_delete_clears_the_link_with_a_flag_not_a_none(storage, provider):
 # ── archiving ───────────────────────────────────────────────────────────────────────────────────
 
 
+ARCHIVE_PATH = "nite/lib.recording/pix/ref/dna/20260901/NITE_Review_2026_09_01_13_52_PDT_Recording.mp4"
+
+
 async def test_record_archive_persists_path_and_hash(storage, provider):
     svc = RecordingMediaService(provider, storage)
-    result = await svc.record_archive(
-        PLAYLIST_ID, "/net/media/dna/460115.mp4", "abc123def456"
-    )
+    result = await svc.record_archive(PLAYLIST_ID, ARCHIVE_PATH, "abc123def456")
 
     update = storage.upsert_playlist_metadata.await_args.args[1]
-    # The name, not the path — see TestTheArchivingHostsLayoutStaysOnThatHost.
-    assert update.recording_network_path == "460115.mp4"
+    # The path relative to the share root — see TestTheArchivingHostsLayoutStaysOnThatHost.
+    assert update.recording_network_path == ARCHIVE_PATH
     assert update.recording_sha256 == "abc123def456"
     assert result["recording_id"] == RECORDING_ID
 
@@ -551,15 +554,29 @@ class TestAMeetingThatWasNotRecorded:
 
 
 class TestTheArchivingHostsLayoutStaysOnThatHost:
-    """Only the filename crosses the airgap.
+    """Only the path BELOW the share root crosses the airgap.
 
-    DNA needs two things about the archive: that it exists (the delete guard) and what it is
-    called (the player's URL). Where the archiving host keeps it is local knowledge — and that
-    host is across the gap holding the only copy of the media, so recording its filesystem layout
-    in a database on the internet side bought nothing and described a secure share.
+    DNA needs two things about the archive: that it exists (the delete guard) and where to find
+    it under the root nginx serves (the player's URL). Where the archiving host MOUNTS that root
+    is local knowledge — and that host is across the gap holding the only copy of the media, so
+    recording its filesystem layout in a database on the internet side bought nothing and
+    described a secure share.
     """
 
+    async def test_a_relative_path_is_kept_whole(self, storage, provider):
+        """The show and the date are the file's address now; a basename would not find it."""
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.record_archive(PLAYLIST_ID, ARCHIVE_PATH, "hash")
+
+        update = storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.recording_network_path == ARCHIVE_PATH
+
     async def test_an_absolute_path_is_reduced_to_its_filename(self, storage, provider):
+        """An older collector, whose flat name is still resolvable the way it always was.
+
+        Reduced rather than stored, so it cannot write the share's real layout in here.
+        """
         svc = RecordingMediaService(provider, storage)
 
         await svc.record_archive(
@@ -577,6 +594,24 @@ class TestTheArchivingHostsLayoutStaysOnThatHost:
 
         update = storage.upsert_playlist_metadata.await_args.args[1]
         assert update.recording_network_path == "playlist-42-rec7.mp4"
+
+    @pytest.mark.parametrize(
+        "path", ["../../etc/passwd", "nite/../../../etc/passwd", "nite//x.mp4", ""]
+    )
+    async def test_a_path_that_could_escape_the_share_root_is_refused(
+        self, storage, provider, path
+    ):
+        """The stored value becomes a URL. Refused rather than normalised — guessing what a
+        malformed one meant is how a player ends up pointed outside the share."""
+        svc = RecordingMediaService(provider, storage)
+
+        with pytest.raises(ValueError, match="not a relative path"):
+            await svc.record_archive(PLAYLIST_ID, path, "hash")
+
+        assert all(
+            call.args[1].recording_network_path is None
+            for call in storage.upsert_playlist_metadata.await_args_list
+        )
 
     async def test_normalising_happens_here_not_in_the_caller(self, storage, provider):
         """An older collector still sending a path must not be able to reintroduce the leak."""
@@ -603,3 +638,184 @@ class TestTheArchivingHostsLayoutStaysOnThatHost:
         await svc.delete_upstream(PLAYLIST_ID)
 
         provider.delete_recording.assert_awaited_once_with(RECORDING_ID)
+
+
+class TestReportingWhyACollectionIsStuck:
+    """A reason is recorded only when a retry will never clear it — otherwise it would flicker."""
+
+    async def test_the_reason_is_held_against_the_playlist(self, storage, provider):
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.report_blocked(
+            PLAYLIST_ID, "nite/lib.recording/pix/ref/dna is missing"
+        )
+
+        update = storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.recording_archive_error == (
+            "nite/lib.recording/pix/ref/dna is missing"
+        )
+
+    async def test_archiving_clears_it(self, storage, provider):
+        """The file is on the share; a stale reason would keep explaining a solved problem."""
+        svc = RecordingMediaService(provider, storage)
+
+        await svc.record_archive(PLAYLIST_ID, ARCHIVE_PATH, "hash")
+
+        update = storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.clear_recording_archive_error is True
+
+
+# ── where the archive goes ──────────────────────────────────────────────────────────────────────
+
+
+class _Entity:
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+
+def _prodtrack(code="NITE_Review", show="nite", project_id=71):
+    """A tracking system that knows one playlist and the show it belongs to."""
+    entities = {
+        ("playlist", PLAYLIST_ID): _Entity(
+            code=code, project={"type": "Project", "id": project_id}
+        ),
+        ("project", project_id): _Entity(code=show, name="Night Show"),
+    }
+
+    class Prodtrack:
+        def get_entity(self, entity_type, entity_id, **_):
+            try:
+                return entities[(entity_type, entity_id)]
+            except KeyError:
+                raise ValueError(f"Entity not found: {entity_type} {entity_id}")
+
+    return Prodtrack()
+
+
+def _destination(storage, provider, prodtrack=None):
+    return ArchiveDestinationService(
+        prodtrack or _prodtrack(), RecordingMediaService(provider, storage)
+    )
+
+
+class TestTheArchivesDestination:
+    """DNA names the file because the collector cannot: the show and the playlist's name live in
+    the tracking system, which the airgapped side has no route to."""
+
+    async def test_the_path_is_built_from_the_show_and_the_meetings_start(
+        self, storage, provider
+    ):
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc="2026-09-01T20:52:03Z",
+            )
+        )
+
+        answer = await _destination(storage, provider).relative_path(PLAYLIST_ID)
+
+        assert answer["relative_path"] == (
+            "nite/lib.recording/pix/ref/dna/20260901/"
+            "NITE_Review_2026_09_01_13_52_PDT_Recording.mp4"
+        )
+        assert answer["show"] == "nite"
+        assert answer["recording_id"] == RECORDING_ID
+
+    async def test_the_show_is_the_projects_tank_name_not_its_title(
+        self, storage, provider
+    ):
+        """tank_name is the name of the project's DIRECTORY. Its title is a different string and
+        would file the recording somewhere that does not exist."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+
+        answer = await _destination(storage, provider).relative_path(PLAYLIST_ID)
+
+        assert answer["relative_path"].startswith("nite/")
+        assert "Night" not in answer["relative_path"]
+
+    async def test_the_suffix_asks_for_a_name_that_is_not_taken(
+        self, storage, provider
+    ):
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+
+        answer = await _destination(storage, provider).relative_path(
+            PLAYLIST_ID, suffix="_rec9"
+        )
+
+        assert answer["relative_path"].endswith("_Recording_rec9.mp4")
+
+    async def test_a_recording_with_no_start_clock_cannot_be_named(
+        self, storage, provider
+    ):
+        """Refused, not defaulted to now: the name would then say a time the meeting was not at,
+        and the date directory would follow it."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+            )
+        )
+        provider.get_recording_master = AsyncMock(
+            return_value={"media_file_id": MEDIA_FILE_ID}
+        )
+
+        with pytest.raises(ArchiveDestinationUnknown, match="no start time"):
+            await _destination(storage, provider).relative_path(PLAYLIST_ID)
+
+    async def test_a_tracking_system_that_cannot_be_reached_is_retryable_not_fatal(
+        self, storage, provider
+    ):
+        """ArchiveDestinationUnknown, which the endpoint answers 409 to — the collector waits and
+        asks again, holding both copies of the media meanwhile."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+
+        class Down:
+            def get_entity(self, *a, **k):
+                raise RuntimeError("ShotGrid unreachable")
+
+        with pytest.raises(ArchiveDestinationUnknown, match="tracking system"):
+            await _destination(storage, provider, Down()).relative_path(PLAYLIST_ID)
+
+    async def test_a_playlist_belonging_to_no_project_has_no_show_to_file_under(
+        self, storage, provider
+    ):
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+        orphan = _prodtrack()
+        orphan_playlist = _Entity(code="NITE_Review", project=None)
+        orphan.get_entity = lambda t, i, **k: (
+            orphan_playlist if t == "playlist" else None
+        )
+
+        with pytest.raises(ArchiveDestinationUnknown, match="belongs to no project"):
+            await _destination(storage, provider, orphan).relative_path(PLAYLIST_ID)

@@ -423,6 +423,12 @@ export type RecordingCutsStatus =
   | 'ready'
   | 'pending'
   | 'archiving'
+  /**
+   * Recorded, but the collector cannot file it without someone acting — today, a show whose
+   * recording directory does not exist on the share. Distinct from `archiving` because no
+   * amount of waiting resolves it, and `status_detail` says what to do.
+   */
+  | 'blocked'
   /** No bot has ever run on this playlist — the state it is in before the first dispatch. */
   | 'no_meeting'
   /** A meeting ran with recording turned off. */
@@ -432,6 +438,8 @@ export type RecordingCutsStatus =
 export interface PlaylistRecordingCuts {
   playlist_id: number;
   status: RecordingCutsStatus;
+  /** Why, when the status alone does not say enough to act on. Only set for `blocked`. */
+  status_detail: string | null;
   /** Served by nginx off the share; null until an archive exists. */
   media_url: string | null;
   duration_seconds: number | null;

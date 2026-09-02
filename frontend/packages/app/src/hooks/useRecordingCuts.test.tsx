@@ -27,7 +27,11 @@ function cuts(status: RecordingCutsStatus): PlaylistRecordingCuts {
   return {
     playlist_id: 42,
     status,
-    media_url: status === 'ready' ? '/recordings/playlist-42-rec7.mp4' : null,
+    status_detail: null,
+    media_url:
+      status === 'ready'
+        ? '/recordings/nite/lib.recording/pix/ref/dna/20260821/NITE_Review_2026_08_21_14_27_PDT_Recording.mp4'
+        : null,
     duration_seconds: status === 'ready' ? 156.4 : null,
     recording_t0: status === 'ready' ? '2026-08-21T21:27:39.777Z' : null,
     recording_t0_source: status === 'ready' ? 'vexa_recorder_clock' : null,
@@ -127,6 +131,13 @@ describe('pollIntervalFor', () => {
       expect(pollIntervalFor(status)).toBe(10_000);
     }
   );
+
+  it('keeps asking while blocked — a person fixing it is the change to notice', () => {
+    // The only polled status that does NOT resolve on its own. It is polled anyway: the moment
+    // someone creates the directory, the next collector pass files the recording, and the tab
+    // should show it without the viewer reloading.
+    expect(pollIntervalFor('blocked')).toBe(10_000);
+  });
 
   it.each<RecordingCutsStatus>([
     'ready',

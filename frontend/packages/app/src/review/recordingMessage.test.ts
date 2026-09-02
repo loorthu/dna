@@ -25,6 +25,7 @@ describe('recordingMessage', () => {
       'no_recording',
       'pending',
       'archiving',
+      'blocked',
       'no_segments',
     ] as const;
     const messages = statuses.map((s) => recordingMessage(s, false));
@@ -35,6 +36,15 @@ describe('recordingMessage', () => {
   it('tells the reader when to come back for one still being made', () => {
     expect(recordingMessage('pending', false)).toMatch(/once it ends/);
     expect(recordingMessage('archiving', false)).toMatch(/minute/);
+  });
+
+  it('does not hand the artist an instruction only an admin can follow', () => {
+    // The coordinator's player names the directory to create. Here that would read as a job for
+    // someone who has never seen the share — so this says the video is safe and coming, and
+    // stops there.
+    const message = recordingMessage('blocked', false) ?? '';
+    expect(message).toMatch(/safe/);
+    expect(message).not.toMatch(/lib\.recording|directory|share root/);
   });
 });
 

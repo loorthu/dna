@@ -10,7 +10,10 @@ Configuration, all via environment:
     DNA_API_URL              where DNA's API answers        (default http://localhost:8000)
     DNA_API_TOKEN            bearer token, if AUTH_PROVIDER is not "none"
     COLLECTOR_STAGING_DIR    scratch space for parts        (default /staging)
-    RECORDING_NETWORK_PATH   the archive root nginx serves  (default /net/media/dna-recordings)
+    RECORDING_NETWORK_PATH   the share ROOT nginx serves    (default /net/media/dna-recordings)
+                             Recordings are filed beneath it as
+                             <show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<name>.mp4, which DNA
+                             names — this only supplies the root.
     COLLECTOR_POLL_SECONDS   seconds between passes         (default 10)
     COLLECTOR_MAX_PLAYLISTS  work-queue depth per pass       (default 25)
     COLLECTOR_SITE           which side's recordings to collect; unset = the unrouted ones
@@ -30,6 +33,7 @@ import httpx
 sys.path.insert(0, "/app")
 
 from dna.recording_collector import (  # noqa: E402
+    ArchiveDirectoryMissing,
     CollectorError,
     RecordingCollector,
 )
@@ -120,6 +124,29 @@ class DnaCollectorClient:
         response.raise_for_status()
         return response.json()
 
+    async def get_archive_path(
+        self, playlist_id: int, suffix: str = ""
+    ) -> dict[str, Any]:
+        # WHERE this recording is filed, decided on the DNA side. The name is built from the show
+        # and the playlist's name, which live in the tracking system that only DNA can reach —
+        # this side supplies the mount point and nothing else.
+        params = {"suffix": suffix} if suffix else {}
+        response = await self.client.get(
+            f"/recordings/{playlist_id}/archive-path", params=params
+        )
+        response.raise_for_status()
+        return response.json()
+
+    async def report_blocked(self, playlist_id: int, reason: str) -> dict[str, Any]:
+        # Why this recording cannot be filed, for the player to show. Only for what a person has
+        # to act on — a missing show directory — never for the transient failures every pass
+        # retries anyway.
+        response = await self.client.post(
+            f"/recordings/{playlist_id}/blocked", json={"reason": reason}
+        )
+        response.raise_for_status()
+        return response.json()
+
     async def get_cuts(self, playlist_id: int) -> dict[str, Any]:
         # Where each version was discussed, which is where the poster frames are taken from.
         # Asked for AFTER the archive is recorded, so the answer is `ready` rather than
@@ -166,9 +193,9 @@ def resolve_ffmpeg() -> str:
 
 
 def _require_writable(path: str, setting: str) -> None:
-    """Refuse to start unless the directories can actually be written.
+    """Refuse to start unless the staging directory can actually be written.
 
-    Both are mounts owned by the host, and the uid this runs as is a deployment choice — so "can I
+    It is a mount owned by the host, and the uid this runs as is a deployment choice — so "can I
     write here" is settled outside this image and is exactly the sort of thing that is right on one
     host and wrong on the next.
 
@@ -191,6 +218,36 @@ def _require_writable(path: str, setting: str) -> None:
         )
 
 
+def _require_reachable(path: str, setting: str) -> None:
+    """Refuse to start unless the share root is there to be descended into.
+
+    Only reachability, not writability — the root is the top of the studio's show tree and nothing
+    writes to it. Archives land several directories down, in a show's own library, and WHICH show
+    is not known until a meeting has been collected. So a write probe here would either fail on a
+    correctly configured host or, worse, pass by leaving a file at the top of the share.
+
+    What that costs is the startup answer to "can this host archive anything at all"; the write
+    permission that used to be settled here is now discovered on the first archive of each show. It
+    is discovered safely — a failed write is a CollectorError, the upstream copy is untouched and
+    the next pass retries — but it is discovered later, and a new show is the moment to watch.
+
+    An unmounted share is still caught here, which is the failure this check existed for: the
+    mount silently missing looks identical to a quiet week until a meeting is lost.
+    """
+    if not os.path.isdir(path):
+        raise SystemExit(
+            f"{setting}={path} is not a directory. It is the ROOT the archives are filed under "
+            f"(<show>/lib.recording/pix/ref/dna/<date>/), so it must be the real mount — an "
+            f"absent one usually means the share is not mounted in this container."
+        )
+    if not os.access(path, os.R_OK | os.X_OK):
+        raise SystemExit(
+            f"{setting}={path} cannot be read as uid {os.getuid()}:{os.getgid()}. The collector "
+            f"has to descend into each show's directory to file its recording: set COLLECTOR_UID/"
+            f"COLLECTOR_GID to an account with access to the share."
+        )
+
+
 async def run_forever() -> None:
     base_url = os.environ.get("DNA_API_URL", "http://localhost:8000")
     staging = os.environ.get("COLLECTOR_STAGING_DIR", "/staging")
@@ -201,7 +258,7 @@ async def run_forever() -> None:
 
     os.makedirs(staging, exist_ok=True)
     _require_writable(staging, "COLLECTOR_STAGING_DIR")
-    _require_writable(archive, "RECORDING_NETWORK_PATH")
+    _require_reachable(archive, "RECORDING_NETWORK_PATH")
 
     client = DnaCollectorClient(base_url, os.environ.get("DNA_API_TOKEN"))
     collector = RecordingCollector(
@@ -267,6 +324,15 @@ async def run_forever() -> None:
                         quiet.add(playlist_id)
                 else:
                     logger.error("Playlist %s: %s", playlist_id, e)
+            except ArchiveDirectoryMissing as e:
+                # Waiting on a person, not on a retry, so it is said ONCE per playlist rather
+                # than every ten seconds for however long it takes someone to read it. Loud the
+                # first time: this is the message that tells them what to create.
+                if playlist_id not in quiet:
+                    logger.error(
+                        "Playlist %s: %s Retrying quietly until it appears.", playlist_id, e
+                    )
+                    quiet.add(playlist_id)
             except CollectorError as e:
                 # Every one of these leaves the upstream copy intact by construction, so the next
                 # pass simply tries again.

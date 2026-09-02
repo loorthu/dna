@@ -77,9 +77,17 @@ function formatSpan(cut: RecordingCut): string {
  */
 function emptyMessage(
   status: PlaylistRecordingCuts['status'],
-  hasVersionCuts: boolean
+  hasVersionCuts: boolean,
+  detail?: string | null
 ): string | null {
   switch (status) {
+    case 'blocked':
+      // The only status whose text comes from the back end. The useful part is WHICH directory
+      // is missing, which this side cannot know — and it is the one message here that names
+      // something the reader is expected to go and do.
+      return detail
+        ? `The recording cannot be saved: ${detail}`
+        : 'The recording cannot be saved to the share. It is kept safe meanwhile and appears here once that is fixed.';
     case 'no_meeting':
       // Not a verdict on anything — the playlist simply has no meeting yet. Saying "not recorded"
       // here told someone who was about to record a meeting that their recording would not happen.
@@ -156,7 +164,7 @@ export function VirtualCutPlayer({
     return <Empty>Could not load the recording: {error.message}</Empty>;
   if (!data) return <Empty>No recording information for this playlist.</Empty>;
 
-  const message = emptyMessage(data.status, cuts.length > 0);
+  const message = emptyMessage(data.status, cuts.length > 0, data.status_detail);
   if (message) return <Empty>{message}</Empty>;
   if (!data.media_url)
     return <Empty>The recording has no playable media yet.</Empty>;

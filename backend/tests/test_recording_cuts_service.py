@@ -25,7 +25,10 @@ VERSION_ID = 5701144
 # The real anchor and duration from the 2026-08-21 meeting this was validated against.
 T0 = "2026-08-21T21:27:39.777Z"
 DURATION = 156.4
-ARCHIVE = "/net/media/dna-recordings/playlist-461350-rec619075238345.mp4"
+ARCHIVE = (
+    "nite/lib.recording/pix/ref/dna/20260821/"
+    "NITE_Director_Review_2026_08_21_14_28_PDT_Recording.mp4"
+)
 
 
 # A cut is a period the version was under review, so the tests need the mark's timeline. This one
@@ -101,8 +104,10 @@ class TestTheReadyAnswer:
         assert round(cut["video_in_seconds"], 3) == 61.155
         assert round(cut["video_out_seconds"], 3) == 62.179
 
-    async def test_media_url_hides_the_share_path(self, storage, provider):
-        """The browser plays it off this origin; it never learns where the share really is."""
+    async def test_media_url_hides_where_the_share_is_mounted(self, storage, provider):
+        """The browser plays it off this origin. It sees the show and the date — that is the
+        file's address under the root nginx serves — but never where that root really is.
+        """
         storage.get_segments_for_playlist.return_value = [
             _segment("a", "2026-08-21T21:28:40.932Z", "2026-08-21T21:28:41.956Z")
         ]
@@ -110,8 +115,8 @@ class TestTheReadyAnswer:
 
         result = await svc.build(PLAYLIST_ID)
 
-        assert result["media_url"] == "/recordings/playlist-461350-rec619075238345.mp4"
-        assert "/net/media" not in result["media_url"]
+        assert result["media_url"] == f"/recordings/{ARCHIVE}"
+        assert "/shots" not in result["media_url"]
 
     async def test_each_version_is_reported_separately(self, storage, provider):
         """A meeting covers several versions; each gets its own spans and its own hash."""
@@ -214,7 +219,7 @@ class TestTheFiveWaysThereIsNothingToPlay:
         result = await svc.build(PLAYLIST_ID)
 
         assert result["status"] == "no_segments"
-        assert result["media_url"] == "/recordings/playlist-461350-rec619075238345.mp4"
+        assert result["media_url"] == f"/recordings/{ARCHIVE}"
         assert result["versions"] == []
 
     async def test_an_unreachable_upstream_does_not_claim_there_is_no_recording(
@@ -285,12 +290,75 @@ class TestARecordingWithNoUsableAnchor:
         assert result["recording_t0"] is None
 
 
+class TestACollectionThatNeedsSomebody:
+    """`blocked` exists because "still being collected", repeated forever, is true and useless.
+
+    A recording the collector cannot file — today, a show with no recording directory on the
+    share — is not a wait. Reporting it as one hides the single fact that would resolve it.
+    """
+
+    async def test_the_reason_is_reported_instead_of_another_wait(
+        self, storage, provider
+    ):
+        storage.get_playlist_metadata.return_value = _metadata(
+            recording_network_path=None,
+            recording_archive_error="nite/lib.recording/pix/ref/dna does not exist",
+        )
+        svc = RecordingCutsService(provider, storage)
+
+        result = await svc.build(PLAYLIST_ID)
+
+        assert result["status"] == "blocked"
+        assert result["status_detail"] == (
+            "nite/lib.recording/pix/ref/dna does not exist"
+        )
+        assert result["media_url"] is None
+
+    async def test_it_is_answered_without_asking_the_upstream_index(
+        self, storage, provider
+    ):
+        """Nothing about the upstream copy can change this answer, so nothing asks it."""
+        storage.get_playlist_metadata.return_value = _metadata(
+            recording_network_path=None, recording_archive_error="no directory"
+        )
+        svc = RecordingCutsService(provider, storage)
+
+        await svc.build(PLAYLIST_ID)
+
+        provider.list_recording_chunks.assert_not_called()
+
+    async def test_an_archive_that_landed_wins_over_a_stale_reason(
+        self, storage, provider
+    ):
+        """The reason is cleared when an archive is recorded; a row that somehow kept both is
+        answered by the file, which is the thing the viewer wanted."""
+        storage.get_playlist_metadata.return_value = _metadata(
+            recording_network_path=ARCHIVE,
+            recording_archive_error="no directory",
+        )
+        storage.get_segments_for_playlist.return_value = []
+        svc = RecordingCutsService(provider, storage)
+
+        result = await svc.build(PLAYLIST_ID)
+
+        assert result["status"] != "blocked"
+        assert result["media_url"] == f"/recordings/{ARCHIVE}"
+
+
 class TestMediaUrl:
     def test_none_when_there_is_no_archive(self):
         assert media_url_for(None) is None
 
-    def test_serves_from_the_nginx_prefix(self):
-        assert media_url_for("/anywhere/at/all/file.mp4") == "/recordings/file.mp4"
+    def test_serves_the_stored_path_from_the_nginx_prefix(self):
+        """nginx aliases /recordings/ onto the share ROOT, so the whole relative path travels."""
+        assert media_url_for(ARCHIVE) == f"/recordings/{ARCHIVE}"
+
+    def test_a_pre_layout_filename_still_reads_as_a_url(self):
+        """Rows from before the archives were filed by show and date. They still form a URL; it
+        no longer RESOLVES, because nginx now aliases a different root."""
+        assert (
+            media_url_for("playlist-42-rec7.mp4") == "/recordings/playlist-42-rec7.mp4"
+        )
 
 
 class TestAMeetingThatWasNotRecorded:

@@ -71,11 +71,12 @@ class PlaylistMetadataUpdate(BaseModel):
     )
     recording_network_path: Optional[str] = Field(
         default=None,
-        description="The archived file's NAME on the share — not its path, despite the field's "
-        "name, which predates the change and is kept to avoid migrating live records. Its "
-        "presence is what permits deleting the upstream copy; the player turns it into a URL "
-        "under /recordings/. Rows written before this may still hold a full path, which reads "
-        "back the same way because only the basename was ever used.",
+        description="The archived file's path RELATIVE to the share root — "
+        "`<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<name>.mp4`. Never absolute: the mount point "
+        "belongs to the archiving host across the airgap. Its presence is what permits deleting "
+        "the upstream copy; the player turns it into a URL under /recordings/, which nginx "
+        "aliases onto that same root. Rows written before the archives were filed by show and "
+        "date hold a bare filename instead, and no longer resolve under the new root.",
     )
     recording_sha256: Optional[str] = Field(
         default=None,
@@ -98,6 +99,21 @@ class PlaylistMetadataUpdate(BaseModel):
         description="The meeting vexa_recording_id/recording_media_file_id were resolved for. "
         "The cache is only trusted while this matches vexa_meeting_id — otherwise a playlist "
         "whose collection never finished would keep serving the PREVIOUS meeting's recording.",
+    )
+    recording_archive_error: Optional[str] = Field(
+        default=None,
+        description="Why the collector cannot archive this recording, in the collector's own "
+        "words, when the reason needs a PERSON rather than another attempt — today that means "
+        "the show's recording directory does not exist on the share.\n\n"
+        "Recorded so the wait has a reason attached to it. Without it the player says 'still "
+        "being collected' forever, which is indistinguishable from a slow collection and gives "
+        "nobody the one fact that would resolve it. Cleared the moment an archive is recorded.",
+    )
+    clear_recording_archive_error: bool = Field(
+        default=False,
+        description="If True, unsets recording_archive_error. A flag rather than a None "
+        "assignment because the upsert reads None as 'leave unchanged', so a blocked recording "
+        "that later archived fine would keep advertising the old reason.",
     )
     clear_recording_link: bool = Field(
         default=False,
@@ -144,3 +160,4 @@ class PlaylistMetadata(BaseModel):
     archived_meeting_id: Optional[int] = None
     archived_recording_id: Optional[int] = None
     recording_link_meeting_id: Optional[int] = None
+    recording_archive_error: Optional[str] = None

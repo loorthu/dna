@@ -78,7 +78,9 @@ function ready(cuts: RecordingCut[]): PlaylistRecordingCuts {
   return {
     playlist_id: 461876,
     status: 'ready',
-    media_url: '/recordings/playlist-461876-rec626500502382.mp4',
+    status_detail: null,
+    media_url:
+      '/recordings/nite/lib.recording/pix/ref/dna/20260826/NITE_Director_Review_2026_08_25_20_49_PDT_Recording.mp4',
     duration_seconds: 250,
     recording_t0: '2026-08-26T03:49:02.593Z',
     recording_t0_source: 'vexa_recorder_clock',
@@ -86,10 +88,14 @@ function ready(cuts: RecordingCut[]): PlaylistRecordingCuts {
   };
 }
 
-function empty(status: RecordingCutsStatus): PlaylistRecordingCuts {
+function empty(
+  status: RecordingCutsStatus,
+  statusDetail: string | null = null
+): PlaylistRecordingCuts {
   return {
     playlist_id: 461876,
     status,
+    status_detail: statusDetail,
     media_url: null,
     duration_seconds: null,
     recording_t0: null,
@@ -244,10 +250,25 @@ describe('VirtualCutPlayer empty states', () => {
     ['pending', /being recorded now/],
     ['archiving', /being collected and verified/],
     ['no_segments', /nothing was transcribed against these versions/],
+    ['blocked', /cannot be saved to the share/],
   ])('says what %s means, and renders no player', (status, message) => {
     renderPlayer(empty(status));
 
     expect(screen.getByText(message)).toBeInTheDocument();
+    expect(document.querySelector('video')).toBeNull();
+  });
+
+  it('passes on the reason a blocked collection gives, since only it names the fix', () => {
+    renderPlayer(
+      empty(
+        'blocked',
+        'nite/lib.recording/pix/ref/dna does not exist on the recordings share.'
+      )
+    );
+
+    expect(
+      screen.getByText(/nite\/lib\.recording\/pix\/ref\/dna does not exist/)
+    ).toBeInTheDocument();
     expect(document.querySelector('video')).toBeNull();
   });
 

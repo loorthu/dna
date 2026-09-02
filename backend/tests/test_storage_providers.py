@@ -1347,6 +1347,22 @@ class TestTheInReviewMarkKeepsItsHistory:
         assert [e["version_id"] for e in self._written(collection)] == [8, None]
 
     @pytest.mark.asyncio
+    async def test_clearing_the_archive_error_unsets_it(self, provider):
+        """None means "leave unchanged" to this upsert, so a blocked recording that later
+        archived fine would keep advertising the reason it was once stuck."""
+        collection = self._wire(provider, {"playlist_id": 1})
+
+        await provider.upsert_playlist_metadata(
+            1, PlaylistMetadataUpdate(clear_recording_archive_error=True)
+        )
+
+        update = collection.find_one_and_update.await_args.args[1]
+        assert "recording_archive_error" in update["$unset"]
+        assert (
+            "clear_recording_archive_error" not in update["$set"]
+        ), "the flag drives the update; it is not a field of its own"
+
+    @pytest.mark.asyncio
     async def test_a_mark_set_before_the_timeline_existed_opens_the_history(
         self, provider
     ):

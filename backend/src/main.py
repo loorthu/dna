@@ -57,6 +57,7 @@ from dna.models import (
     PublishTranscriptRequest,
     PublishTranscriptResponse,
     RecordingArchiveRequest,
+    RecordingBlockedRequest,
     ReviewLink,
     ReviewPlaylist,
     ReviewResolution,
@@ -84,6 +85,8 @@ from dna.prodtrack_providers.prodtrack_provider_base import (
 from dna.qc.qc_runner import run_qc_checks_for_draft
 from dna.recording_cuts_service import RecordingCutsService, recording_playback_enabled
 from dna.recording_media import (
+    ArchiveDestinationService,
+    ArchiveDestinationUnknown,
     ArchiveNotConfirmed,
     ArchiveRecordingMismatch,
     RecordingMediaService,
@@ -2449,6 +2452,75 @@ async def record_recording_archive(
         raise HTTPException(status_code=404, detail=str(e))
     except ArchiveRecordingMismatch as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        # A path that is not relative to the share root. Refused rather than normalised: the
+        # value becomes a URL, and guessing what a malformed one meant is how a player ends up
+        # pointed outside the share.
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get(
+    "/recordings/{playlist_id}/archive-path",
+    tags=["Recordings"],
+    summary="Where this playlist's recording should be archived, and what to call it",
+    description=(
+        "The path RELATIVE to the share root that the collector should write this recording to: "
+        "`<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist code>_<start>_Recording.mp4`.\n\n"
+        "Answered here rather than decided by the collector because the two facts the name is "
+        "built from — the show the playlist belongs to and what the playlist is called — live in "
+        "the tracking system, which the airgapped side cannot reach. The date directory and the "
+        "timestamp are the MEETING's, in studio-local time, so the answer does not change when "
+        "the collector restarts.\n\n"
+        "`suffix` is for the one case the collector cannot resolve alone: a destination that "
+        "already exists. Rather than overwrite a file that may be the only copy of a meeting, it "
+        "asks again with a distinguishing suffix.\n\n"
+        "409 when the name cannot be worked out — no show, no playlist name, no start clock. "
+        "That is a retryable state, not a verdict: nothing has been archived or deleted."
+    ),
+)
+async def get_recording_archive_path(
+    playlist_id: int,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    prodtrack_provider: ProdtrackProviderDep,
+    _: CurrentUserDep,
+    suffix: str = "",
+) -> dict:
+    service = ArchiveDestinationService(
+        prodtrack_provider,
+        RecordingMediaService(transcription_provider, storage_provider),
+    )
+    try:
+        return await service.relative_path(playlist_id, suffix=suffix)
+    except RecordingNotFound as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ArchiveDestinationUnknown as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post(
+    "/recordings/{playlist_id}/blocked",
+    tags=["Recordings"],
+    summary="Report that this recording cannot be archived without someone acting",
+    description=(
+        "For the failures a retry will never clear on its own — today, a show whose recording "
+        "directory does not exist on the share. The reason is held against the playlist and "
+        "shown in the player, which otherwise repeats 'still being collected' forever: true, and "
+        "indistinguishable from a slow collection.\n\n"
+        "Not for ordinary transient failures. The collector retries every pass, so a reason that "
+        "appears and clears on its own would flicker in front of a viewer who can do nothing "
+        "with it either way. Cleared automatically when an archive is recorded."
+    ),
+)
+async def report_recording_blocked(
+    playlist_id: int,
+    body: RecordingBlockedRequest,
+    storage_provider: StorageProviderDep,
+    transcription_provider: TranscriptionProviderDep,
+    _: CurrentUserDep,
+) -> dict:
+    service = RecordingMediaService(transcription_provider, storage_provider)
+    return await service.report_blocked(playlist_id, body.reason)
 
 
 def _poster_max_bytes() -> int:

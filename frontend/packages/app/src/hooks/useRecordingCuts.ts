@@ -18,9 +18,11 @@ const IN_FLIGHT_POLL_MS = 10_000;
  * TanStack's internals, which produced assertions that passed whatever the code did.
  *
  * `pending` (being recorded) and `archiving` (collector still working) resolve on their own, so
- * the tab should notice without the viewer reloading. The rest are settled FOR THE MEETING THEY
- * DESCRIBE and are never polled — a new meeting changes the query key instead, which is the only
- * thing that can change their answer.
+ * the tab should notice without the viewer reloading. `blocked` does NOT resolve on its own — it
+ * waits on a person creating a directory — but it is polled for the same reason: the moment they
+ * do, the next collector pass files the recording, and the tab should show it without a reload.
+ * The rest are settled FOR THE MEETING THEY DESCRIBE and are never polled — a new meeting changes
+ * the query key instead, which is the only thing that can change their answer.
  *
  * That distinction is load-bearing. `no_meeting` is the answer every playlist gives before its
  * bot is dispatched, and it is the answer the panel gets on mount, seconds before the dispatch it
@@ -30,7 +32,7 @@ const IN_FLIGHT_POLL_MS = 10_000;
 export function pollIntervalFor(
   status: PlaylistRecordingCuts['status'] | undefined
 ): number | false {
-  return status === 'pending' || status === 'archiving'
+  return status === 'pending' || status === 'archiving' || status === 'blocked'
     ? IN_FLIGHT_POLL_MS
     : false;
 }

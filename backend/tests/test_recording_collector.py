@@ -17,7 +17,9 @@ import os
 
 import pytest
 
+from dna.recording_archive_path import archive_relative_path
 from dna.recording_collector import (
+    ArchiveDirectoryMissing,
     CollectionFailed,
     CollectorError,
     CollectorState,
@@ -72,6 +74,15 @@ class FakeClient:
         }
         self.cuts_error: Exception | None = None
         self.posters: list[tuple[int, str, bytes]] = []
+        # What DNA would name this recording from. The show and the playlist's name live in the
+        # tracking system, which only DNA can see; the collector is told the answer.
+        self.show = "nite"
+        self.playlist_code = "NITE_Director_Review"
+        self.archive_start = VIDEO_T0
+        self.archive_path_error: Exception | None = None
+        self.archive_path_calls: list[str] = []
+        self.blocked: list[tuple[int, str]] = []
+        self.blocked_error: Exception | None = None
 
     async def list_chunks(self, playlist_id: int, after: int) -> dict:
         self.calls.append(f"list({after})")
@@ -120,6 +131,31 @@ class FakeClient:
         self.deleted.append(playlist_id)
         return {"ok": True}
 
+    async def get_archive_path(self, playlist_id: int, suffix: str = "") -> dict:
+        self.calls.append(f"archive-path({suffix})" if suffix else "archive-path")
+        self.archive_path_calls.append(suffix)
+        if self.archive_path_error:
+            raise self.archive_path_error
+        # The REAL naming rule, not a stand-in: what the collector writes has to be exactly what
+        # DNA would have told it, or these tests prove nothing about where files land.
+        return {
+            "playlist_id": playlist_id,
+            "recording_id": self.recording_id,
+            "show": self.show,
+            "playlist_code": self.playlist_code,
+            "start_time_utc": self.archive_start,
+            "relative_path": archive_relative_path(
+                self.show, self.playlist_code, self.archive_start, suffix=suffix
+            ),
+        }
+
+    async def report_blocked(self, playlist_id: int, reason: str) -> dict:
+        self.calls.append("blocked")
+        if self.blocked_error:
+            raise self.blocked_error
+        self.blocked.append((playlist_id, reason))
+        return {"ok": True}
+
     async def get_cuts(self, playlist_id: int) -> dict:
         self.calls.append("cuts")
         if self.cuts_error:
@@ -134,11 +170,23 @@ class FakeClient:
         return {"ok": True}
 
 
-def make_collector(tmp_path, client, run_ffmpeg=None):
+def show_directory(archive_root, client) -> str:
+    """`<root>/<show>/lib.recording/pix/ref/dna` — the directory the studio makes, not this code."""
+    relative = archive_relative_path(
+        client.show, client.playlist_code, client.archive_start
+    )
+    return os.path.join(archive_root, os.path.dirname(os.path.dirname(relative)))
+
+
+def make_collector(tmp_path, client, run_ffmpeg=None, show_exists=True):
     staging = tmp_path / "staging"
     archive = tmp_path / "archive"
     staging.mkdir()
     archive.mkdir()
+    # A real share already has the show's tree; the collector only ever makes the dated directory
+    # inside it. `show_exists=False` is the share as it looks the first time a show records.
+    if show_exists:
+        os.makedirs(show_directory(str(archive), client), exist_ok=True)
 
     def fake_ffmpeg(command: list[str]) -> tuple[int, str]:
         out = command[-1]
@@ -171,6 +219,16 @@ def make_collector_reusing(collector, client):
         archive_root=collector.archive_root,
         ffmpeg_path=collector.ffmpeg_path,
         run_ffmpeg=collector._run_ffmpeg,
+    )
+
+
+def expected_archive(collector, client, suffix: str = "") -> str:
+    """Where this client's recording lands, worked out the same way DNA works it out."""
+    return os.path.join(
+        collector.archive_root,
+        archive_relative_path(
+            client.show, client.playlist_code, client.archive_start, suffix=suffix
+        ),
     )
 
 
@@ -385,11 +443,14 @@ async def test_the_full_handover_happens_in_the_only_safe_order(tmp_path):
         "delete"
     ), "the archive must be recorded BEFORE the upstream copy is released"
     archived_name, archived_hash = client.archived[0]
-    assert archived_name == os.path.basename(collector.archive_path(1, REC)), (
-        "DNA is told the file's NAME, not where this host keeps it — the archiving host is "
-        "across the airgap and its layout is nobody else's business"
+    assert archived_name == archive_relative_path(
+        client.show, client.playlist_code, VIDEO_T0
+    ), (
+        "DNA is told the path RELATIVE to the share root — enough to find the file under the "
+        "root nginx serves, and not where this host mounts it: the archiving host is across the "
+        "airgap and its layout is nobody else's business"
     )
-    archived_path = collector.archive_path(1, REC)
+    archived_path = expected_archive(collector, client)
     assert os.path.exists(archived_path)
     assert hashlib.sha256(open(archived_path, "rb").read()).hexdigest() == archived_hash
     assert result["audio_delay_ms"] == 1500
@@ -464,7 +525,7 @@ async def test_a_missing_audio_master_degrades_to_video_only(tmp_path):
 
     assert result["status"] == "archived"
     assert result["audio_delay_source"] == "no-audio"
-    assert open(collector.archive_path(1, REC), "rb").read() == b"AAAABBBB"
+    assert open(expected_archive(collector, client), "rb").read() == b"AAAABBBB"
     assert client.deleted == [1]
 
 
@@ -493,19 +554,23 @@ async def test_a_second_recording_on_the_same_playlist_gets_its_own_archive(tmp_
     This is the shape that destroyed a recording in practice: both meetings archived to
     playlist-<id>.mp4, and because the upstream copy is released immediately afterwards, the
     overwrite took the only remaining copy of the first one.
+
+    What keeps them apart now is the START CLOCK in the name — two meetings on one playlist are
+    not the same meeting, so they did not start in the same minute.
     """
     first = FakeClient([b"AAAA"], complete=True)
     first.recording_id = 1001
     collector = make_collector(tmp_path, first)
     await collector.poll_once(1)
-    first_archive = collector.archive_path(1, 1001)
+    first_archive = expected_archive(collector, first)
 
     # Same playlist and the same staging/archive dirs, a different meeting's recording.
     second = FakeClient([b"BBBBBB"], complete=True)
     second.recording_id = 2002
+    second.archive_start = "2026-08-20T19:30:00.000Z"
     collector.client = second
     await collector.poll_once(1)
-    second_archive = collector.archive_path(1, 2002)
+    second_archive = expected_archive(collector, second)
 
     assert first_archive != second_archive, "each recording needs its own archive path"
     assert os.path.exists(first_archive), "the first archive must not be destroyed"
@@ -547,19 +612,175 @@ async def test_state_from_another_recording_is_not_resumed(tmp_path):
 
 @pytest.mark.asyncio
 async def test_an_existing_archive_file_is_never_overwritten(tmp_path):
-    """Belt and braces behind the naming: the archive is the only copy once upstream is released."""
+    """Belt and braces behind the naming: the archive is the only copy once upstream is released.
+
+    Both the plain name and the recording-scoped one are taken here, which is the only way past
+    the retry — the point being that when there is nowhere safe to write, the answer is to stop,
+    not to pick a name. The upstream copy stays put and the next pass tries again.
+    """
     client = FakeClient([b"AAAA"], complete=True)
     collector = make_collector(tmp_path, client)
 
-    destination = collector.archive_path(1, REC)
-    with open(destination, "wb") as handle:
-        handle.write(b"AN EARLIER RECORDING")
+    taken = [
+        expected_archive(collector, client),
+        expected_archive(collector, client, suffix=f"_rec{REC}"),
+    ]
+    os.makedirs(os.path.dirname(taken[0]), exist_ok=True)
+    for path in taken:
+        with open(path, "wb") as handle:
+            handle.write(b"AN EARLIER RECORDING")
 
     with pytest.raises(CollectorError, match="refusing to overwrite"):
         await collector.poll_once(1)
 
-    assert open(destination, "rb").read() == b"AN EARLIER RECORDING"
+    for path in taken:
+        assert open(path, "rb").read() == b"AN EARLIER RECORDING"
     assert client.deleted == [], "upstream must survive a refused archive"
+
+
+@pytest.mark.asyncio
+async def test_a_recording_is_not_archived_at_all_if_dna_cannot_name_it(tmp_path):
+    """No name, no archive — and nothing lost by waiting.
+
+    The alternative would be to invent a fallback name, which is worse than it sounds: the file
+    would land somewhere nobody looks, under a name nothing can later reconcile, and the upstream
+    copy would be released on the strength of it. Stopping leaves both copies where they are and
+    the next pass tries again.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    client.archive_path_error = RuntimeError("ShotGrid unreachable")
+    collector = make_collector(tmp_path, client)
+
+    with pytest.raises(CollectionFailed, match="cannot say where to archive"):
+        await collector.poll_once(1)
+
+    assert client.archived == [], "nothing may be recorded as archived"
+    assert client.deleted == [], "the upstream copy is the only copy — it must survive"
+    assert os.path.exists(
+        collector.video_path(1, REC)
+    ), "the staged bytes survive for the next pass"
+
+
+@pytest.mark.asyncio
+async def test_a_show_with_no_recording_directory_is_not_archived_and_says_why(
+    tmp_path,
+):
+    """The first recording for a new show waits for a person, once.
+
+    The collector must NOT create the show's tree: everything above the dated directory belongs
+    to the studio's layout, with the ownership and permissions the studio means it to have. And a
+    share that failed to mount looks exactly like a show nobody has set up — creating a directory
+    would turn either into a recording filed where no one will look for it.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client, show_exists=False)
+
+    with pytest.raises(ArchiveDirectoryMissing, match="does not exist"):
+        await collector.poll_once(1)
+
+    assert client.archived == [] and client.deleted == []
+    assert not os.path.exists(
+        show_directory(collector.archive_root, client)
+    ), "the collector must not have created it"
+
+    playlist_id, reason = client.blocked[0]
+    assert playlist_id == 1
+    assert (
+        "nite/lib.recording/pix/ref/dna" in reason
+    ), "the message has to name the directory to create — it is the only part anyone can act on"
+    assert (
+        collector.archive_root not in reason
+    ), "relative to the share root: the archiving host's mount point stays on that host"
+
+
+@pytest.mark.asyncio
+async def test_the_reason_is_reported_once_not_every_pass(tmp_path):
+    """It waits on a person, and a person reads it once. Ten seconds later nothing has changed."""
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client, show_exists=False)
+
+    for _ in range(3):
+        with pytest.raises(ArchiveDirectoryMissing):
+            await collector.poll_once(1)
+
+    assert len(client.blocked) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_recording_is_archived_as_soon_as_the_directory_appears(tmp_path):
+    """The whole point of holding on rather than failing: nothing was lost while it waited."""
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client, show_exists=False)
+    with pytest.raises(ArchiveDirectoryMissing):
+        await collector.poll_once(1)
+
+    os.makedirs(show_directory(collector.archive_root, client))
+    result = await collector.poll_once(1)
+
+    assert result["status"] == "archived"
+    assert os.path.exists(expected_archive(collector, client))
+    assert client.deleted == [1], "the upstream copy is released, as it would have been"
+
+
+@pytest.mark.asyncio
+async def test_a_report_that_cannot_be_delivered_does_not_mask_the_real_failure(
+    tmp_path,
+):
+    """The explanation is not part of the custody chain. Losing it must not change what happened."""
+    client = FakeClient([b"AAAA"], complete=True)
+    client.blocked_error = RuntimeError("DNA unreachable")
+    collector = make_collector(tmp_path, client, show_exists=False)
+
+    with pytest.raises(ArchiveDirectoryMissing):
+        await collector.poll_once(1)
+
+    assert client.blocked == []
+    assert client.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_the_dated_directory_is_created_on_the_share(tmp_path):
+    """The show's directory tree exists; the day's does not until a meeting lands in it."""
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+
+    await collector.poll_once(1)
+
+    archive = expected_archive(collector, client)
+    assert archive.endswith(
+        "nite/lib.recording/pix/ref/dna/20260820/"
+        "NITE_Director_Review_2026_08_20_10_00_PDT_Recording.mp4"
+    )
+    assert os.path.exists(archive)
+
+
+@pytest.mark.asyncio
+async def test_a_name_already_taken_is_asked_for_again_rather_than_overwritten(
+    tmp_path,
+):
+    """Two meetings on one playlist inside a minute — the only way to collide on this name.
+
+    The collector does not rename the file itself. It asks DNA again, with the recording id, so
+    the name still comes from one place and is still one DNA can reproduce.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+    taken = expected_archive(collector, client)
+    os.makedirs(os.path.dirname(taken), exist_ok=True)
+    with open(taken, "wb") as handle:
+        handle.write(b"AN EARLIER RECORDING")
+
+    result = await collector.poll_once(1)
+
+    assert result["status"] == "archived"
+    assert client.archive_path_calls == ["", f"_rec{REC}"]
+    assert (
+        open(taken, "rb").read() == b"AN EARLIER RECORDING"
+    ), "the earlier one is intact"
+    assert os.path.exists(expected_archive(collector, client, suffix=f"_rec{REC}"))
+    assert client.archived[0][0].endswith(
+        f"_Recording_rec{REC}.mp4"
+    ), "DNA is told the name actually used, or the player would point at the other meeting"
 
 
 @pytest.mark.asyncio
@@ -678,14 +899,18 @@ def test_the_abandoned_pass_is_an_ordinary_retry_not_an_unexpected_failure(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_an_unnamed_recording_falls_back_to_the_playlist_name(tmp_path):
-    """When the index reports no recording id there is nothing to scope the archive by, so the
-    name falls back to the playlist alone — the pre-scoping shape, which two meetings on one
-    playlist would both claim.
+async def test_an_unnamed_recording_has_nothing_to_disambiguate_a_taken_name_with(
+    tmp_path,
+):
+    """The archive is named from the meeting, so an unnamed recording still archives fine.
 
-    That collision is survivable rather than safe: the overwrite refusal catches the second one
-    and the upstream copy stays put. Asserted here so the fallback's consequence is on the record
-    rather than discovered the next time a deployment stops sending recording ids.
+    What it loses is the way OUT of a collision: the retry asks for a name carrying the recording
+    id, and there is no recording id. Two meetings that started in the same minute on one
+    playlist would then both claim one path, and the second is refused rather than written.
+
+    Survivable rather than safe — the upstream copy stays put and the next pass tries again.
+    Asserted here so the consequence is on the record rather than discovered the next time a
+    deployment stops sending recording ids.
     """
     client = FakeClient([b"AAAA"], complete=True)
     client.recording_id = None
@@ -693,14 +918,13 @@ async def test_an_unnamed_recording_falls_back_to_the_playlist_name(tmp_path):
 
     await collector.poll_once(1)
 
-    unscoped = collector.archive_path(1, None)
-    assert unscoped.endswith("playlist-1.mp4"), "no recording id, no scoping"
-    assert os.path.exists(unscoped)
+    archive = expected_archive(collector, client)
+    assert os.path.exists(archive)
 
-    # A second meeting on the same playlist, equally unnamed, claims the same path. Staging is
-    # cleared first because that too is scoped by the recording nobody named — the second meeting
-    # would otherwise resume the first one's byte stream, which is the same collision one step
-    # earlier.
+    # A second meeting on the same playlist, equally unnamed, starting in the same minute — so
+    # it claims the same path. Staging is cleared first because that too is scoped by the
+    # recording nobody named: the second meeting would otherwise resume the first one's byte
+    # stream, which is the same collision one step earlier.
     for path in (
         collector.state_path(1, None),
         collector.video_path(1, None),
@@ -714,7 +938,7 @@ async def test_an_unnamed_recording_falls_back_to_the_playlist_name(tmp_path):
     with pytest.raises(CollectorError, match="refusing to overwrite"):
         await collector.poll_once(1)
 
-    assert open(unscoped, "rb").read().startswith(b"AAAA"), "the first archive survives"
+    assert open(archive, "rb").read().startswith(b"AAAA"), "the first archive survives"
     assert second.deleted == [], "upstream must survive a refused archive"
 
 
@@ -757,16 +981,18 @@ async def test_a_poster_is_written_for_each_shot_after_the_handover(tmp_path):
         "frames are grabbed only once the custody chain has finished — nothing about a "
         "thumbnail may sit between archiving and releasing the upstream copy"
     )
-    archive = os.path.basename(collector.archive_path(1, REC))
-    stem = archive.rsplit(".", 1)[0]
+    archive = expected_archive(collector, client)
+    stem = os.path.basename(archive).rsplit(".", 1)[0]
     assert [name for _, name, _ in client.posters] == [
         f"{stem}-v900.jpg",
         f"{stem}-v901.jpg",
     ]
     for version_id, name, image in client.posters:
         # Both copies exist: the share's, which nginx serves, and DNA's, which the notes email
-        # embeds because a mail client cannot always reach the share.
-        on_share = os.path.join(collector.archive_root, name)
+        # embeds because a mail client cannot always reach the share. The share's copy sits
+        # BESIDE the recording, in its show's dated directory — not in the share root, which is
+        # now the top of a tree of shows.
+        on_share = os.path.join(os.path.dirname(archive), name)
         assert os.path.exists(on_share)
         assert image == open(on_share, "rb").read()
 
@@ -781,7 +1007,8 @@ async def test_the_badge_is_drawn_once_into_staging_not_onto_the_share(tmp_path)
 
     assert os.path.exists(collector.badge_path())
     assert collector.badge_path().startswith(collector.staging_dir)
-    assert not [n for n in os.listdir(collector.archive_root) if n.endswith(".png")]
+    on_share = os.path.dirname(expected_archive(collector, client))
+    assert not [n for n in os.listdir(on_share) if n.endswith(".png")]
 
 
 @pytest.mark.asyncio
@@ -796,7 +1023,7 @@ async def test_a_cut_list_that_is_not_ready_yields_no_posters_and_no_complaint(
 
     assert result["status"] == "archived" and result["posters"] == 0
     assert client.posters == []
-    assert os.path.exists(collector.archive_path(1, REC))
+    assert os.path.exists(expected_archive(collector, client))
 
 
 @pytest.mark.asyncio
@@ -838,7 +1065,7 @@ async def test_a_thumbnailer_that_fails_outright_still_leaves_the_recording_arch
     assert result["status"] == "archived"
     assert result["posters"] == 0
     assert client.deleted == [1], "the upstream copy was still released"
-    assert os.path.exists(collector.archive_path(1, REC))
+    assert os.path.exists(expected_archive(collector, client))
 
 
 @pytest.mark.asyncio
@@ -851,14 +1078,18 @@ async def test_posters_are_named_by_recording_so_a_second_meeting_replaces_nothi
 
     second = FakeClient([b"CCCC"], complete=True)
     second.recording_id = REC + 1
+    second.archive_start = "2026-08-20T19:30:00.000Z"
     await make_collector_reusing(collector, second).poll_once(1)
 
-    on_share = sorted(
-        name for name in os.listdir(collector.archive_root) if name.endswith(".jpg")
-    )
-    assert on_share == [
-        f"playlist-1-rec{REC}-v900.jpg",
-        f"playlist-1-rec{REC}-v901.jpg",
-        f"playlist-1-rec{REC + 1}-v900.jpg",
-        f"playlist-1-rec{REC + 1}-v901.jpg",
+    # Both meetings are the same day, so both sets land in the same dated directory — which is
+    # exactly where they could overwrite each other if the posters were not named per recording.
+    directory = os.path.dirname(expected_archive(collector, client))
+    assert directory == os.path.dirname(expected_archive(collector, second))
+    on_share = sorted(n for n in os.listdir(directory) if n.endswith(".jpg"))
+    stems = [
+        os.path.basename(expected_archive(collector, c)).rsplit(".", 1)[0]
+        for c in (client, second)
     ]
+    assert on_share == sorted(
+        f"{stem}-v{version}.jpg" for stem in stems for version in (900, 901)
+    )

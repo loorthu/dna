@@ -281,7 +281,13 @@ class MongoDBStorageProvider(StorageProviderBase):
             k: v
             for k, v in data.model_dump().items()
             if v is not None
-            and k not in ("clear_resumed_at", "clear_recording_link", "clear_in_review")
+            and k
+            not in (
+                "clear_resumed_at",
+                "clear_recording_link",
+                "clear_in_review",
+                "clear_recording_archive_error",
+            )
         }
 
         unset_fields: dict[str, Any] = {}
@@ -321,6 +327,9 @@ class MongoDBStorageProvider(StorageProviderBase):
 
         if data.clear_in_review:
             unset_fields["in_review"] = ""
+
+        if data.clear_recording_archive_error:
+            unset_fields["recording_archive_error"] = ""
 
         if data.clear_resumed_at:
             unset_fields["transcription_resumed_at"] = ""
