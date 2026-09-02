@@ -245,7 +245,7 @@ Turn it on only after the ShotGrid site is prepared.
    - `code` (text, built-in)
    - `project` (entity link -> Project, built-in)
    - `sg_playlist` (entity link -> Playlist)
-   - `sg_versions` (multi-entity link -> Version)
+   - `sg_version_in_review` (entity link -> Version)
    - `sg_meeting_id` (text)
    - `sg_meeting_date` (date)
    - `sg_platform` (list: `google_meet`, `teams`)
@@ -262,17 +262,19 @@ DNA_ENABLE_TRANSCRIPT_PUBLISH=true
 SHOTGRID_TRANSCRIPT_ENTITY=CustomEntity05   # whichever slot you enabled
 ```
 
-For the frontend build, also set the Vite flag so the Publish button
-renders:
+For the frontend build, also set the Vite flag so the per-version
+transcript checkboxes render in the Publish dialog:
 
 ```
-VITE_ENABLE_TRANSCRIPT_PUBLISH=true
+VITE_FEATURE_TRANSCRIPT_PUBLISH=true
 ```
 
-If the flag is off or the custom entity has not been provisioned, the
-backend returns 404 on that route; the frontend does not show the
-Publish button. Dropping the flag reverts behaviour with no data
-migration.
+Keep the two in step. With the backend flag off, that route returns 404;
+with the frontend flag off, the Publish dialog offers no transcript
+selection and never calls the route. Leaving the frontend flag on while
+the backend one is off is the bad middle: the checkboxes appear, the
+calls 404, and the failures are swallowed silently. Dropping both
+reverts behaviour with no data migration.
 
 ---
 
@@ -364,6 +366,10 @@ The following secrets must be configured in GitHub repository settings:
 | `VITE_WS_URL` | WebSocket URL |
 | `VITE_AUTH_PROVIDER` | `none` for local (noop/email sign-in); `google` for Google OAuth |
 | `VITE_GOOGLE_CLIENT_ID` | Google OAuth Client ID (required when `VITE_AUTH_PROVIDER=google`) |
+| `VITE_FEATURE_NOTE_QC` | Default `false`. Note QC runs an LLM pass over every draft when the Publish dialog opens, so it stays off unless a site opts in. Off also hides the Note QC settings section. Requires AI to be enabled; AI note generation is unaffected by this flag. |
+| `VITE_FEATURE_NOTE_SUBJECT` | Default `false`. Shows the note Subject field. Off because ShotGrid writes subjects itself — every note on an SPI site has a tool-generated one, and a playlist note's is the playlist name as it stood when the note was seeded. Publishing still echoes the mirrored subject back unchanged; only the input is hidden. |
+| `VITE_FEATURE_NOTE_LINKS` | Default `false`. Shows the Links field on a note, which adds extra ShotGrid `note_links` beyond the Version, Playlist and parent Shot/Asset that publish attaches automatically. Off because links are sent only on a note's first publish — `update_note` does not re-send them, so links added later never reach ShotGrid. |
+| `VITE_FEATURE_TRANSCRIPT_PUBLISH` | Default `false`. Shows the per-version transcript checkboxes in the Publish dialog. Must be kept in step with the backend's `DNA_ENABLE_TRANSCRIPT_PUBLISH` — see [Transcript Publishing Setup](#transcript-publishing-setup-optional-issue-120). |
 
 ---
 

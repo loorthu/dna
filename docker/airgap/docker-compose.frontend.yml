@@ -26,6 +26,17 @@ services:
         VITE_FOLLOW_ALONG_BROKER_URL: ${VITE_FOLLOW_ALONG_BROKER_URL:-}
         VITE_FOLLOW_ALONG_TOPIC: ${VITE_FOLLOW_ALONG_TOPIC:-}
         VITE_FOLLOW_ALONG_SESSIONS_URL: ${VITE_FOLLOW_ALONG_SESSIONS_URL:-/review-sessions}
+        # Both off unless a site opts in. Note QC is an LLM pass over every
+        # draft when the Publish dialog opens; transcript publish additionally
+        # needs DNA_ENABLE_TRANSCRIPT_PUBLISH on the backend and a provisioned
+        # ShotGrid custom entity, or the endpoint 404s.
+        VITE_FEATURE_NOTE_QC: ${VITE_FEATURE_NOTE_QC:-false}
+        VITE_FEATURE_TRANSCRIPT_PUBLISH: ${VITE_FEATURE_TRANSCRIPT_PUBLISH:-false}
+        # Note links reach SG only on a note's first publish, so they are off
+        # until the republish path carries them too.
+        VITE_FEATURE_NOTE_LINKS: ${VITE_FEATURE_NOTE_LINKS:-false}
+        # Subject is ShotGrid's to write, not a reviewer's to retype.
+        VITE_FEATURE_NOTE_SUBJECT: ${VITE_FEATURE_NOTE_SUBJECT:-false}
     image: dna-frontend:${DNA_TAG:-airgap}
     container_name: dna-frontend
     ports:
