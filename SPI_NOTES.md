@@ -101,10 +101,17 @@ essentials:
 - **Collector image** — `docker compose build` cannot pass `--build-context`, so build
   it with `docker build` (exact invocation in the notes). On prod, point
   `PIP_INDEX_URL`/`PIP_TRUSTED_HOST` at Artifactory.
-- **`RECORDING_NETWORK_PATH`** must be set in `docker/airgap/.env` to the real mount
-  before anything starts. It defaults to `./recordings`, which is fine for a laptop and
-  wrong for prod, where it is **`/shots`** — the ROOT of the show tree, not a directory
-  of recordings. See *Where recordings are filed* below.
+- **The two recording paths** must be set in `docker/airgap/.env` before anything
+  starts. `.env.example` explains what each is for; the SPI values are:
+
+  ```
+  RECORDING_NETWORK_PATH=/shots
+  RECORDING_ARCHIVE_DIR=/shots/{show}/lib.recording/pix/ref/dna
+  ```
+
+  The first is the ROOT nginx serves — not a directory of recordings — and the second
+  is where a show's files go beneath it. Both default to something wrong for prod.
+  See *Where recordings are filed* below.
 - The collector talks to the backend **directly**, not through this host's nginx: it is
   a server-side client, so there is no single-origin requirement and no reason to add a
   proxy hop to several hundred MB per meeting.
