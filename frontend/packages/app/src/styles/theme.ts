@@ -40,6 +40,8 @@ const sharedColors = {
     warning: '#f59e0b',
     error: '#ef4444',
     info: '#3b82f6',
+    /** The amber above at 12%, for the ground behind it — same pairing as `accent.subtle`. */
+    warningSubtle: 'rgba(245, 158, 11, 0.12)',
   },
 };
 

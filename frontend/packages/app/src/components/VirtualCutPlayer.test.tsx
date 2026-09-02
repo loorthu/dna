@@ -258,6 +258,24 @@ describe('VirtualCutPlayer empty states', () => {
     expect(document.querySelector('video')).toBeNull();
   });
 
+  it('marks a blocked recording as an alert, not another line of grey', () => {
+    // The complaint that prompted this: set in the same muted text as "come back in a minute",
+    // a message that needs someone to go and do something reads as more of the same and is
+    // scrolled past. Asserted on the role rather than the colour, which is the part that has to
+    // stay true if the palette moves.
+    renderPlayer(empty('blocked', 'nite/lib.recording/pix/ref/dna does not exist.'));
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('This recording has not been saved');
+    expect(alert).toHaveTextContent(/nite\/lib\.recording/);
+  });
+
+  it('does not shout about an ordinary wait', () => {
+    renderPlayer(empty('archiving'));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('passes on the reason a blocked collection gives, since only it names the fix', () => {
     renderPlayer(
       empty(

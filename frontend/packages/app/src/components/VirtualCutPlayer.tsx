@@ -58,6 +58,32 @@ const Empty = styled.div`
   color: ${({ theme }) => theme.colors.text.secondary};
 `;
 
+/**
+ * The one empty state that is a FAULT rather than a wait, so the one that does not get the muted
+ * grey the others share.
+ *
+ * Every other message here says "come back later" and reads correctly as quiet informational
+ * text. This one is the opposite: nothing will happen until a person does something, and set in
+ * the same grey it was routinely read as more of the same and scrolled past. Amber rather than
+ * red because nothing is broken or lost — the recording is safe upstream, it just is not filed.
+ */
+const Alert = styled.div`
+  margin: 12px;
+  padding: 12px 14px;
+  border: 1px solid ${({ theme }) => theme.colors.status.warning};
+  border-left-width: 4px;
+  border-radius: ${({ theme }) => theme.radii.md};
+  background: ${({ theme }) => theme.colors.status.warningSubtle};
+  color: ${({ theme }) => theme.colors.status.warning};
+  font-size: 13px;
+  line-height: 1.5;
+`;
+
+const AlertHeading = styled.div`
+  font-weight: 600;
+  margin-bottom: 4px;
+`;
+
 const Meta = styled.div`
   font-size: 11px;
   color: ${({ theme }) => theme.colors.text.muted};
@@ -84,10 +110,12 @@ function emptyMessage(
     case 'blocked':
       // The only status whose text comes from the back end. The useful part is WHICH directory
       // is missing, which this side cannot know — and it is the one message here that names
-      // something the reader is expected to go and do.
-      return detail
-        ? `The recording cannot be saved: ${detail}`
-        : 'The recording cannot be saved to the share. It is kept safe meanwhile and appears here once that is fixed.';
+      // something the reader is expected to go and do. Rendered in an Alert, which carries the
+      // "not saved" heading, so the detail stands alone here rather than repeating it.
+      return (
+        detail ??
+        'The recording cannot be saved to the share. It is kept safe meanwhile and appears here once that is fixed.'
+      );
     case 'no_meeting':
       // Not a verdict on anything — the playlist simply has no meeting yet. Saying "not recorded"
       // here told someone who was about to record a meeting that their recording would not happen.
@@ -165,6 +193,14 @@ export function VirtualCutPlayer({
   if (!data) return <Empty>No recording information for this playlist.</Empty>;
 
   const message = emptyMessage(data.status, cuts.length > 0, data.status_detail);
+  if (message && data.status === 'blocked') {
+    return (
+      <Alert role="alert">
+        <AlertHeading>This recording has not been saved</AlertHeading>
+        {message}
+      </Alert>
+    );
+  }
   if (message) return <Empty>{message}</Empty>;
   if (!data.media_url)
     return <Empty>The recording has no playable media yet.</Empty>;
