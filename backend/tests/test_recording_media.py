@@ -714,14 +714,29 @@ class TestTheArchivesDestination:
             )
         )
 
-        answer = await _destination(storage, provider).relative_path(PLAYLIST_ID)
+        answer = await _destination(storage, provider).naming(PLAYLIST_ID)
 
-        assert answer["relative_path"] == (
-            "nite/lib.recording/pix/ref/dna/20260901/"
-            "NITE_Review_2026_09_01_13_52_PDT_Recording.mp4"
-        )
         assert answer["show"] == "nite"
+        assert answer["date_dir"] == "20260901"
+        assert answer["filename"] == ("NITE_Review_2026_09_01_13_52_PDT_Recording.mp4")
         assert answer["recording_id"] == RECORDING_ID
+
+    async def test_no_directory_is_decided_here(self, storage, provider):
+        """Where recordings are filed belongs to the deployment. This side must not smuggle a
+        layout out in any of its answers, or nobody else can adopt the naming."""
+        storage.get_playlist_metadata = AsyncMock(
+            return_value=_metadata(
+                vexa_recording_id=RECORDING_ID,
+                recording_media_file_id=MEDIA_FILE_ID,
+                recording_link_meeting_id=VEXA_MEETING_ID,
+                recording_start_time_utc=START_UTC,
+            )
+        )
+
+        answer = await _destination(storage, provider).naming(PLAYLIST_ID)
+
+        assert "relative_path" not in answer
+        assert "/" not in f"{answer['show']}{answer['date_dir']}{answer['filename']}"
 
     async def test_the_show_is_the_projects_tank_name_not_its_title(
         self, storage, provider
@@ -737,10 +752,10 @@ class TestTheArchivesDestination:
             )
         )
 
-        answer = await _destination(storage, provider).relative_path(PLAYLIST_ID)
+        answer = await _destination(storage, provider).naming(PLAYLIST_ID)
 
-        assert answer["relative_path"].startswith("nite/")
-        assert "Night" not in answer["relative_path"]
+        assert answer["show"] == "nite"
+        assert "Night" not in answer["show"]
 
     async def test_the_suffix_asks_for_a_name_that_is_not_taken(
         self, storage, provider
@@ -754,11 +769,11 @@ class TestTheArchivesDestination:
             )
         )
 
-        answer = await _destination(storage, provider).relative_path(
+        answer = await _destination(storage, provider).naming(
             PLAYLIST_ID, suffix="_rec9"
         )
 
-        assert answer["relative_path"].endswith("_Recording_rec9.mp4")
+        assert answer["filename"].endswith("_Recording_rec9.mp4")
 
     async def test_a_recording_with_no_start_clock_cannot_be_named(
         self, storage, provider
@@ -777,7 +792,7 @@ class TestTheArchivesDestination:
         )
 
         with pytest.raises(ArchiveDestinationUnknown, match="no start time"):
-            await _destination(storage, provider).relative_path(PLAYLIST_ID)
+            await _destination(storage, provider).naming(PLAYLIST_ID)
 
     async def test_a_tracking_system_that_cannot_be_reached_is_retryable_not_fatal(
         self, storage, provider
@@ -798,7 +813,7 @@ class TestTheArchivesDestination:
                 raise RuntimeError("ShotGrid unreachable")
 
         with pytest.raises(ArchiveDestinationUnknown, match="tracking system"):
-            await _destination(storage, provider, Down()).relative_path(PLAYLIST_ID)
+            await _destination(storage, provider, Down()).naming(PLAYLIST_ID)
 
     async def test_a_project_with_no_tank_name_falls_back_to_its_name(
         self, storage, provider
@@ -820,12 +835,9 @@ class TestTheArchivesDestination:
         )
         no_tank_name = _prodtrack(show=None, name="kpop")
 
-        answer = await _destination(storage, provider, no_tank_name).relative_path(
-            PLAYLIST_ID
-        )
+        answer = await _destination(storage, provider, no_tank_name).naming(PLAYLIST_ID)
 
         assert answer["show"] == "kpop"
-        assert answer["relative_path"].startswith("kpop/")
 
     async def test_tank_name_still_wins_when_it_is_set(self, storage, provider):
         """The directory and the display name are different strings, and only one is a path."""
@@ -840,9 +852,9 @@ class TestTheArchivesDestination:
 
         answer = await _destination(
             storage, provider, _prodtrack(show="nite", name="Night Show")
-        ).relative_path(PLAYLIST_ID)
+        ).naming(PLAYLIST_ID)
 
-        assert answer["relative_path"].startswith("nite/")
+        assert answer["show"] == "nite"
 
     async def test_a_project_with_neither_cannot_be_filed(self, storage, provider):
         storage.get_playlist_metadata = AsyncMock(
@@ -858,7 +870,7 @@ class TestTheArchivesDestination:
         with pytest.raises(
             ArchiveDestinationUnknown, match="neither a tank_name nor a name"
         ):
-            await _destination(storage, provider, nameless).relative_path(PLAYLIST_ID)
+            await _destination(storage, provider, nameless).naming(PLAYLIST_ID)
 
     async def test_a_playlist_belonging_to_no_project_has_no_show_to_file_under(
         self, storage, provider
@@ -878,4 +890,4 @@ class TestTheArchivesDestination:
         )
 
         with pytest.raises(ArchiveDestinationUnknown, match="belongs to no project"):
-            await _destination(storage, provider, orphan).relative_path(PLAYLIST_ID)
+            await _destination(storage, provider, orphan).naming(PLAYLIST_ID)

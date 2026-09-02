@@ -25,6 +25,9 @@ RUN pip install --no-cache-dir --index-url "$PIP_INDEX_URL" \
 # GPL-only ffmpeg filter has to be present for a poster frame to come out identical on every host.
 COPY --from=dna recording_collector.py /app/dna/recording_collector.py
 COPY --from=dna recording_posters.py /app/dna/recording_posters.py
+# Only for its path validator — the collector derives the path it reports to DNA from its own
+# configured directory, and that path has to be provably under the root nginx serves.
+COPY --from=dna recording_archive_path.py /app/dna/recording_archive_path.py
 RUN touch /app/dna/__init__.py
 
 COPY main.py .

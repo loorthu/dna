@@ -20,36 +20,49 @@ complete it pulls the audio master, muxes the two streams, asks DNA where the fi
 the finished MP4 there, re-reads it to confirm what landed, records the path and hash in DNA, and
 only then asks DNA to delete the upstream copy.
 
-**DNA names the file, not the collector.** Each archive is filed as
+**DNA names the file; this deployment places it.** Neither side can supply the other's half.
 
 ```
-<RECORDING_NETWORK_PATH>/<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist>_<start>_Recording.mp4
+RECORDING_ARCHIVE_DIR / <YYYYMMDD> / <playlist>_<start>_Recording.mp4
+└─ this deployment ──┘ └───────── DNA ──────────────────────────────┘
 ```
 
-— for example `/shots/nite/lib.recording/pix/ref/dna/20260901/NITE_Director_Review_2026_09_01_13_52_PDT_Recording.mp4`
-— so it lands in the show's own reference library. The show and the playlist's name come from the
-tracking system, which only DNA can reach, so the collector asks
-`GET /recordings/{playlist_id}/archive-path` and supplies nothing but the root. If DNA cannot
-answer, the recording is **not** archived under some fallback name: the pass fails, both copies
-stay where they are, and the next pass tries again. A name that nothing can reconcile later is
-worse than a wait.
+`RECORDING_ARCHIVE_DIR` substitutes `{show}` and is the ONLY place a directory layout is written
+down. Which folders a studio keeps recordings in is a fact about that studio, and a naming rule
+with one site's tree baked into it is one nobody else can adopt — so it is configuration, not
+code. SPI sets `/shots/{show}/lib.recording/pix/ref/dna`; unset, it defaults to
+`<RECORDING_NETWORK_PATH>/{show}`.
+
+The other half comes from `GET /recordings/{playlist_id}/archive-name`, which answers with the
+show, the dated directory and the filename — the playlist's name and its show live in the
+tracking system, which this side has no route to. If DNA cannot answer, the recording is **not**
+archived under some fallback name: the pass fails, both copies stay where they are, and the next
+pass tries again. A name that nothing can reconcile later is worse than a wait.
+
+The path recorded in DNA is derived here, as the archive's location relative to
+`RECORDING_NETWORK_PATH` — so the configured directory stays the single source of the layout. It
+must therefore resolve **under** that root, which is what nginx serves; a directory outside it
+would archive perfectly and produce a URL that resolves nowhere, so the collector refuses instead.
 
 The date directory and the timestamp are the **meeting's**, in studio-local time — so a restarted
 collection recomputes the same destination it was already writing to.
 
 ### A show's first recording
 
-`<show>/lib.recording/pix/ref/dna` must already exist; the collector creates only the `YYYYMMDD`
-directory inside it. Everything above that belongs to the show's own tree, made by the studio with
-the ownership it means it to have — and a share that failed to mount looks exactly like a show
-nobody has set up, so creating one silently would turn either into a recording filed where no one
-will look for it.
+The directory `RECORDING_ARCHIVE_DIR` resolves to must already exist; the collector creates only
+the `YYYYMMDD` directory inside it. Everything above that belongs to a tree the studio owns, made
+with the ownership it means it to have — and a share that failed to mount looks exactly like a
+show nobody has set up, so creating one silently would turn either into a recording filed where
+no one will look for it.
 
-So the first recording for a new show waits for someone to run:
+So the first recording for a new show waits for someone to run the equivalent of:
 
 ```sh
-mkdir -p /shots/<show>/lib.recording/pix/ref/dna
+mkdir -p /shots/<show>/lib.recording/pix/ref/dna     # whatever RECORDING_ARCHIVE_DIR resolves to
 ```
+
+The collector names the full directory in the message it reports, so nobody has to reassemble it
+from a root they were not told.
 
 The wait is **visible**: the collector posts the reason to DNA, the player shows it, and both keep
 polling — so the video appears on its own once the directory exists. Nothing is lost meanwhile,
@@ -130,6 +143,7 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 | `DNA_API_TOKEN` | *(empty)* | only if the backend runs with auth |
 | `COLLECTOR_STAGING_DIR` | `/staging` | must be durable across restarts |
 | `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share ROOT nginx serves (`/shots` in prod) |
+| `RECORDING_ARCHIVE_DIR` | `<root>/{show}` | which directory a show's recordings go in; must resolve under the root |
 | `COLLECTOR_POLL_SECONDS` | `10` | |
 | `COLLECTOR_MAX_PLAYLISTS` | `25` | work-queue depth per pass |
 | `COLLECTOR_UID` / `COLLECTOR_GID` | `1000` / `1000` | who the archives end up owned by |

@@ -2460,17 +2460,20 @@ async def record_recording_archive(
 
 
 @app.get(
-    "/recordings/{playlist_id}/archive-path",
+    "/recordings/{playlist_id}/archive-name",
     tags=["Recordings"],
-    summary="Where this playlist's recording should be archived, and what to call it",
+    summary="What to call this playlist's recording, and which show it belongs to",
     description=(
-        "The path RELATIVE to the share root that the collector should write this recording to: "
-        "`<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist code>_<start>_Recording.mp4`.\n\n"
-        "Answered here rather than decided by the collector because the two facts the name is "
-        "built from — the show the playlist belongs to and what the playlist is called — live in "
-        "the tracking system, which the airgapped side cannot reach. The date directory and the "
-        "timestamp are the MEETING's, in studio-local time, so the answer does not change when "
-        "the collector restarts.\n\n"
+        "Three strings — `show`, `date_dir` and `filename` — for the collector to write beneath "
+        "whatever directory this deployment configures: "
+        "`<YYYYMMDD>/<playlist code>_<start>_Recording.mp4`.\n\n"
+        "Deliberately NOT a path. Where recordings are filed is a fact about the deployment's "
+        "filesystem, known only to the collector, and a naming rule with one studio's folders "
+        "baked into it is one nobody else can adopt. What is answered here is the half that "
+        "cannot be answered there: the playlist's name and its show live in the tracking system, "
+        "which the airgapped side has no route to.\n\n"
+        "The date directory and the timestamp are the MEETING's, in the configured local time, so "
+        "the answer does not change when the collector restarts.\n\n"
         "`suffix` is for the one case the collector cannot resolve alone: a destination that "
         "already exists. Rather than overwrite a file that may be the only copy of a meeting, it "
         "asks again with a distinguishing suffix.\n\n"
@@ -2478,7 +2481,7 @@ async def record_recording_archive(
         "That is a retryable state, not a verdict: nothing has been archived or deleted."
     ),
 )
-async def get_recording_archive_path(
+async def get_recording_archive_name(
     playlist_id: int,
     storage_provider: StorageProviderDep,
     transcription_provider: TranscriptionProviderDep,
@@ -2491,7 +2494,7 @@ async def get_recording_archive_path(
         RecordingMediaService(transcription_provider, storage_provider),
     )
     try:
-        return await service.relative_path(playlist_id, suffix=suffix)
+        return await service.naming(playlist_id, suffix=suffix)
     except RecordingNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ArchiveDestinationUnknown as e:

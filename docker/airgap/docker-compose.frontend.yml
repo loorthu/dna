@@ -100,6 +100,10 @@ services:
       - DNA_API_TOKEN=${DNA_API_TOKEN:-}
       - COLLECTOR_STAGING_DIR=/staging
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
+      # Which directory a show's recordings go in, `{show}` substituted. THIS is where a studio's
+      # layout is configured — the backend supplies only the filename and its dated directory, so
+      # nothing in the shared code knows what a show tree looks like. Unset means <root>/{show}.
+      - RECORDING_ARCHIVE_DIR=${RECORDING_ARCHIVE_DIR:-}
       - COLLECTOR_POLL_SECONDS=${COLLECTOR_POLL_SECONDS:-10}
       # Which side's recordings this collector archives. A DNA backend serves more than one
       # front end, and each has its own collector; the one beside the front end that dispatched

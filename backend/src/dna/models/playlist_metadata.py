@@ -71,12 +71,13 @@ class PlaylistMetadataUpdate(BaseModel):
     )
     recording_network_path: Optional[str] = Field(
         default=None,
-        description="The archived file's path RELATIVE to the share root — "
-        "`<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<name>.mp4`. Never absolute: the mount point "
-        "belongs to the archiving host across the airgap. Its presence is what permits deleting "
-        "the upstream copy; the player turns it into a URL under /recordings/, which nginx "
-        "aliases onto that same root. Rows written before the archives were filed by show and "
-        "date hold a bare filename instead, and no longer resolve under the new root.",
+        description="The archived file's path RELATIVE to the root nginx serves — whatever the "
+        "collector's configured archive directory resolves to, plus `<YYYYMMDD>/<name>.mp4`. "
+        "Never absolute: the mount point belongs to the archiving host across the airgap. Its "
+        "presence is what permits deleting the upstream copy; the player turns it into a URL "
+        "under /recordings/, which nginx aliases onto that same root. Rows written before "
+        "recordings were filed in per-show directories hold a bare filename instead, and no "
+        "longer resolve under the new root.",
     )
     recording_sha256: Optional[str] = Field(
         default=None,

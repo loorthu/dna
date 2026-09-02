@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Protocol
 
+from dna.recording_archive_path import is_safe_relative_path
 from dna.recording_posters import (
     BADGE_SIZE,
     build_poster_command,
@@ -209,7 +210,7 @@ class CollectorClient(Protocol):
     ) -> dict[str, Any]: ...
     async def delete_upstream(self, playlist_id: int) -> dict[str, Any]: ...
     async def get_cuts(self, playlist_id: int) -> dict[str, Any]: ...
-    async def get_archive_path(
+    async def get_archive_name(
         self, playlist_id: int, suffix: str = ""
     ) -> dict[str, Any]: ...
     async def report_blocked(self, playlist_id: int, reason: str) -> dict[str, Any]: ...
@@ -326,12 +327,19 @@ class RecordingCollector:
         client: CollectorClient,
         staging_dir: str,
         archive_root: str,
+        archive_dir_template: Optional[str] = None,
         ffmpeg_path: str = "ffmpeg",
         run_ffmpeg: Optional[Callable[[list[str]], tuple[int, str]]] = None,
     ):
         self.client = client
         self.staging_dir = staging_dir
         self.archive_root = archive_root
+        # Where a show's recordings are filed, with `{show}` standing in for the show. Defaults to
+        # one directory per show directly under the served root — the plain arrangement, for a
+        # deployment that has no opinion. A studio with an existing layout configures its own.
+        self.archive_dir_template = archive_dir_template or os.path.join(
+            archive_root, "{show}"
+        )
         self.ffmpeg_path = ffmpeg_path
         self._run_ffmpeg = run_ffmpeg or _run_ffmpeg_subprocess
         # What has already been reported to DNA, so a blocked playlist is not re-posted every
@@ -348,10 +356,11 @@ class RecordingCollector:
     # resumed the wrong byte stream, and the archive silently overwrote a file whose upstream
     # copy had already been released — destroying the only remaining copy.
     #
-    # The ARCHIVE is named by DNA instead (archive_destination below), from the show and the
-    # meeting's start clock. Those are facts about the meeting rather than ids, so the same
-    # collision cannot come back through them — two recordings of one playlist a minute apart is
-    # the only overlap, and that is handled where it is discovered.
+    # The ARCHIVE is named by DNA instead (archive_destination below), from the playlist and the
+    # meeting's start clock, and placed by this deployment's configured directory. Those are
+    # facts about the meeting rather than ids, so the same collision cannot come back through
+    # them — two recordings of one playlist a minute apart is the only overlap, and that is
+    # handled where it is discovered.
     def _scope(self, playlist_id: int, recording_id: Optional[int]) -> str:
         return (
             f"{playlist_id}-{recording_id}"
@@ -374,13 +383,29 @@ class RecordingCollector:
             self.staging_dir, f"{self._scope(playlist_id, recording_id)}.state.json"
         )
 
+    def archive_directory(self, show: str) -> str:
+        """The directory this deployment files `show`'s recordings in.
+
+        The template is the deployment's, not this code's: which folders a studio keeps recordings
+        under is a fact about that studio's filesystem, and one site's layout baked into the
+        naming rule is a naming rule nobody else can adopt. So it arrives as configuration, with
+        `{show}` wherever the show belongs in it.
+        """
+        return self.archive_dir_template.replace("{show}", show).rstrip("/")
+
     async def archive_destination(
         self, playlist_id: int, recording_id: Optional[int] = None
     ) -> tuple[str, str]:
         """Where this recording is filed, as (relative path, absolute path).
 
-        DNA names it — see ``ArchiveDestinationService``. This side supplies only the root, which
-        is the one part of the path that is a fact about this host.
+        Two halves meeting here, and neither side can supply the other's. DNA says what the file
+        is called and which show it belongs to — both live in the tracking system, which this side
+        cannot reach. This deployment says which directory a show's recordings go in. Only here
+        are both known.
+
+        The relative half is derived from the absolute one rather than sent by DNA, so the
+        configured directory is the single place the layout is written down. It is what DNA
+        stores and nginx serves, which is why it must resolve UNDER the served root.
 
         A destination that already exists is NOT overwritten and NOT quietly renamed here: DNA is
         asked again for a name carrying the recording id. The file already there may be the only
@@ -388,51 +413,65 @@ class RecordingCollector:
         two recordings of one playlist within the same minute is the only way to reach this.
         """
         try:
-            answer = await self.client.get_archive_path(playlist_id)
-            relative = answer["relative_path"]
+            answer = await self.client.get_archive_name(playlist_id)
         except Exception as e:
             # Retryable, and nothing is lost by waiting: the upstream copy is intact and the
             # staged bytes survive. Archiving under some fallback name would be worse — the file
             # would land where nobody looks for it, under a name nothing can later reconcile.
             raise CollectionFailed(
-                f"Playlist {playlist_id}: DNA cannot say where to archive this recording ({e})"
+                f"Playlist {playlist_id}: DNA cannot say what to call this recording ({e})"
             )
-        absolute = os.path.join(self.archive_root, relative)
-        self.require_archive_directory(playlist_id, relative)
+        directory = self.archive_directory(answer["show"])
+        self.require_archive_directory(playlist_id, directory)
+
+        absolute = os.path.join(directory, answer["date_dir"], answer["filename"])
         if os.path.exists(absolute) and recording_id is not None:
-            answer = await self.client.get_archive_path(
+            answer = await self.client.get_archive_name(
                 playlist_id, suffix=f"_rec{recording_id}"
             )
-            relative = answer["relative_path"]
-            absolute = os.path.join(self.archive_root, relative)
+            absolute = os.path.join(directory, answer["date_dir"], answer["filename"])
             logger.warning(
                 "Playlist %s: archive name was already taken — filing this recording as %s",
                 playlist_id,
-                relative,
+                os.path.basename(absolute),
             )
-        return relative, absolute
+        return self.relative_to_root(absolute), absolute
 
-    def require_archive_directory(self, playlist_id: int, relative: str) -> None:
-        """The show's `.../dna` directory must already exist. Only the DATED one is created here.
+    def relative_to_root(self, absolute: str) -> str:
+        """The path under the root nginx serves — what DNA stores and the player fetches.
 
-        Deliberately not `makedirs` all the way up. Everything above the dated directory is part
-        of the show's own tree — made by the studio, owned and permissioned the way the studio
-        means it to be — and a directory this process invents there would be owned by the
-        collector's uid, in a place people expect the studio's layout. It would also hide the
-        real problem: a share that is not mounted, or a show nobody has set up for recording,
-        both look exactly like a missing directory, and silently creating one turns either into
-        a recording filed where no one will look for it.
-
-        So the first recording for a new show waits for a person, once. After that this passes
-        and the dated directory is made per meeting.
+        A configured directory outside that root is a misconfiguration this must not paper over:
+        the file would archive perfectly and every emitted URL would resolve somewhere else, or
+        nowhere. Caught here, where the two settings are first compared, rather than as a 404 a
+        week later.
         """
-        parent = os.path.dirname(os.path.join(self.archive_root, relative))
-        show_directory = os.path.dirname(parent)
-        if not os.path.isdir(show_directory):
+        relative = os.path.relpath(absolute, self.archive_root)
+        if not is_safe_relative_path(relative):
+            raise CollectionFailed(
+                f"{absolute} is not under the served root {self.archive_root} — "
+                f"RECORDING_ARCHIVE_DIR and RECORDING_NETWORK_PATH disagree, and a recording "
+                f"filed there could never be played back"
+            )
+        return relative
+
+    def require_archive_directory(self, playlist_id: int, directory: str) -> None:
+        """The configured directory must already exist. Only the DATED one below it is created.
+
+        Deliberately not `makedirs` all the way up. That directory is part of a tree the studio
+        owns — made with the ownership and permissions it means them to have — and one invented
+        here would carry the collector's uid, in a place people expect their own layout. It would
+        also hide the real problem: a share that is not mounted, and a show nobody has set up for
+        recording, both look exactly like a missing directory, and silently creating one turns
+        either into a recording filed where no one will look for it.
+
+        So the first recording for a new show waits for a person, once. After that this passes and
+        the dated directory is made per meeting.
+        """
+        if not os.path.isdir(directory):
             raise ArchiveDirectoryMissing(
-                f"{os.path.dirname(os.path.dirname(relative))} does not exist on the recordings "
-                f"share. It has to be created once, by hand, before recordings for this show can "
-                f"be filed — everything below it is made automatically."
+                f"{directory} does not exist on the recordings host. It has to be created once, "
+                f"by hand, before recordings for this show can be filed — everything below it is "
+                f"made automatically."
             )
 
     # -- state ----------------------------------------------------------------------------------

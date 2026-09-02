@@ -22,7 +22,7 @@ import os
 from typing import Any, Optional
 
 from dna.models.playlist_metadata import PlaylistMetadataUpdate
-from dna.recording_archive_path import archive_relative_path, is_safe_relative_path
+from dna.recording_archive_path import archive_name, is_safe_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -365,11 +365,11 @@ class ArchiveDestinationUnknown(Exception):
 
 
 class ArchiveDestinationService:
-    """Where this playlist's recording belongs on the share, and what it is called.
+    """What this playlist's recording is called, and which show it belongs to.
 
-    Answered on THIS side of the airgap because the two facts the name is built from — the show
-    the playlist belongs to, and what the playlist is called — live in ShotGrid, which the
-    collector cannot reach. It asks; DNA decides.
+    Answered on THIS side of the airgap because both facts live in the tracking system, which the
+    collector cannot reach. NOT where it goes: the directory is a fact about the deployment's
+    filesystem, configured on the collector, which is the only process that can see the share.
     """
 
     def __init__(self, prodtrack_provider: Any, media_service: RecordingMediaService):
@@ -422,8 +422,8 @@ class ArchiveDestinationService:
             )
         return show, code
 
-    async def relative_path(self, playlist_id: int, suffix: str = "") -> dict[str, Any]:
-        """The path under the share root, plus the facts it was built from.
+    async def naming(self, playlist_id: int, suffix: str = "") -> dict[str, Any]:
+        """The show, the dated directory and the filename — the parts, not a path.
 
         ``suffix`` is the collector's escape hatch for the one case it cannot resolve alone: a
         destination that already exists. It asks again with the recording id, rather than
@@ -437,14 +437,13 @@ class ArchiveDestinationService:
             )
         show, code = self.show_and_code(playlist_id)
         try:
-            path = archive_relative_path(show, code, start, suffix=suffix)
+            parts = archive_name(show, code, start, suffix=suffix)
         except ValueError as e:
             raise ArchiveDestinationUnknown(f"Playlist {playlist_id}: {e}")
         return {
             "playlist_id": playlist_id,
             "recording_id": ids["recording_id"],
-            "show": show,
             "playlist_code": code,
             "start_time_utc": start,
-            "relative_path": path,
+            **parts,
         }

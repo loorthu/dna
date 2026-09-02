@@ -11,9 +11,12 @@ Configuration, all via environment:
     DNA_API_TOKEN            bearer token, if AUTH_PROVIDER is not "none"
     COLLECTOR_STAGING_DIR    scratch space for parts        (default /staging)
     RECORDING_NETWORK_PATH   the share ROOT nginx serves    (default /net/media/dna-recordings)
-                             Recordings are filed beneath it as
-                             <show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<name>.mp4, which DNA
-                             names — this only supplies the root.
+    RECORDING_ARCHIVE_DIR    which directory a show's recordings go in, with `{show}` standing
+                             in for the show   (default <RECORDING_NETWORK_PATH>/{show})
+                             It must resolve UNDER the root above, which is what nginx serves.
+                             DNA supplies only <YYYYMMDD>/<name>.mp4 beneath it: which folders a
+                             studio keeps recordings in is a fact about that studio, and does not
+                             belong in code everyone shares.
     COLLECTOR_POLL_SECONDS   seconds between passes         (default 10)
     COLLECTOR_MAX_PLAYLISTS  work-queue depth per pass       (default 25)
     COLLECTOR_SITE           which side's recordings to collect; unset = the unrouted ones
@@ -124,15 +127,14 @@ class DnaCollectorClient:
         response.raise_for_status()
         return response.json()
 
-    async def get_archive_path(
+    async def get_archive_name(
         self, playlist_id: int, suffix: str = ""
     ) -> dict[str, Any]:
-        # WHERE this recording is filed, decided on the DNA side. The name is built from the show
-        # and the playlist's name, which live in the tracking system that only DNA can reach —
-        # this side supplies the mount point and nothing else.
+        # WHAT this recording is called and which show it belongs to — both live in the tracking
+        # system that only DNA can reach. WHERE it goes is this side's business, and stays here.
         params = {"suffix": suffix} if suffix else {}
         response = await self.client.get(
-            f"/recordings/{playlist_id}/archive-path", params=params
+            f"/recordings/{playlist_id}/archive-name", params=params
         )
         response.raise_for_status()
         return response.json()
@@ -237,8 +239,8 @@ def _require_reachable(path: str, setting: str) -> None:
     if not os.path.isdir(path):
         raise SystemExit(
             f"{setting}={path} is not a directory. It is the ROOT the archives are filed under "
-            f"(<show>/lib.recording/pix/ref/dna/<date>/), so it must be the real mount — an "
-            f"absent one usually means the share is not mounted in this container."
+            f"and the one nginx serves, so it must be the real mount — an absent one usually "
+            f"means the share is not mounted in this container."
         )
     if not os.access(path, os.R_OK | os.X_OK):
         raise SystemExit(
@@ -252,6 +254,7 @@ async def run_forever() -> None:
     base_url = os.environ.get("DNA_API_URL", "http://localhost:8000")
     staging = os.environ.get("COLLECTOR_STAGING_DIR", "/staging")
     archive = os.environ.get("RECORDING_NETWORK_PATH", "/net/media/dna-recordings")
+    archive_dir = os.environ.get("RECORDING_ARCHIVE_DIR") or None
     interval = float(os.environ.get("COLLECTOR_POLL_SECONDS", "10"))
     max_playlists = int(os.environ.get("COLLECTOR_MAX_PLAYLISTS", "25"))
     site = os.environ.get("COLLECTOR_SITE") or None
@@ -265,8 +268,10 @@ async def run_forever() -> None:
         client=client,
         staging_dir=staging,
         archive_root=archive,
+        archive_dir_template=archive_dir,
         ffmpeg_path=resolve_ffmpeg(),
     )
+    logger.info("Filing recordings under %s", collector.archive_dir_template)
 
     stopping = asyncio.Event()
 

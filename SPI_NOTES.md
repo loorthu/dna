@@ -615,36 +615,58 @@ filename and nginx aliasing `/recordings/` onto that directory. They now go wher
 were in the meeting already look:
 
 ```
-/shots/<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist>_<start>_Recording.mp4
 /shots/nite/lib.recording/pix/ref/dna/20260901/NITE_Director_Review_2026_09_01_13_52_PDT_Recording.mp4
 ```
 
-Only `/shots` is configuration (`RECORDING_NETWORK_PATH`); everything after it is derived.
+**That layout is configuration, not code**, and the split is the point:
 
-**DNA names the file, and the collector writes it.** That split is forced: the show is the
-project's `tank_name` and the name is the playlist's `code`, both of which live in ShotGrid, which
-the airgapped side has no route to. So the collector asks `GET /recordings/{playlist_id}/archive-path`
-and supplies nothing but the root. The rule itself is a pure function in
-`dna/recording_archive_path.py`, exercised in the backend suite where there is no share to write to.
+```
+RECORDING_ARCHIVE_DIR  /  <YYYYMMDD>  /  <playlist>_<start>_Recording.mp4
+└─ docker/airgap/.env ─┘  └────────── DNA ─────────────────────────────┘
+```
+
+`RECORDING_ARCHIVE_DIR=/shots/{show}/lib.recording/pix/ref/dna` lives in the airgap `.env` and is
+read by the collector — the only process that can see the share. Nothing in `backend/src` or the
+collector's own source knows what a show tree looks like; a `grep` for `lib.recording` across
+either comes back empty, and that is worth keeping true. This repo is meant to go upstream to
+ASWF, and a naming rule with SPI's folders compiled into it is one no other studio can adopt.
+Unset, it defaults to `<RECORDING_NETWORK_PATH>/{show}`.
+
+Note the braces. **`$show` would not work**: docker compose interpolates `$show` and `${show}`
+while reading `.env` and would substitute an empty string before the collector ever saw it.
+
+The other half comes from `GET /recordings/{playlist_id}/archive-name`, which answers with the
+show, the dated directory and the filename — nothing resembling a path. That half has to be
+answered on the DNA side because the playlist's name and its show live in ShotGrid, which the
+airgapped side has no route to. The rule is a pure function in `dna/recording_archive_path.py`,
+exercised in the backend suite where there is no share to write to.
 
 If DNA cannot answer — ShotGrid down, no playlist name, no start clock — the recording is **not**
-archived under a fallback name. The pass fails, both copies stay put, the next pass retries. A file
-that landed somewhere nobody looks, under a name nothing can reconcile, is worse than a wait.
+archived under a fallback name. The pass fails, both copies stay put, the next pass retries. A
+file that landed somewhere nobody looks, under a name nothing can reconcile, is worse than a wait.
+
+**The show is the project's `tank_name`, falling back to its `name`.** tank_name is optional in
+ShotGrid and the on-prem instance leaves it null (project 375, `kpop`), so the fallback is what
+makes it work at all. Safe to guess only because of the mkdir rule below: a wrong guess archives
+nothing and reports the path it expected.
 
 **The date directory and the timestamp are the meeting's, in studio-local time**, not the
 archiver's. It reads correctly (`13_52_PDT` is when it happened to the people in the room) and,
 more importantly, it is stable: the collector re-derives the destination when it resumes, and a
-directory that moved with the calendar would send a restarted collection somewhere the earlier pass
-had not written.
+directory that moved with the calendar would send a restarted collection somewhere the earlier
+pass had not written.
 
 ### What this changed elsewhere, and the two things to watch
 
-- **DNA now stores the path relative to the share root**, not a basename — the show and the date
+- **DNA now stores the path relative to the served root**, not a basename — the show and the date
   are part of the file's address. It still refuses anything absolute or containing a traversal;
   what it deliberately no longer does is flatten the value, which used to be the guard.
   *This reverses the earlier decision to keep only the filename.* The reasoning behind that one
   still holds for the **mount point**, which is still not recorded; what is recorded is the part
-  below it, which nginx needs to serve the file at all.
+  below it, which nginx needs to serve the file at all. The collector DERIVES that relative path
+  from its own configured directory, so the layout has exactly one home; a directory outside
+  `RECORDING_NETWORK_PATH` is refused rather than archived, because it would produce a file that
+  is perfectly saved and permanently unplayable.
 - **nginx aliases `/recordings/` onto the share ROOT**, so the URL carries the whole relative path.
   That would otherwise mean publishing `/shots` over HTTP, so the location is a **regex restricted
   to `.mp4` and `.jpg`** — the rest of a show tree is not reachable even though it sits under the
@@ -667,10 +689,10 @@ had not written.
 
 ### A show's first recording needs a directory made by hand
 
-`<show>/lib.recording/pix/ref/dna` is **not** created by the collector. Everything above the dated
-directory is part of the show's own tree — made by the studio, owned and permissioned the way the
-studio means it to be — and a directory this process invented there would be owned by the
-collector's uid, in a place people expect the studio's layout. It would also paper over the two
+The directory `RECORDING_ARCHIVE_DIR` resolves to is **not** created by the collector. Everything
+above the dated directory is part of the show's own tree — made by the studio, owned and
+permissioned the way the studio means it to be — and a directory this process invented there
+would be owned by the collector's uid, in a place people expect the studio's layout. It would also paper over the two
 failures that look identical to a missing directory: a share that did not mount, and a show nobody
 has set up for recording. Either one, silently created, becomes a recording filed where nobody
 will look for it.
@@ -682,6 +704,9 @@ mkdir -p /shots/<show>/lib.recording/pix/ref/dna
 ```
 
 Everything below that is automatic — the collector makes the `YYYYMMDD` directory per meeting.
+
+The message names the **full** directory, not a fragment relative to a root nobody told you —
+the collector composes it, and the collector is the side that knows the root.
 
 **The wait is visible, not silent.** The collector reports the reason to DNA
 (`POST /recordings/{playlist_id}/blocked`), which holds it on the playlist and answers the cut

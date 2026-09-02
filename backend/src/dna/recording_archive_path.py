@@ -1,18 +1,19 @@
-"""Where an archived meeting recording is written, and what it is called.
+"""What an archived meeting recording is CALLED, and the dated directory it sits in.
 
-The rule, which is a studio convention rather than anything this system invented:
+    <YYYYMMDD>/<playlist code>_<start>_Recording.mp4
 
-    /shots/<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<playlist code>_<start>_Recording.mp4
-
-Only the leading root is deployment configuration (``RECORDING_NETWORK_PATH``, ``/shots`` in
-prod). Everything after it is derived here, from the show the playlist belongs to and the moment
-its meeting started — so the file is findable by the people who work on that show, in the place
-they already look, without anyone being told a playlist id.
+WHERE that pair goes is not decided here, and deliberately so. The directory a studio files
+recordings in is a fact about that studio's filesystem — at SPI it threads through a show's
+reference library, elsewhere it will be something else entirely — and a naming rule that hard-codes
+one site's folders is a naming rule nobody else can adopt. So the deployment configures the
+directory (``RECORDING_ARCHIVE_DIR`` on the collector, which is the only process that can see the
+share), and this module supplies the part that is the same everywhere: a name derived from the
+playlist and the moment its meeting started, under a directory named for the day.
 
 WHY THE NAME IS DERIVED HERE AND NOT BY THE COLLECTOR: the collector is on the airgapped side and
-knows only playlist ids and bytes. The show code and the playlist's name live in ShotGrid, which
-only DNA can reach. So DNA names the file and the collector writes it — which also keeps the rule
-in the backend's test suite, where it can be exercised without a share to write to.
+knows only playlist ids and bytes. The playlist's name, and the show it belongs to, live in the
+tracking system that only DNA can reach. So DNA says what to call the file and which show it
+belongs to; the deployment says where that goes; the collector puts the two together.
 
 THE DATE DIRECTORY IS THE MEETING'S, NOT TODAY'S. Two reasons, and the second is the load-bearing
 one: it agrees with the timestamp in the filename beside it, and it is STABLE. The collector
@@ -20,8 +21,8 @@ re-derives the destination when it resumes, and a meeting that runs past midnigh
 collector restarted the next morning — would otherwise compute a different directory than the one
 it already wrote to, defeating both the resume logic and the refuse-to-overwrite guard.
 
-Timestamps are rendered in the studio's local time, not UTC: the name is read by people who were
-in the meeting, and 13_52_PDT is the time it happened to them.
+Timestamps are rendered in local time, not UTC: the name is read by people who were in the
+meeting, and 13_52_PDT is the time it happened to them.
 """
 
 import logging
@@ -32,11 +33,6 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# The path between the show root and the dated directory. A studio convention, so it is a
-# constant rather than a knob; the override exists for test deployments whose share is not a real
-# show tree, and prod should never set it.
-DEFAULT_SUBPATH = "lib.recording/pix/ref/dna"
-
 # The clock the directory date and the filename timestamp are rendered in.
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 
@@ -46,10 +42,6 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 SUFFIX = "_Recording"
-
-
-def archive_subpath() -> str:
-    return os.getenv("RECORDING_ARCHIVE_SUBPATH", DEFAULT_SUBPATH).strip("/")
 
 
 def archive_timezone():
@@ -118,31 +110,29 @@ def archive_filename(
     return f"{name}_{format_start(local_start)}{SUFFIX}{'_' + tail if tail else ''}.mp4"
 
 
-def archive_relative_path(
+def archive_name(
     show: str,
     playlist_code: str,
     start_time_utc: str,
     tz=None,
     suffix: str = "",
-) -> str:
-    """The archive's path RELATIVE to the share root — the value DNA stores and nginx serves.
+) -> dict[str, str]:
+    """What to call this recording, and which day's directory it belongs in.
 
-    Relative because the root differs per deployment and, in the airgapped one, belongs to the
-    other side: what DNA needs to hold is enough to build a URL and to prove a durable copy
-    exists, and the leading mount point is neither.
+    Three strings and no path: ``show`` for the deployment to place, ``date_dir`` and ``filename``
+    to join beneath wherever that turns out to be. The show is sanitized here rather than by the
+    caller because it is the one component that comes from outside and ends up in a directory
+    name — a project called "Foo / Bar" must not become two levels of anything.
     """
     show_dir = sanitize(show)
     if not show_dir:
         raise ValueError("no show for this playlist — cannot place its recording")
     local = parse_start_time(start_time_utc).astimezone(tz or archive_timezone())
-    return "/".join(
-        [
-            show_dir,
-            archive_subpath(),
-            local.strftime("%Y%m%d"),
-            archive_filename(playlist_code, local, suffix),
-        ]
-    )
+    return {
+        "show": show_dir,
+        "date_dir": local.strftime("%Y%m%d"),
+        "filename": archive_filename(playlist_code, local, suffix),
+    }
 
 
 def is_safe_relative_path(path: str) -> bool:

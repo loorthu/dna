@@ -223,9 +223,9 @@ class RecordingArchiveRequest(BaseModel):
 
     network_path: str = Field(
         ...,
-        description="Path of the archived media RELATIVE to the share root, as "
-        "GET /recordings/{playlist_id}/archive-path named it — "
-        "`<show>/lib.recording/pix/ref/dna/<YYYYMMDD>/<name>.mp4`. Not absolute: the mount point "
+        description="Path of the archived media RELATIVE to the root the player is served from "
+        "— the collector's configured archive directory, plus the `<YYYYMMDD>/<name>.mp4` that "
+        "GET /recordings/{playlist_id}/archive-name supplied. Not absolute: the mount point "
         "belongs to the archiving host, which is across the airgap and holds the only copy, so "
         "its layout should not be recorded here. An absolute path is still accepted from an "
         "older collector and reduced to its basename.",

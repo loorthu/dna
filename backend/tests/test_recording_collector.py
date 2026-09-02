@@ -17,7 +17,7 @@ import os
 
 import pytest
 
-from dna.recording_archive_path import archive_relative_path
+from dna.recording_archive_path import archive_name
 from dna.recording_collector import (
     FAILURES_BEFORE_REPORTING,
     ArchiveDirectoryMissing,
@@ -132,8 +132,8 @@ class FakeClient:
         self.deleted.append(playlist_id)
         return {"ok": True}
 
-    async def get_archive_path(self, playlist_id: int, suffix: str = "") -> dict:
-        self.calls.append(f"archive-path({suffix})" if suffix else "archive-path")
+    async def get_archive_name(self, playlist_id: int, suffix: str = "") -> dict:
+        self.calls.append(f"archive-name({suffix})" if suffix else "archive-name")
         self.archive_path_calls.append(suffix)
         if self.archive_path_error:
             raise self.archive_path_error
@@ -142,10 +142,9 @@ class FakeClient:
         return {
             "playlist_id": playlist_id,
             "recording_id": self.recording_id,
-            "show": self.show,
             "playlist_code": self.playlist_code,
             "start_time_utc": self.archive_start,
-            "relative_path": archive_relative_path(
+            **archive_name(
                 self.show, self.playlist_code, self.archive_start, suffix=suffix
             ),
         }
@@ -171,12 +170,17 @@ class FakeClient:
         return {"ok": True}
 
 
+# A deployment's layout, standing in for the one an SPI .env configures. Deliberately several
+# levels deep and not derivable from anything in the backend: these tests are the proof that the
+# collector treats it as opaque configuration rather than a shape it knows.
+ARCHIVE_DIR_TEMPLATE = "{show}/lib.recording/pix/ref/dna"
+
+
 def show_directory(archive_root, client) -> str:
-    """`<root>/<show>/lib.recording/pix/ref/dna` — the directory the studio makes, not this code."""
-    relative = archive_relative_path(
-        client.show, client.playlist_code, client.archive_start
+    """The configured directory for this show — the one the studio makes, not this code."""
+    return os.path.join(
+        archive_root, ARCHIVE_DIR_TEMPLATE.replace("{show}", client.show)
     )
-    return os.path.join(archive_root, os.path.dirname(os.path.dirname(relative)))
 
 
 def make_collector(tmp_path, client, run_ffmpeg=None, show_exists=True):
@@ -207,6 +211,7 @@ def make_collector(tmp_path, client, run_ffmpeg=None, show_exists=True):
         client=client,
         staging_dir=str(staging),
         archive_root=str(archive),
+        archive_dir_template=os.path.join(str(archive), ARCHIVE_DIR_TEMPLATE),
         ffmpeg_path="ffmpeg",
         run_ffmpeg=run_ffmpeg or fake_ffmpeg,
     )
@@ -218,18 +223,21 @@ def make_collector_reusing(collector, client):
         client=client,
         staging_dir=collector.staging_dir,
         archive_root=collector.archive_root,
+        archive_dir_template=collector.archive_dir_template,
         ffmpeg_path=collector.ffmpeg_path,
         run_ffmpeg=collector._run_ffmpeg,
     )
 
 
 def expected_archive(collector, client, suffix: str = "") -> str:
-    """Where this client's recording lands, worked out the same way DNA works it out."""
+    """Where this client's recording lands: the deployment's directory, plus DNA's naming."""
+    parts = archive_name(
+        client.show, client.playlist_code, client.archive_start, suffix=suffix
+    )
     return os.path.join(
-        collector.archive_root,
-        archive_relative_path(
-            client.show, client.playlist_code, client.archive_start, suffix=suffix
-        ),
+        show_directory(collector.archive_root, client),
+        parts["date_dir"],
+        parts["filename"],
     )
 
 
@@ -444,13 +452,14 @@ async def test_the_full_handover_happens_in_the_only_safe_order(tmp_path):
         "delete"
     ), "the archive must be recorded BEFORE the upstream copy is released"
     archived_name, archived_hash = client.archived[0]
-    assert archived_name == archive_relative_path(
-        client.show, client.playlist_code, VIDEO_T0
+    assert archived_name == os.path.relpath(
+        expected_archive(collector, client), collector.archive_root
     ), (
-        "DNA is told the path RELATIVE to the share root — enough to find the file under the "
+        "DNA is told the path RELATIVE to the served root — enough to find the file under the "
         "root nginx serves, and not where this host mounts it: the archiving host is across the "
-        "airgap and its layout is nobody else's business"
+        "airgap and its mount point is nobody else's business"
     )
+    assert not archived_name.startswith("/")
     archived_path = expected_archive(collector, client)
     assert os.path.exists(archived_path)
     assert hashlib.sha256(open(archived_path, "rb").read()).hexdigest() == archived_hash
@@ -652,7 +661,7 @@ async def test_a_recording_is_not_archived_at_all_if_dna_cannot_name_it(tmp_path
     client.archive_path_error = RuntimeError("ShotGrid unreachable")
     collector = make_collector(tmp_path, client)
 
-    with pytest.raises(CollectionFailed, match="cannot say where to archive"):
+    with pytest.raises(CollectionFailed, match="cannot say what to call"):
         await collector.poll_once(1)
 
     assert client.archived == [], "nothing may be recorded as archived"
@@ -686,12 +695,11 @@ async def test_a_show_with_no_recording_directory_is_not_archived_and_says_why(
 
     playlist_id, reason = client.blocked[0]
     assert playlist_id == 1
-    assert (
-        "nite/lib.recording/pix/ref/dna" in reason
-    ), "the message has to name the directory to create — it is the only part anyone can act on"
-    assert (
-        collector.archive_root not in reason
-    ), "relative to the share root: the archiving host's mount point stays on that host"
+    assert show_directory(collector.archive_root, client) in reason, (
+        "the message names the FULL directory to create — a path someone has to reassemble from "
+        "a root they were never told is not actionable. The collector composes this message, and "
+        "the collector is the side that knows the root"
+    )
 
 
 @pytest.mark.asyncio
