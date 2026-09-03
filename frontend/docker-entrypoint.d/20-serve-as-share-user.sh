@@ -26,6 +26,22 @@ gid="${NGINX_SHARE_GID:-}"
 
 conf=/etc/nginx/nginx.conf
 
+# ALREADY the right identity — which is how a scheduler that pins the uid runs this, OpenShift
+# among them: the pod starts as the service account and there is nobody to drop privileges to.
+# nginx cannot setuid from a non-root master anyway, so the workers inherit this uid and the
+# right amount of work here is none. Said out loud because a silent skip and a silent failure
+# look identical in a log.
+if [ "$(id -u)" != "0" ]; then
+    if [ -n "$uid" ] && [ "$(id -u)" != "$uid" ]; then
+        echo "$0: WARNING running as $(id -u):$(id -g), not the requested $uid:${gid:-?}." \
+             "Cannot change identity without root — the share will refuse reads unless the" \
+             "scheduler was told to run this as an account it accepts."
+    else
+        echo "$0: already running as $(id -u):$(id -g); workers inherit it, nothing to do"
+    fi
+    exit 0
+fi
+
 # Reuse the group that already holds this gid — on Alpine, 20 is `dialout` — rather than failing
 # on a duplicate.
 group="$(getent group "$gid" 2>/dev/null | cut -d: -f1)"
