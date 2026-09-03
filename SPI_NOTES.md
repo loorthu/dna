@@ -734,9 +734,18 @@ and as `65534:20` it also worked, which says the deciding factor is **group memb
 mode bits: the share is served over NFS and the server does not know uid 101, so "other" gets it
 nowhere.
 
-So the frontend service joins `COLLECTOR_GID` via `group_add`. Expressed against that variable
-rather than a literal `20`, because the invariant is "nginx is in the group the collector writes
-as" — the two settings describe one share, and hard-coding the number would let them drift.
+So the frontend must run its workers in `COLLECTOR_GID` — the group the collector writes as.
+Expressed against that variable rather than a literal `20`, because the two settings describe one
+share and a hard-coded number would let them drift.
+
+**`group_add` does not do it,** which cost a round: nginx drops privileges in each worker with
+`initgroups()` before `setuid()`, and that REPLACES the supplementary group list with whatever
+`/etc/group` says the `nginx` user belongs to. A group handed to the container's init process is
+discarded the moment a worker starts — the container has gid 20 and the process serving the files
+does not. So `NGINX_SHARE_GID` is passed instead, and
+`frontend/docker-entrypoint.d/20-join-share-group.sh` adds the nginx user to that group inside
+the container before nginx starts. Verified on a scratch image: the worker's `/proc/<pid>/status`
+reports `Groups: 20 101 101`, and an unset value leaves it at `101 101` and serves normally.
 
 Worth knowing: `frontend/nginx.conf` in the repo is **dead** — nothing copies or mounts it, so the
 container runs the base image's config and its `user nginx;`. That is why the worker was uid 101

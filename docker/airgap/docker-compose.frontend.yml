@@ -52,6 +52,15 @@ services:
       # here and the URL carries the rest (<show>/.../<date>/<name>.mp4).
       # Substituted into default.conf.template at container start, like BACKEND_URL.
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
+      # The group nginx must join to READ what the collector wrote. On a network share that is
+      # not a formality: the files are 0644 inside 0755 directories and the stock `nginx` uid is
+      # refused anyway, because the server decides by identity and does not know that uid.
+      #
+      # It is the group the collector WRITES as, so it follows COLLECTOR_GID rather than
+      # repeating a number that could drift from it. NOT `group_add`: nginx calls initgroups()
+      # when a worker drops privileges, which discards groups given to the container's init
+      # process — see frontend/docker-entrypoint.d/20-join-share-group.sh.
+      - NGINX_SHARE_GID=${COLLECTOR_GID:-}
     volumes:
       # The archived recordings, served straight off the share by nginx (see
       # default.conf.template). Read-only: the collector writes them, this only
@@ -63,13 +72,6 @@ services:
       # leaving nginx serving 404s for files that are plainly there on the host. Same path
       # inside as outside, so a link resolves to the same string on both sides.
       - /net:/net:ro
-    # nginx must be able to READ what the collector wrote, and on the share that is decided by
-    # identity rather than by the mode bits: the files are 0644 under directories that are 0755,
-    # and the stock `nginx` user (uid 101) is refused all the same, because it is a uid the
-    # server does not know. Joining the group the collector writes AS is what grants it — so this
-    # follows COLLECTOR_GID rather than repeating a number, and stays right if that ever moves.
-    group_add:
-      - "${COLLECTOR_GID:-1000}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
