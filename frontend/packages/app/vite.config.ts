@@ -36,7 +36,13 @@ if (recordingsUrl) {
   };
 }
 
+// Where the app is served from. Root unless a site mounts it under a prefix (SPI serves it at
+// /dna/ beside its other tools); Vite rewrites every asset URL with this and re-exposes it as
+// import.meta.env.BASE_URL, which src/basePath.ts reads so there is only ever one value.
+const base = process.env.VITE_BASE_PATH?.trim() || '/';
+
 export default defineConfig({
+  base,
   plugins: [react()],
   resolve: {
     alias: {

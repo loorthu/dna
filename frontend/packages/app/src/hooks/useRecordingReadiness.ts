@@ -10,6 +10,7 @@ import { useCapabilities } from './useCapabilities';
 import { usePlaylistMetadata } from './usePlaylistMetadata';
 import { useRecordingCuts } from './useRecordingCuts';
 import { useBotSession } from './useTranscription';
+import { withBase } from '../basePath';
 
 /**
  * Whether the meeting behind a playlist has finished landing — asked before notes go out.
@@ -457,7 +458,7 @@ function useMediaProbe(mediaUrl: string | null): MediaProbe {
         // `no-store` because a 404 from a file that has not landed yet must not be remembered
         // once it has — the next poll has to see the real answer, not the browser's memory of
         // the last one.
-        const response = await fetch(mediaUrl!, {
+        const response = await fetch(withBase(mediaUrl!), {
           method: 'HEAD',
           cache: 'no-store',
         });

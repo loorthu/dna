@@ -15,6 +15,7 @@ import {
   type DNAEvent,
   type EventCallback,
 } from '@dna/core';
+import { basePath } from '../basePath';
 
 export type { EventType, DNAEvent, EventCallback };
 
@@ -33,10 +34,15 @@ const EventContext = createContext<EventContextValue | null>(null);
 // When VITE_WS_URL is unset, derive it from the page origin so the WebSocket
 // hits the same host that served the app (e.g. an nginx reverse-proxy that
 // forwards /ws to the backend). Falls back to localhost for `vite` dev.
+//
+// basePath() carries its own trailing slash and is "/" unless the app is mounted under a prefix,
+// so this is byte-identical to `${host}/ws` for a root-served deployment. VITE_WS_URL, when set,
+// is passed to `new WebSocket()` verbatim and so must stay an absolute URL — it cannot be made
+// base-aware, which is the reason the deployments that need a prefix leave it empty.
 const WEBSOCKET_URL =
   import.meta.env.VITE_WS_URL ||
   (typeof window !== 'undefined' && window.location.host
-    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${basePath()}ws`
     : 'ws://localhost:8000/ws');
 
 interface EventProviderProps {

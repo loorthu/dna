@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { parseReviewRoute } from './route';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { parseReviewRoute, currentReviewRoute } from './route';
 
 /**
  * Which addresses belong to the review page.
@@ -71,5 +71,45 @@ describe('parseReviewRoute', () => {
     ['/review/id/-3', 'negative'],
   ])('rejects %s (%s)', (pathname) => {
     expect(parseReviewRoute(pathname)).toBeNull();
+  });
+});
+
+/**
+ * The same addresses when the app is mounted under a prefix. `parseReviewRoute` is unchanged and
+ * still sees app-relative paths — `currentReviewRoute` takes the mount path off first — so this
+ * covers the seam rather than re-testing the parser.
+ */
+describe('currentReviewRoute under a mount path', () => {
+  const at = (base: string, pathname: string, hash = '') => {
+    vi.stubEnv('BASE_URL', base);
+    vi.stubGlobal('window', { location: { pathname, hash } });
+  };
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('reads a review address served at the root', () => {
+    at('/', '/review/id/461876');
+    expect(currentReviewRoute()).toEqual({
+      kind: 'id',
+      playlistId: 461876,
+      anchor: null,
+    });
+  });
+
+  it('reads the same address served under /dna/', () => {
+    at('/dna/', '/dna/review/id/461876', '#shot_010');
+    expect(currentReviewRoute()).toEqual({
+      kind: 'id',
+      playlistId: 461876,
+      anchor: 'shot_010',
+    });
+  });
+
+  it('leaves the coordinator app its own root', () => {
+    at('/dna/', '/dna/');
+    expect(currentReviewRoute()).toBeNull();
   });
 });

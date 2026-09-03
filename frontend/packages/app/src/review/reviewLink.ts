@@ -1,5 +1,7 @@
 import type { ReviewLink } from '@dna/core';
 
+import { withBase } from '../basePath';
+
 /**
  * The address of one shot on the artist page, for the reviewing tool's button.
  *
@@ -18,5 +20,8 @@ export function reviewShotHref(
   if (!link?.url_path) return null;
   const anchor =
     versionId != null ? link.anchors[String(versionId)] : undefined;
-  return anchor ? `${link.url_path}#${anchor}` : link.url_path;
+  // The backend builds this root-relative; withBase moves it under the mount path, and is the
+  // identity for a root-served deployment.
+  const path = withBase(link.url_path);
+  return anchor ? `${path}#${anchor}` : path;
 }

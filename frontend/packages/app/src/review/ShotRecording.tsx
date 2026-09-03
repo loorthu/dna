@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import type { ReviewCut, ReviewRecording } from '@dna/core';
 import { useVideoSeek } from '../hooks/useVideoSeek';
 import { formatClock, recordingMessage } from './recordingMessage';
+import { withBase } from '../basePath';
 
 /**
  * The meeting recording, opened at the point this shot was discussed.
@@ -90,7 +91,7 @@ export function ShotRecording({ recording, cuts }: ShotRecordingProps) {
     <Wrapper>
       <Video
         ref={videoRef}
-        src={recording.media_url}
+        src={withBase(recording.media_url)}
         controls
         preload="metadata"
         onLoadedMetadata={onLoadedMetadata}

@@ -8,6 +8,7 @@ import { useAuth } from '../contexts';
 import { useVersionStatuses } from '../hooks';
 import { ShotCard } from './ShotCard';
 import type { ReviewRoute } from './route';
+import { withBase } from '../basePath';
 import {
   resolvedPlaylistId,
   useReviewPlaylist,
@@ -332,7 +333,7 @@ function Ambiguous({
               {/* The ref's own path, not one rebuilt here: it is deliberately the id form, since
                   the name form is the address that was ambiguous in the first place. */}
               <ChoiceLink
-                href={`${match.url_path}${anchor ? `#${anchor}` : ''}`}
+                href={`${withBase(match.url_path)}${anchor ? `#${anchor}` : ''}`}
               >
                 <span>{match.playlist_name}</span>
                 <ChoiceMeta>

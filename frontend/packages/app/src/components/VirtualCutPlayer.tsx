@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styled from 'styled-components';
 import type { PlaylistRecordingCuts, RecordingCut } from '@dna/core';
 import { useVideoSeek } from '../hooks/useVideoSeek';
+import { withBase } from '../basePath';
 
 /**
  * The meeting recording, scrubbed to the spans that discussed one version.
@@ -209,7 +210,7 @@ export function VirtualCutPlayer({
     <Wrapper>
       <Video
         ref={videoRef}
-        src={data.media_url}
+        src={withBase(data.media_url)}
         controls
         preload="metadata"
         onLoadedMetadata={handleLoadedMetadata}

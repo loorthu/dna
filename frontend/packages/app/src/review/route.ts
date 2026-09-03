@@ -20,6 +20,8 @@
  * playlists. `id` is therefore a reserved first segment and cannot be a project.
  */
 
+import { stripBase } from '../basePath';
+
 export const REVIEW_PREFIX = '/review';
 export const REVIEW_ID_SEGMENT = 'id';
 
@@ -75,10 +77,19 @@ export function parseReviewRoute(
   return { kind: 'name', projectSlug: first, playlistSlug: second, anchor };
 }
 
-/** The current route, read from `window.location`. */
+/**
+ * The current route, read from `window.location`.
+ *
+ * The mount path comes off first, so `REVIEW_PREFIX` above stays the app-relative constant it
+ * reads as and `parseReviewRoute` stays a pure function of a path. A site serving DNA at `/dna/`
+ * therefore matches `/dna/review/...` without a second prefix appearing in the parser.
+ */
 export function currentReviewRoute(): ReviewRoute | null {
   if (typeof window === 'undefined') return null;
-  return parseReviewRoute(window.location.pathname, window.location.hash);
+  return parseReviewRoute(
+    stripBase(window.location.pathname),
+    window.location.hash
+  );
 }
 
 function decodeSegment(segment: string): string {
