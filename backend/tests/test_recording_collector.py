@@ -14,6 +14,7 @@ network and no share.
 import hashlib
 import json
 import os
+import stat
 
 import pytest
 
@@ -744,6 +745,89 @@ async def test_a_pass_that_finally_works_forgets_the_failures_behind_it(tmp_path
 
     assert collector._failures == {}
     assert client.blocked == []
+
+
+@pytest.mark.asyncio
+async def test_a_directory_outside_the_served_root_is_named_as_a_config_mistake(
+    tmp_path,
+):
+    """Asked BEFORE whether the directory exists, because it is a different problem.
+
+    The two settings are separate — one is what gets published over HTTP, the other is where a
+    show's files go — so they can disagree. Reported as "does not exist" it sends someone to
+    create a directory; the truth is that nothing created there could ever be served. Getting
+    that order wrong cost an afternoon of looking at the wrong filesystem.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client, show_exists=False)
+    collector.archive_dir_template = str(tmp_path / "somewhere-else" / "{show}")
+
+    with pytest.raises(CollectionFailed, match="not under RECORDING_NETWORK_PATH"):
+        await collector.poll_once(1)
+
+    assert client.archived == [] and client.deleted == []
+    reason = str(client.blocked)
+    assert "does not exist" not in reason, "the directory is not the problem"
+
+
+@pytest.mark.asyncio
+async def test_a_directory_that_is_the_root_itself_is_allowed(tmp_path):
+    """A deployment filing everything in one folder is odd but not wrong, and `relpath` calls
+    that case "." — which must not read as an escape."""
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+    collector.archive_dir_template = collector.archive_root
+
+    collector.require_under_root(collector.archive_root)  # does not raise
+
+
+@pytest.mark.asyncio
+async def test_the_archive_is_readable_by_whoever_serves_it(tmp_path):
+    """A umask decided this until it was set explicitly, and the symptom was a bare 403.
+
+    The collector writes the file and a DIFFERENT user in a different container reads it. Under a
+    restrictive umask `os.replace` carries a 0600 staging file straight onto the share, and the
+    dated directory comes out 0700 — both invisible to nginx, reported to the viewer as a
+    permission error with nothing tying it back to a umask.
+    """
+    old = os.umask(0o077)
+    try:
+        client = FakeClient([b"AAAA"], complete=True)
+        collector = make_collector(tmp_path, client)
+        await collector.poll_once(1)
+    finally:
+        os.umask(old)
+
+    archive = expected_archive(collector, client)
+    assert stat.S_IMODE(os.stat(archive).st_mode) == 0o644
+    assert stat.S_IMODE(os.stat(os.path.dirname(archive)).st_mode) == 0o755
+    posters = [n for n in os.listdir(os.path.dirname(archive)) if n.endswith(".jpg")]
+    assert posters, "the posters are served the same way and need the same mode"
+    for name in posters:
+        poster = os.path.join(os.path.dirname(archive), name)
+        assert stat.S_IMODE(os.stat(poster).st_mode) == 0o644
+
+
+@pytest.mark.asyncio
+async def test_a_mode_that_cannot_be_set_does_not_lose_the_recording(
+    tmp_path, monkeypatch
+):
+    """The media is already on the share by then. Refusing to finish the handover over a
+    permission bit would strand the recording to fix something a human fixes in one command.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client)
+
+    import dna.recording_collector as module
+
+    monkeypatch.setattr(
+        module.os, "chmod", lambda *a, **k: (_ for _ in ()).throw(OSError("read-only"))
+    )
+
+    result = await collector.poll_once(1)
+
+    assert result["status"] == "archived"
+    assert client.deleted == [1], "the handover still completed"
 
 
 @pytest.mark.asyncio

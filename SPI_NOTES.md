@@ -725,6 +725,23 @@ not here, where hiding SPI's own mount behind an indirection buys nothing and co
 If the volumes underneath automount, a plain bind will not see them appear after the container
 starts — mount the specific volume, or make `/net` rshared on the host and ask for propagation.
 
+### nginx needs the share's group, not just readable bits
+
+Playback answered **403** with everything apparently correct: `0644` files inside `0755`
+directories, owner `2443:20`, every parent `drwxr-xr-x`. The stock nginx worker (uid 101) was
+refused all the same — it could not even list the dated directory. Read as `2443:20` it worked,
+and as `65534:20` it also worked, which says the deciding factor is **group membership**, not the
+mode bits: the share is served over NFS and the server does not know uid 101, so "other" gets it
+nowhere.
+
+So the frontend service joins `COLLECTOR_GID` via `group_add`. Expressed against that variable
+rather than a literal `20`, because the invariant is "nginx is in the group the collector writes
+as" — the two settings describe one share, and hard-coding the number would let them drift.
+
+Worth knowing: `frontend/nginx.conf` in the repo is **dead** — nothing copies or mounts it, so the
+container runs the base image's config and its `user nginx;`. That is why the worker was uid 101
+and why there was no obvious knob to change it.
+
 The directory `RECORDING_ARCHIVE_DIR` resolves to is **not** created by the collector. Everything
 above the dated directory is part of the show's own tree — made by the studio, owned and
 permissioned the way the studio means it to be — and a directory this process invented there

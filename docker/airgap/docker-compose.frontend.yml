@@ -63,6 +63,13 @@ services:
       # leaving nginx serving 404s for files that are plainly there on the host. Same path
       # inside as outside, so a link resolves to the same string on both sides.
       - /net:/net:ro
+    # nginx must be able to READ what the collector wrote, and on the share that is decided by
+    # identity rather than by the mode bits: the files are 0644 under directories that are 0755,
+    # and the stock `nginx` user (uid 101) is refused all the same, because it is a uid the
+    # server does not know. Joining the group the collector writes AS is what grants it — so this
+    # follows COLLECTOR_GID rather than repeating a number, and stays right if that ever moves.
+    group_add:
+      - "${COLLECTOR_GID:-1000}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]

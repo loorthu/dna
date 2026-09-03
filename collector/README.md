@@ -163,9 +163,15 @@ has to survive a container restart.
 ## Who the files belong to
 
 The collector runs unprivileged, and every archive is owned by the uid it runs as. That uid is a
-deployment choice, not an image one: it has to be able to **write** `RECORDING_NETWORK_PATH`, and
-nginx has to be able to **read** what it writes (files are `0644`). On the host,
-`stat -c '%u:%g' <mount>` usually names the right pair.
+deployment choice, not an image one: it has to be able to **write** into the archive directory,
+and nginx has to be able to **read** what it writes. On the host, `stat -c '%u:%g' <mount>`
+usually names the right pair.
+
+Files are written `0644` inside `0755` directories, explicitly rather than by umask. On a local
+disk that is the whole story. **On a network share it is not**: the server decides by identity,
+so an nginx running as a uid it does not know is refused even by world-readable bits. The fix is
+to put the serving container in the same GROUP the collector writes as — see `group_add` in
+`docker/airgap/docker-compose.frontend.yml`.
 
 ```sh
 COLLECTOR_UID=1234

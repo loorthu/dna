@@ -422,6 +422,12 @@ class RecordingCollector:
                 f"Playlist {playlist_id}: DNA cannot say what to call this recording ({e})"
             )
         directory = self.archive_directory(answer["show"])
+        # Whether the two settings AGREE, before whether the directory exists. A directory
+        # configured outside the served root is a mistake in this file rather than a missing
+        # folder on the share, and asking the questions the other way round reports it as one:
+        # "does not exist" sends someone to make a directory, when what is wrong is that nothing
+        # made there could ever be served. That misdiagnosis has already cost an afternoon.
+        self.require_under_root(directory)
         self.require_archive_directory(playlist_id, directory)
 
         absolute = os.path.join(directory, answer["date_dir"], answer["filename"])
@@ -453,6 +459,22 @@ class RecordingCollector:
                 f"filed there could never be played back"
             )
         return relative
+
+    def require_under_root(self, directory: str) -> None:
+        """The configured directory has to sit under the root nginx serves.
+
+        The two are set separately — one is what gets published over HTTP, the other is where a
+        show's files go — so they can disagree, and the disagreement is silent: the archive
+        writes perfectly and every URL built from it resolves nowhere. Caught here, naming both
+        settings, because "nowhere" is not a symptom anyone can work backwards from.
+        """
+        relative = os.path.relpath(directory, self.archive_root)
+        if relative != "." and not is_safe_relative_path(relative):
+            raise CollectionFailed(
+                f"RECORDING_ARCHIVE_DIR resolves to {directory}, which is not under "
+                f"RECORDING_NETWORK_PATH ({self.archive_root}). That root is what is served, so "
+                f"nothing filed there could be played back — one of the two is wrong."
+            )
 
     def require_archive_directory(self, playlist_id: int, directory: str) -> None:
         """The configured directory must already exist. Only the DATED one below it is created.
@@ -706,7 +728,7 @@ class RecordingCollector:
         relative, destination = await self.archive_destination(
             playlist_id, recording_id
         )
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        _make_directory(os.path.dirname(destination))
         # Never write over an existing archive. archive_destination has already asked for a
         # distinguishing name if the first one was taken, so this should be unreachable — but the
         # failure it guards is unrecoverable: the upstream copy is released right after
@@ -718,6 +740,11 @@ class RecordingCollector:
             )
         digest = sha256_file(out)
         _move(out, destination)
+        # The archive is written by this process and READ by the nginx beside it, which runs as
+        # somebody else entirely. Whatever umask this container happens to carry decides the mode
+        # otherwise — and a 0600 archive is one nobody can play, reported to the viewer as a bare
+        # 403 with nothing to connect it back to a umask.
+        _make_readable(destination)
 
         # Re-hash what is actually READABLE at the network path. The archive is about to become
         # the only copy, and the claim being recorded is not "the mux produced these bytes" but
@@ -842,6 +869,7 @@ class RecordingCollector:
                     raise CollectorError(
                         f"ffmpeg exited {code} at {at:.1f}s: {stderr.strip()[:200]}"
                     )
+                _make_readable(destination)
                 with open(destination, "rb") as handle:
                     image = handle.read()
                 # DNA gets the bytes, not the name. The notes email is composed on the other side
@@ -964,6 +992,46 @@ def _run_ffmpeg_subprocess(command: list[str]) -> tuple[int, str]:
 
     proc = subprocess.run(command, capture_output=True, text=True)
     return proc.returncode, proc.stderr
+
+
+# What the share is left holding. Directories have to be traversable and files readable by the
+# nginx that serves them, which runs as a different user in a different container — so these are
+# set explicitly rather than left to whatever umask this process inherited.
+ARCHIVE_DIR_MODE = 0o755
+ARCHIVE_FILE_MODE = 0o644
+
+
+def _make_directory(path: str) -> None:
+    """Create the dated directory, and make sure it can be descended into.
+
+    `makedirs(mode=...)` is not enough: the mode is masked by the umask, so a container with a
+    restrictive one silently produces a directory nginx cannot enter.
+    """
+    os.makedirs(path, exist_ok=True)
+    _chmod(path, ARCHIVE_DIR_MODE)
+
+
+def _make_readable(path: str) -> None:
+    _chmod(path, ARCHIVE_FILE_MODE)
+
+
+def _chmod(path: str, mode: int) -> None:
+    """Set the mode, and carry on if it cannot be set.
+
+    Never fatal. By the time this runs the media is already on the share, and refusing to
+    complete the handover over a permission bit would leave the recording in limbo to fix
+    something a human can fix in one command. Logged loudly instead — a wrong mode surfaces as a
+    403 in the player, which is a long way from here.
+    """
+    try:
+        os.chmod(path, mode)
+    except OSError as e:
+        logger.warning(
+            "Could not set mode %o on %s (%s) — nginx may not be able to serve it",
+            mode,
+            path,
+            e,
+        )
 
 
 def _move(source: str, destination: str) -> None:
