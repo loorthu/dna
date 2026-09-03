@@ -747,6 +747,29 @@ async def test_a_pass_that_finally_works_forgets_the_failures_behind_it(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_a_symlink_whose_target_is_not_mounted_says_so(tmp_path):
+    """The shape a share takes when each show's storage is its own volume.
+
+    `isdir` follows the link, so a dangling one is indistinguishable from a missing directory —
+    and "does not exist", said about a path that plainly does exist on the host, sends whoever
+    reads it to check the wrong thing entirely. It cost a debugging round-trip once.
+    """
+    client = FakeClient([b"AAAA"], complete=True)
+    collector = make_collector(tmp_path, client, show_exists=False)
+    directory = show_directory(collector.archive_root, client)
+    os.makedirs(os.path.dirname(directory), exist_ok=True)
+    os.symlink(str(tmp_path / "not-mounted" / "elsewhere"), directory)
+
+    with pytest.raises(ArchiveDirectoryMissing, match="symlink"):
+        await collector.poll_once(1)
+
+    reason = client.blocked[0][1]
+    assert "not mounted in this container" in reason
+    assert "elsewhere" in reason, "the target is the thing to go and mount"
+    assert "does not exist" not in reason, "it does exist — that is the whole confusion"
+
+
+@pytest.mark.asyncio
 async def test_the_reason_is_reported_once_not_every_pass(tmp_path):
     """It waits on a person, and a person reads it once. Ten seconds later nothing has changed."""
     client = FakeClient([b"AAAA"], complete=True)

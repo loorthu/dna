@@ -64,6 +64,14 @@ mkdir -p /shots/<show>/lib.recording/pix/ref/dna     # whatever RECORDING_ARCHIV
 The collector names the full directory in the message it reports, so nobody has to reassemble it
 from a root they were not told.
 
+**If the share is symlinked** — each show's storage on its own volume, so the archive directory
+points somewhere else entirely — then mounting the share is not enough. The link resolves inside
+the container and its target does not exist there, so the directory reads as unreachable and
+nothing is archived. Mount the targets as well, at the same path inside as outside, in both this
+container and the one serving playback; `docker/airgap/docker-compose.frontend.yml` shows the
+shape. The collector says so explicitly when it happens, naming the target rather than claiming
+the directory is missing.
+
 The wait is **visible**: the collector posts the reason to DNA, the player shows it, and both keep
 polling — so the video appears on its own once the directory exists. Nothing is lost meanwhile,
 because no archive is recorded and no upstream copy is released. The reason is reported once per

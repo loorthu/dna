@@ -467,6 +467,17 @@ class RecordingCollector:
         So the first recording for a new show waits for a person, once. After that this passes and
         the dated directory is made per meeting.
         """
+        if os.path.islink(directory) and not os.path.exists(directory):
+            # A symlink whose TARGET this process cannot reach — the ordinary shape of a share
+            # where each show's storage lives on its own volume. `isdir` follows the link, so
+            # this is indistinguishable from a missing directory unless it is asked about
+            # separately, and reporting "does not exist" about a path that plainly does sends
+            # whoever reads it to check the wrong thing.
+            raise ArchiveDirectoryMissing(
+                f"{directory} is a symlink to {os.readlink(directory)}, which cannot be reached "
+                f"from here. The link resolves on the host but its target is not mounted in this "
+                f"container — mount the target as well, at the same path."
+            )
         if not os.path.isdir(directory):
             raise ArchiveDirectoryMissing(
                 f"{directory} does not exist on the recordings host. It has to be created once, "

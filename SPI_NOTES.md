@@ -106,7 +106,7 @@ essentials:
 
   ```
   RECORDING_NETWORK_PATH=/shots
-  RECORDING_ARCHIVE_DIR=/shots/{show}/lib.recording/pix/ref/dna
+  RECORDING_ARCHIVE_DIR=/shots/{show}/lib.recording/pix/ref/dna/misc_srgbref8_mp4
   ```
 
   The first is the ROOT nginx serves — not a directory of recordings — and the second
@@ -622,7 +622,7 @@ filename and nginx aliasing `/recordings/` onto that directory. They now go wher
 were in the meeting already look:
 
 ```
-/shots/nite/lib.recording/pix/ref/dna/20260901/NITE_Director_Review_2026_09_01_13_52_PDT_Recording.mp4
+/shots/nite/lib.recording/pix/ref/dna/misc_srgbref8_mp4/20260901/NITE_Director_Review_..._Recording.mp4
 ```
 
 **That layout is configuration, not code**, and the split is the point:
@@ -632,8 +632,8 @@ RECORDING_ARCHIVE_DIR  /  <YYYYMMDD>  /  <playlist>_<start>_Recording.mp4
 └─ docker/airgap/.env ─┘  └────────── DNA ─────────────────────────────┘
 ```
 
-`RECORDING_ARCHIVE_DIR=/shots/{show}/lib.recording/pix/ref/dna` lives in the airgap `.env` and is
-read by the collector — the only process that can see the share. Nothing in `backend/src` or the
+`RECORDING_ARCHIVE_DIR=/shots/{show}/lib.recording/pix/ref/dna/misc_srgbref8_mp4` lives in the
+airgap `.env` and is read by the collector — the only process that can see the share. Nothing in `backend/src` or the
 collector's own source knows what a show tree looks like; a `grep` for `lib.recording` across
 either comes back empty, and that is worth keeping true. This repo is meant to go upstream to
 ASWF, and a naming rule with SPI's folders compiled into it is one no other studio can adopt.
@@ -695,6 +695,35 @@ pass had not written.
 
 
 ### A show's first recording needs a directory made by hand
+
+### The share is symlinked, so the containers need `/net` too
+
+`/shots/<show>/lib.recording/...` is a **symlink** onto the volume that show lives on:
+
+```
+/shots/kpop/lib.recording/pix/ref/dna/misc_srgbref8_mp4
+  -> /net/vol1208/shots/kpop/lib.recording/pix/ref/dna/misc_srgbref8_mp4/
+```
+
+Mounting `/shots` alone is therefore not enough. The link resolves inside the container and its
+target does not exist there, so the collector finds the directory unreachable and archives
+nothing — and because `isdir()` follows links, that used to be reported as "does not exist" about
+a path you could `cd` into on the host. It now says the link cannot be followed and names the
+target.
+
+So both containers mount `/net` as well as the share, in `docker-compose.frontend.yml` —
+read-only for the frontend, which serves the file back through the link, and writable for the
+collector, whose archive lands on the far side of it. Same path inside as outside, so a link
+resolves to the same string on both sides.
+
+That mount sits in the tracked compose file rather than behind a deployment-local one because
+`docker/airgap/` **is** the SPI deployment: it already carries the backend's address and the
+Artifactory registry, and the compose file says as much about itself. The rule about keeping one
+studio's layout out of the code applies to `backend/src` and `collector/`, which go upstream —
+not here, where hiding SPI's own mount behind an indirection buys nothing and costs a file.
+
+If the volumes underneath automount, a plain bind will not see them appear after the container
+starts — mount the specific volume, or make `/net` rshared on the host and ask for propagation.
 
 The directory `RECORDING_ARCHIVE_DIR` resolves to is **not** created by the collector. Everything
 above the dated directory is part of the show's own tree — made by the studio, owned and

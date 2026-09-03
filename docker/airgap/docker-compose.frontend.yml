@@ -58,6 +58,11 @@ services:
       # reads. Same path inside both containers so the root a network_path is
       # relative to is the same string nginx resolves.
       - ${RECORDING_NETWORK_PATH:-./recordings}:${RECORDING_NETWORK_PATH:-./recordings}:ro
+      # The share's entries are SYMLINKS onto the volume each show lives on, so mounting the
+      # share alone is not enough: the link resolves in here and its target does not exist,
+      # leaving nginx serving 404s for files that are plainly there on the host. Same path
+      # inside as outside, so a link resolves to the same string on both sides.
+      - /net:/net:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
@@ -118,6 +123,11 @@ services:
       # survive a container restart, which is the whole point of the resume logic.
       - collector-staging:/staging
       - ${RECORDING_NETWORK_PATH:-./recordings}:${RECORDING_NETWORK_PATH:-./recordings}
+      # Where those symlinks point — see the frontend's copy of this mount. Writable here,
+      # because the archive lands on the far side of the link. If the volumes underneath
+      # automount, a plain bind will not see them appear after this container starts; mount
+      # the specific volume, or make /net rshared on the host and ask for propagation.
+      - /net:/net
     restart: unless-stopped
 
 volumes:
