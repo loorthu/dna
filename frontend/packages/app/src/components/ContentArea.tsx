@@ -78,6 +78,13 @@ function formatDate(dateString?: string): string {
 
 const IN_REVIEW_STATUS = 'rev';
 
+/**
+ * How long someone gets to move to a shot and mark it In Review themselves before the button
+ * starts pulsing at them. Long enough that the ordinary "click the shot, click the button"
+ * motion never sees the warning; short enough that anyone who got distracted still does.
+ */
+const IN_REVIEW_REMINDER_DELAY_MS = 3000;
+
 export function ContentArea({
   version,
   versions = [],
@@ -150,8 +157,32 @@ export function ContentArea({
   // "rev" status does not save them, so this deliberately ignores the fallback above. While a bot
   // is live with none set, everything it transcribes is discarded on arrival.
   const botSession = useBotSession(playlistId ?? null);
-  const isDiscardingSegments =
-    isBotSessionLive(botSession) && (inReviewVersionId ?? null) === null;
+  const botLive = isBotSessionLive(botSession);
+  const isDiscardingSegments = botLive && (inReviewVersionId ?? null) === null;
+
+  // Segments are still being kept, just against a version nobody is looking at any more. That is
+  // the shot switch someone forgot to follow through on, and it stays invisible until said.
+  const transcriptElsewhere =
+    botLive &&
+    !!inReviewVersionId &&
+    !!version &&
+    version.id !== inReviewVersionId;
+  const [remindTranscriptElsewhere, setRemindTranscriptElsewhere] =
+    useState(false);
+  useEffect(() => {
+    setRemindTranscriptElsewhere(false);
+    if (!transcriptElsewhere) return;
+    const timer = setTimeout(
+      () => setRemindTranscriptElsewhere(true),
+      IN_REVIEW_REMINDER_DELAY_MS
+    );
+    return () => clearTimeout(timer);
+    // The version and the in-review target are named so that moving between two versions that
+    // are both "elsewhere" restarts the grace period rather than nagging instantly.
+  }, [transcriptElsewhere, version?.id, inReviewVersionId]);
+
+  const transcriptTargetLabel =
+    inReviewVersion?.entity?.name || inReviewVersion?.name || undefined;
 
   const handleBack = useCallback(() => {
     if (canGoBack && onVersionSelect) {
@@ -335,6 +366,8 @@ export function ContentArea({
           isCurrentVersionInReview={isCurrentVersionInReview}
           isSettingInReview={isSettingInReview}
           isDiscardingSegments={isDiscardingSegments}
+          isTranscriptElsewhere={remindTranscriptElsewhere}
+          transcriptTargetLabel={transcriptTargetLabel}
           onRefresh={handleRefreshClick}
         />
         <NoteEditor

@@ -46,6 +46,14 @@ interface VersionHeaderProps {
   isCurrentVersionInReview?: boolean;
   isSettingInReview?: boolean;
   isDiscardingSegments?: boolean;
+  /**
+   * A bot is transcribing into some other version, and enough time has passed since the viewer
+   * moved here that they have plainly not forgotten to press this — they have forgotten they
+   * needed to. The caller owns that delay; this flag only says whether to nag.
+   */
+  isTranscriptElsewhere?: boolean;
+  /** What that other version is called, for the tooltip. */
+  transcriptTargetLabel?: string;
 }
 
 const HeaderWrapper = styled.div`
@@ -489,6 +497,8 @@ export function VersionHeader({
   isCurrentVersionInReview = false,
   isSettingInReview = false,
   isDiscardingSegments = false,
+  isTranscriptElsewhere = false,
+  transcriptTargetLabel,
 }: VersionHeaderProps) {
   const { getLabel } = useHotkeyConfig();
   const { inReviewEnabled } = useFeatureFlags();
@@ -503,11 +513,28 @@ export function VersionHeader({
   // rather than in the dialog that sends the bot: that dialog is open minutes too early, while
   // the meeting is still small talk and the warning reads as noise.
   const showDiscardWarning = isDiscardingSegments && !isCurrentVersionInReview;
-  const setInReviewTooltip = showDiscardWarning
-    ? 'A bot is transcribing, but no version is marked In Review — every line is discarded as ' +
+
+  // The same pulse for the same mistake one step along: a version *is* in review, but it is not
+  // this one, so notes taken on what is on screen file themselves against the shot the room has
+  // moved off. Whoever switched shots means to press this and forgets, and nothing else on the
+  // page says where the transcript is actually going.
+  const showElsewhereWarning =
+    isTranscriptElsewhere && !isCurrentVersionInReview;
+  const elsewhereTarget = transcriptTargetLabel || 'another version';
+  const showWarning = showDiscardWarning || showElsewhereWarning;
+
+  let setInReviewTooltip = `Set In Review (${getLabel('setInReview')})`;
+  if (showDiscardWarning) {
+    setInReviewTooltip =
+      'A bot is transcribing, but no version is marked In Review — every line is discarded as ' +
       'it arrives. Mark this version to start keeping them; what was already said is not ' +
-      'backfilled.'
-    : `Set In Review (${getLabel('setInReview')})`;
+      'backfilled.';
+  } else if (showElsewhereWarning) {
+    setInReviewTooltip =
+      `A bot is transcribing into ${elsewhereTarget}, not the version you are looking at. ` +
+      'Mark this version to file what is said from here on against it; earlier lines stay ' +
+      `with ${elsewhereTarget}.`;
+  }
 
   return (
     <HeaderWrapper>
@@ -584,11 +611,13 @@ export function VersionHeader({
             <Tooltip content={setInReviewTooltip}>
               <SetInReviewButton
                 $isInReview={isCurrentVersionInReview}
-                $warn={showDiscardWarning}
+                $warn={showWarning}
                 aria-label={
                   showDiscardWarning
                     ? 'Set In Review — transcript is not being saved'
-                    : undefined
+                    : showElsewhereWarning
+                      ? 'Set In Review — transcript is going to another version'
+                      : undefined
                 }
                 onClick={onSetInReview}
                 disabled={isCurrentVersionInReview || isSettingInReview}
@@ -602,7 +631,7 @@ export function VersionHeader({
                   </>
                 ) : (
                   <>
-                    {showDiscardWarning ? (
+                    {showWarning ? (
                       // Deliberately larger than the 14px every other icon here uses. At icon
                       // size it read as decoration next to the label and went unnoticed; at 19
                       // it is the first thing on the button the eye lands on.

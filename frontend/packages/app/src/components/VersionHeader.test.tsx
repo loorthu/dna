@@ -101,6 +101,45 @@ describe('VersionHeader', () => {
     expect(button).toBeEnabled();
   });
 
+  it('flags Set In Review while the transcript is filed against another version', () => {
+    render(
+      <HotkeysProvider>
+        <VersionHeader
+          shotCode="SHOT"
+          versionNumber="v001"
+          projectId={1}
+          isTranscriptElsewhere
+          transcriptTargetLabel="OTHER_SHOT"
+        />
+      </HotkeysProvider>
+    );
+    expect(
+      screen.getByRole('button', {
+        name: /transcript is going to another version/i,
+      })
+    ).toBeEnabled();
+  });
+
+  it('stays quiet about another version once this one is in review', () => {
+    render(
+      <HotkeysProvider>
+        <VersionHeader
+          shotCode="SHOT"
+          versionNumber="v001"
+          projectId={1}
+          isTranscriptElsewhere
+          transcriptTargetLabel="OTHER_SHOT"
+          isCurrentVersionInReview
+        />
+      </HotkeysProvider>
+    );
+    expect(
+      screen.queryByRole('button', {
+        name: /transcript is going to another version/i,
+      })
+    ).not.toBeInTheDocument();
+  });
+
   it('leaves Set In Review unflagged when no bot is discarding segments', () => {
     render(
       <HotkeysProvider>
