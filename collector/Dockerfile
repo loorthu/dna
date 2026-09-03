@@ -4,7 +4,11 @@
 # `dna` build context, wired in docker-compose.frontend.yml), so it is the same code the backend
 # test suite covers rather than a second copy that drifts. Only the runnable shell — the HTTP
 # client and the poll loop — lives in this directory.
-FROM python:3.11-slim
+# The base image, as an arg so a site can pull it through its own registry mirror rather than
+# Docker Hub — which is what an internal build host usually needs, and what the air-gapped one
+# already did by other means (SPI_NOTES.md documents the same override as a --build-context).
+ARG PYTHON_IMAGE=python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 WORKDIR /app
 

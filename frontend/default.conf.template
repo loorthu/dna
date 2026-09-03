@@ -3,6 +3,14 @@
 # ${BACKEND_URL} is substituted at container start by the nginx image's envsubst
 # (set BACKEND_URL, e.g. http://160.33.19.70:8000). Nginx's own $vars are left
 # alone (they aren't in the environment).
+#
+# ${APP_BASE_PATH} is where the app is mounted: EMPTY for a site serving DNA at the root, and
+# something like "/dna" for one serving it beside other tools under a single hostname. Empty,
+# every location below reads exactly as it did before this variable existed, which is what lets
+# one image serve both. It must be exported EVEN WHEN EMPTY — envsubst only replaces variables it
+# finds in the environment and would otherwise leave the literal text in the config — so the
+# Dockerfile gives it an empty default. The build-time half is VITE_BASE_PATH; the two have to
+# agree, and frontend/packages/app/src/basePath.ts says why.
 server {
     listen 8080;
     server_name _;
@@ -22,7 +30,7 @@ server {
     # API calls arrive under /api/ and are forwarded with the /api prefix stripped
     # (trailing slash on proxy_pass). ^~ prevents the static-asset regex below
     # from hijacking API paths.
-    location ^~ /api/ {
+    location ^~ ${APP_BASE_PATH}/api/ {
         proxy_pass ${BACKEND_URL}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -41,7 +49,7 @@ server {
     # Left unset it parks on a dead local port, which keeps this block valid
     # and the feature unavailable — the same thing an unset
     # VITE_FOLLOW_ALONG_SESSIONS_URL means to the app.
-    location ^~ /review-sessions/ {
+    location ^~ ${APP_BASE_PATH}/review-sessions/ {
         proxy_pass ${REVIEW_SESSIONS_URL}/;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -69,7 +77,7 @@ server {
     #
     # A 404 here is a normal state, not a fault: it means the collector has not finished
     # yet. The player asks the API what to show and this location only serves bytes.
-    location ~ "^/recordings/(?<recording_file>[A-Za-z0-9._/-]+\.(?:mp4|jpg))$" {
+    location ~ "^${APP_BASE_PATH}/recordings/(?<recording_file>[A-Za-z0-9._/-]+\.(?:mp4|jpg))$" {
         alias ${RECORDING_NETWORK_PATH}/$recording_file;
         # Written once and never modified, so it caches well — but privately: a review
         # recording should not sit in a shared proxy. Set with add_header alone, since
@@ -84,12 +92,12 @@ server {
     # Without it those URLs reach the SPA fallback, which answers 200 with a page of HTML — and
     # a <video src> given HTML and a 200 fails in a way that looks like a broken player rather
     # than a missing file.
-    location /recordings/ {
+    location ${APP_BASE_PATH}/recordings/ {
         return 404;
     }
 
     # WebSocket (live transcription events) -> backend /ws
-    location /ws {
+    location ${APP_BASE_PATH}/ws {
         proxy_pass ${BACKEND_URL}/ws;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -98,19 +106,31 @@ server {
         proxy_read_timeout 3600s;
     }
 
-    # Long-cache hashed static assets
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    # Long-cache hashed static assets.
+    #
+    # Captures the path AFTER the mount point and aliases it, rather than inheriting `root` and
+    # letting nginx join the whole URI: under a prefix, `root` would look for
+    # /usr/share/nginx/html/dna/assets/x.js and 404 on every asset in the bundle. With
+    # APP_BASE_PATH empty the capture is the whole path and this resolves exactly as `root` did.
+    #
+    # Declared AFTER the recordings regex on purpose — nginx takes the first matching regex, and
+    # a poster frame is a .jpg that must be served off the share, not from the bundle.
+    location ~* "^${APP_BASE_PATH}/(?<asset_path>.+\.(?:js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot))$" {
+        alias /usr/share/nginx/html/$asset_path;
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
 
-    # SPA fallback
-    location / {
-        try_files $uri $uri/ /index.html;
+    # SPA fallback. `alias` rather than `root` so the mount path comes off before the file is
+    # looked up: /dna/assets/x.js is /usr/share/nginx/html/assets/x.js. With APP_BASE_PATH empty
+    # this is `location /` aliasing the same directory, which is what `root` did.
+    location ${APP_BASE_PATH}/ {
+        alias /usr/share/nginx/html/;
+        try_files $uri ${APP_BASE_PATH}/index.html;
     }
 
     # Container healthcheck (frontend only; the API health is /api/health)
-    location = /healthz {
+    location = ${APP_BASE_PATH}/healthz {
         access_log off;
         return 200 'OK';
         add_header Content-Type text/plain;

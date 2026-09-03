@@ -1,0 +1,5 @@
+# The collection logic arrives through the `dna` named build context, not from here.
+__pycache__
+*.pyc
+.venv
+venv

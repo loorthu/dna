@@ -1,0 +1,18 @@
+# The build installs its own dependencies; the host's tree is both huge (429 packages) and wrong
+# for the image's platform — the Rollup/SWC musl bindings are resolved inside the builder stage.
+node_modules
+packages/*/node_modules
+
+# Build output. Stage 1 produces this; a stale copy from a host build must not shadow it.
+dist
+packages/*/dist
+packages/*/tsconfig.tsbuildinfo
+
+# Local config. VITE_* reach the build as build args, never by being copied in.
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+*.log
