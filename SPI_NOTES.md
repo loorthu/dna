@@ -738,14 +738,27 @@ So the frontend must run its workers in `COLLECTOR_GID` — the group the collec
 Expressed against that variable rather than a literal `20`, because the two settings describe one
 share and a hard-coded number would let them drift.
 
-**`group_add` does not do it,** which cost a round: nginx drops privileges in each worker with
-`initgroups()` before `setuid()`, and that REPLACES the supplementary group list with whatever
-`/etc/group` says the `nginx` user belongs to. A group handed to the container's init process is
-discarded the moment a worker starts — the container has gid 20 and the process serving the files
-does not. So `NGINX_SHARE_GID` is passed instead, and
-`frontend/docker-entrypoint.d/20-join-share-group.sh` adds the nginx user to that group inside
-the container before nginx starts. Verified on a scratch image: the worker's `/proc/<pid>/status`
-reports `Groups: 20 101 101`, and an unset value leaves it at `101 101` and serves normally.
+**Groups do not do it, in either form** — two rounds were spent discovering that:
+
+1. `group_add` on the service is discarded before a single byte is served. nginx drops privileges
+   in each worker with `initgroups()` before `setuid()`, which REPLACES the supplementary list
+   with whatever `/etc/group` says the `nginx` user belongs to. The container had gid 20; the
+   process serving the files did not.
+2. Adding the `nginx` user to the group fixes that and *still* 403s. The worker genuinely carried
+   `Groups: 20 101 101` and nginx still logged
+   `open(...) failed (13: Permission denied)` — because the server discounts the supplementary
+   group list the client sends and derives groups from the uid at its own end, and it has never
+   heard of uid 101.
+
+What the share honours is the PRIMARY identity, which the evidence said all along: `2443:20` and
+`65534:20` both read the file, and in both gid 20 was primary. So the frontend now serves AS the
+collector — `NGINX_UID`/`NGINX_SHARE_GID` from `COLLECTOR_UID`/`COLLECTOR_GID`, with
+`frontend/docker-entrypoint.d/20-serve-as-share-user.sh` creating that account and pointing
+nginx's `user` directive at it. The same identity writes the files and serves them, which is the
+arrangement that should have been obvious from the start.
+
+Verified on a scratch image: `user dnaserve dialout;` in `nginx.conf`, worker at
+`Uid: 2443 / Gid: 20`, and with the variables unset it stays `101/101` and serves normally.
 
 Worth knowing: `frontend/nginx.conf` in the repo is **dead** — nothing copies or mounts it, so the
 container runs the base image's config and its `user nginx;`. That is why the worker was uid 101

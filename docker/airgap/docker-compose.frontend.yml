@@ -52,14 +52,12 @@ services:
       # here and the URL carries the rest (<show>/.../<date>/<name>.mp4).
       # Substituted into default.conf.template at container start, like BACKEND_URL.
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
-      # The group nginx must join to READ what the collector wrote. On a network share that is
-      # not a formality: the files are 0644 inside 0755 directories and the stock `nginx` uid is
-      # refused anyway, because the server decides by identity and does not know that uid.
-      #
-      # It is the group the collector WRITES as, so it follows COLLECTOR_GID rather than
-      # repeating a number that could drift from it. NOT `group_add`: nginx calls initgroups()
-      # when a worker drops privileges, which discards groups given to the container's init
-      # process — see frontend/docker-entrypoint.d/20-join-share-group.sh.
+      # Serve as the identity that WROTE the files. On a network share the server decides by the
+      # identity the client sends and discounts the supplementary group list, so neither
+      # `group_add` nor adding a group to the nginx user gets a read: only the primary uid/gid
+      # counts. These follow COLLECTOR_UID/GID because it is literally the same identity on both
+      # ends of the share — see frontend/docker-entrypoint.d/20-serve-as-share-user.sh.
+      - NGINX_UID=${COLLECTOR_UID:-}
       - NGINX_SHARE_GID=${COLLECTOR_GID:-}
     volumes:
       # The archived recordings, served straight off the share by nginx (see

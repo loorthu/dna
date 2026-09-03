@@ -62,9 +62,10 @@ FROM nginx:alpine
 # nginx.conf already includes.
 COPY default.conf.template /etc/nginx/templates/default.conf.template
 
-# Runs before nginx starts (the base image sources everything in here). Puts the worker user in
-# the share's group when NGINX_SHARE_GID is set — see the script for why group_add cannot.
-COPY docker-entrypoint.d/20-join-share-group.sh /docker-entrypoint.d/20-join-share-group.sh
+# Runs before nginx starts (the base image sources everything in here). Runs the workers as the
+# identity that owns the recordings share when NGINX_UID/NGINX_SHARE_GID are set — see the script
+# for why neither `group_add` nor a supplementary group is enough.
+COPY docker-entrypoint.d/20-serve-as-share-user.sh /docker-entrypoint.d/20-serve-as-share-user.sh
 
 # Copy built files from builder stage
 COPY --from=builder /app/packages/app/dist /usr/share/nginx/html

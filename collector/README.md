@@ -170,10 +170,11 @@ usually names the right pair.
 Files are written `0644` inside `0755` directories, explicitly rather than by umask. On a local
 disk that is the whole story. **On a network share it is not**: the server decides by identity,
 so an nginx running as a uid it does not know is refused even by world-readable bits. The fix is
-to put the serving container's WORKERS in the same group the collector writes as. Note that
-Docker's `group_add` is not enough for nginx, which resets supplementary groups with
-`initgroups()` when a worker drops privileges — see
-`frontend/docker-entrypoint.d/20-join-share-group.sh`.
+to serve the files AS the same identity that wrote them. Groups are not enough: `group_add` is
+discarded by nginx's `initgroups()` when a worker drops privileges, and even a genuine
+supplementary group is discounted by a server that derives groups from the uid at its own end.
+The primary uid/gid is what counts — see
+`frontend/docker-entrypoint.d/20-serve-as-share-user.sh`.
 
 ```sh
 COLLECTOR_UID=1234
