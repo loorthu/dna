@@ -92,6 +92,30 @@ everywhere. See `collector/README.md` for the ordering guarantee and how it resu
 - **`BACKEND_URL`** is a **runtime** env (nginx `envsubst`), so you can repoint
   the backend without rebuilding the image.
 
+## The same thing on OpenShift
+
+There is a second deployment of this front end: the `sg` namespace on OpenShift, served at
+`https://sg.spimageworks.com/dna/` beside the other ShotGrid tools. It runs the **same two images**
+built from the **same `.env`** — the cluster changes so little that a second config file would be a
+copy waiting to drift, so `.env.openshift` holds only the four keys it does change (the mount path,
+and the three URLs that follow from it) and inherits the rest.
+
+```sh
+./docker/airgap/oc-build.sh ui          # .env + .env.openshift, base images via Artifactory
+./docker/airgap/oc-run.sh   ui          # runs as uid 1000710000 — the OpenShift case, not root
+./docker/airgap/oc-push.sh  ui          # versioned tag only, to Artifactory
+./docker/airgap/oc-secret.sh ui --diff  # key NAMES only, never values
+```
+
+`oc-secret.sh` is worth one line of explanation: it is this compose file's `environment:` block,
+for the cluster. One `.env`, two Secrets, the same renames — `BACKEND_URL` reaches the collector as
+`DNA_API_URL`, `COLLECTOR_UID`/`GID` reach nginx as `NGINX_UID`/`NGINX_SHARE_GID`, because those
+are one identity described once.
+
+Deploying a new image is **not** done from here: the namespace is ArgoCD-managed, so the tag is set
+in the `k8s-sg` repo. `oc-push.sh` prints what to hand over. The full contract — mounts, the uid,
+probes, secret keys — is in [INSTALL_OPEN_SHIFT.md](INSTALL_OPEN_SHIFT.md), beside this file.
+
 ## Notes
 - No CORS config needed — the browser sees a single origin (the frontend).
 - Confirm the prod host can reach the backend: `curl http://<backend-host>:8000/health`.

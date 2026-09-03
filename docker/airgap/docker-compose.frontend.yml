@@ -18,6 +18,11 @@ services:
         # => the app derives ws://<this-origin>/ws, which nginx also proxies.
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
         VITE_WS_URL: ${VITE_WS_URL:-}
+        # Where the app is mounted. Empty is the root, which is this deployment;
+        # the cluster one layers .env.openshift over .env to set it to /dna/.
+        # Must agree with APP_BASE_PATH below — one is baked into the bundle's
+        # asset URLs, the other prefixes nginx's locations.
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-}
         VITE_AUTH_PROVIDER: ${VITE_AUTH_PROVIDER:-none}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
         # Follow Along. /review-sessions is relative — nginx proxies it to
@@ -52,6 +57,11 @@ services:
       # here and the URL carries the rest (<show>/.../<date>/<name>.mp4).
       # Substituted into default.conf.template at container start, like BACKEND_URL.
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}
+      # The runtime half of VITE_BASE_PATH above, prefixed onto every nginx
+      # location by envsubst. No trailing slash — the locations supply it.
+      # Exported even when empty: envsubst only replaces what it finds in the
+      # environment, and would otherwise leave the literal text in the config.
+      - APP_BASE_PATH=${APP_BASE_PATH:-}
       # Serve as the identity that WROTE the files. On a network share the server decides by the
       # identity the client sends and discounts the supplementary group list, so neither
       # `group_add` nor adding a group to the nginx user gets a read: only the primary uid/gid
@@ -72,7 +82,12 @@ services:
       - /net:/net:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      # Follows the mount path: /healthz at the root, /dna/healthz under a prefix.
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:8080${APP_BASE_PATH:-}/healthz",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
