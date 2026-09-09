@@ -10,7 +10,14 @@ if TYPE_CHECKING:
 
 # Number of most-recently-created playlists surfaced in the login playlist
 # picker after a project is chosen (reverse-chronological).
-RECENT_PLAYLIST_LIMIT = 25
+#
+# Sized for the picker's filter box, not for the eye: the list is meant to be typed
+# into, so the limit is what bounds how far back a name stays findable rather than
+# how much is comfortable to scroll. A busy show makes ~3 playlists a day, which puts
+# 250 at roughly three months of reach. It costs about what 25 did — the row count is
+# not what makes the query expensive, the `versions` links riding along on it are, and
+# those are already fetched per row.
+RECENT_PLAYLIST_LIMIT = 250
 
 
 class UserNotFoundError(Exception):

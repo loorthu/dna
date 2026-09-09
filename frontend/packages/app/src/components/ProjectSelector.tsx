@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import styled from 'styled-components';
 import { Button, Flex, Select, Spinner } from '@radix-ui/themes';
 import { Playlist, playlistLabel, Project, versionCountLabel } from '@dna/core';
 import { useGetProjectsForUser, useGetPlaylistsForProject } from '../api';
 import { Logo } from './Logo';
 import {
+  StyledTextField,
   StyledSelectTrigger,
   StyledSelectContent,
   SelectItemMeta,
@@ -362,6 +363,7 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
   const [step, setStep] = useState<Step>('loading');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('');
+  const [playlistFilter, setPlaylistFilter] = useState('');
 
   const userEmail = user?.email || null;
 
@@ -406,6 +408,7 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
       setSelectedProject(project);
       saveProject(project);
       setSelectedPlaylistId('');
+      setPlaylistFilter('');
       setStep('playlist');
     }
   };
@@ -413,6 +416,27 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
   const handlePlaylistSelect = (playlistId: string) => {
     setSelectedPlaylistId(playlistId);
   };
+
+  // Match on what the row actually says, so typing what you can see works even for a
+  // playlist whose `code` is blank and which reads as "Playlist 463291".
+  const visiblePlaylists = useMemo(() => {
+    const needle = playlistFilter.trim().toLowerCase();
+    if (!needle) return playlists ?? [];
+    return (playlists ?? []).filter((playlist) =>
+      playlistLabel(playlist).toLowerCase().includes(needle)
+    );
+  }, [playlists, playlistFilter]);
+
+  // A filtered-away playlist must not stay chosen: the trigger would keep showing a name
+  // that is no longer in the list, and Continue would open a playlist the user can't see.
+  useEffect(() => {
+    if (
+      selectedPlaylistId &&
+      !visiblePlaylists.some((p) => p.id.toString() === selectedPlaylistId)
+    ) {
+      setSelectedPlaylistId('');
+    }
+  }, [selectedPlaylistId, visiblePlaylists]);
 
   const handleContinue = () => {
     if (selectedPlaylistId && playlists && userEmail && selectedProject) {
@@ -550,14 +574,27 @@ export function ProjectSelector({ onSelectionComplete }: ProjectSelectorProps) {
               <>
                 <Flex direction="column" gap="2">
                   <Label>Select a playlist</Label>
+                  <StyledTextField
+                    size="3"
+                    placeholder="Filter by name..."
+                    value={playlistFilter}
+                    onChange={(e) => setPlaylistFilter(e.target.value)}
+                  />
                   <Select.Root
                     size="3"
                     value={selectedPlaylistId}
                     onValueChange={handlePlaylistSelect}
                   >
-                    <StyledSelectTrigger placeholder="Choose a playlist..." />
+                    <StyledSelectTrigger
+                      placeholder={
+                        visiblePlaylists.length === 0
+                          ? 'No matching playlists'
+                          : 'Choose a playlist...'
+                      }
+                      disabled={visiblePlaylists.length === 0}
+                    />
                     <StyledSelectContent>
-                      {playlists.map((playlist) => {
+                      {visiblePlaylists.map((playlist) => {
                         const countLabel = versionCountLabel(
                           playlist.version_count
                         );
