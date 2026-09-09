@@ -37,6 +37,16 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # WHICH DEPLOYMENT THIS IS, so a recording is collected by the collector beside THIS front
+        # end and archived on the host that serves playback. ${COLLECTOR_SITE} is the very same
+        # value that host's collector reads, out of the same .env — the two halves that have to
+        # agree are one string in one file, rather than a name here and an address inferred over
+        # there. Empty renders to `""`, which nginx sends as no header at all: the job goes to the
+        # unrouted queue, which is what a single-collector deployment wants.
+        #
+        # SET, not forwarded — proxy_set_header overwrites whatever the browser sent, so a client
+        # on the far side of this cannot claim another site.
+        proxy_set_header X-DNA-Site "${COLLECTOR_SITE}";
         proxy_read_timeout 300s;
     }
 

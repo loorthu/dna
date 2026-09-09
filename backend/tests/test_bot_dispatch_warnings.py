@@ -249,7 +249,7 @@ class TestTheDispatchRecordsWhichSideAskedForIt:
         yield
         app.dependency_overrides.clear()
 
-    def test_nothing_is_sited_until_routing_is_configured(
+    def test_a_dispatch_that_names_no_site_is_unrouted(
         self, client, mock_storage, override_deps
     ):
         """The single-collector deployment must need no configuration.
@@ -258,35 +258,46 @@ class TestTheDispatchRecordsWhichSideAskedForIt:
         recording to a site the lone unrouted collector never asked for, so nothing was ever
         collected and the only repair was pasting a literal IP into COLLECTOR_SITE.
         """
-        with mock.patch.dict("os.environ", {}, clear=True):
-            client.post("/transcription/bot", json=DISPATCH)
+        client.post("/transcription/bot", json=DISPATCH)
 
         update = mock_storage.upsert_playlist_metadata.await_args.args[1]
         assert update.collector_site is None
 
-    def test_the_dispatching_peer_is_recorded_as_the_site(
+    def test_the_site_the_front_end_declares_is_the_site_recorded(
         self, client, mock_storage, override_deps
     ):
-        """Once routing is on, an unnamed front end is still its own site.
-
-        It must not fall into the unrouted queue another collector is draining.
-        """
-        with mock.patch.dict(
-            "os.environ", {"DNA_COLLECTOR_SITES": "10.0.0.9=elsewhere"}
-        ):
-            client.post("/transcription/bot", json=DISPATCH)
-
-        update = mock_storage.upsert_playlist_metadata.await_args.args[1]
-        assert update.collector_site == "testclient", (
-            "the peer that dispatched — a front end's own proxy, which is the host its "
-            "collector runs on"
-        )
-
-    def test_a_configured_name_is_used_instead_of_the_address(
-        self, client, mock_storage, override_deps
-    ):
-        with mock.patch.dict("os.environ", {"DNA_COLLECTOR_SITES": "testclient=prod"}):
-            client.post("/transcription/bot", json=DISPATCH)
+        """The front end's nginx sets this from its own COLLECTOR_SITE — the same value the
+        collector on that host asks the queue for."""
+        client.post("/transcription/bot", json=DISPATCH, headers={"X-DNA-Site": "prod"})
 
         update = mock_storage.upsert_playlist_metadata.await_args.args[1]
         assert update.collector_site == "prod"
+
+    def test_the_connection_is_never_read_for_a_site(
+        self, client, mock_storage, override_deps
+    ):
+        """The regression this design exists for.
+
+        Behind an edge proxy and a loopback-published port, every request reaches this API from the
+        docker bridge gateway. Inferring a site from that address made every front end look like
+        one deployment: a prod recording was stamped `dev`, collected by the dev host, and archived
+        where prod's nginx cannot serve it — while the map's entry for prod's real address could
+        never match anything. A dispatch that declares nothing is unrouted, whoever it came from.
+        """
+        client.post("/transcription/bot", json=DISPATCH)
+
+        update = mock_storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.collector_site is None, (
+            "the peer address describes the last hop, not the deployment — nothing may be "
+            "inferred from it"
+        )
+
+    def test_a_site_declared_as_empty_is_unrouted(
+        self, client, mock_storage, override_deps
+    ):
+        """What an unset COLLECTOR_SITE renders to. nginx omits a header set to "", but a proxy
+        that sends it empty must mean the same thing."""
+        client.post("/transcription/bot", json=DISPATCH, headers={"X-DNA-Site": "  "})
+
+        update = mock_storage.upsert_playlist_metadata.await_args.args[1]
+        assert update.collector_site is None

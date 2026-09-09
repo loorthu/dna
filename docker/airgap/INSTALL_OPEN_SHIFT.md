@@ -61,6 +61,9 @@ BACKEND_URL             the DNA backend, e.g. http://160.33.19.70:8000
 REVIEW_SESSIONS_URL     the review player's session directory
 RECORDING_NETWORK_PATH  the share ROOT (/shots) — nginx aliases /dna/recordings/ onto it
 APP_BASE_PATH           /dna
+COLLECTOR_SITE          this deployment's name — sent as X-DNA-Site on every bot dispatch, which
+                        is what routes the recording to the collector below. Same value in both
+                        Secrets; unique across every DNA deployment.
 NGINX_UID               the share's uid — nginx SERVES as the identity that WROTE the files
 NGINX_SHARE_GID         the share's gid
 ```
@@ -161,8 +164,11 @@ files in shared directories, so two collectors on one site double-fetch and race
 job, both mirror the same meeting, and the loser is left holding a partial mirror it can never
 finish. That is not hypothetical — `backend/src/dna/site_routing.py` exists because it happened.
 
-`replicas: 1`, `strategy: Recreate`. If a second collector ever runs anywhere, set `COLLECTOR_SITE`
-here and `DNA_COLLECTOR_SITES` on the backend.
+`replicas: 1`, `strategy: Recreate`. If a second collector ever runs anywhere, give each deployment
+its own `COLLECTOR_SITE` — in **both** of its Secrets, the UI's and the collector's. Nothing is
+configured on the backend: the front end names its side on each dispatch and its collector asks for
+that name, so a site is one string in one place. Leave it empty everywhere and every collector
+shares the unrouted queue, which is the race this exists to prevent.
 
 ---
 

@@ -99,7 +99,7 @@ from dna.review_page import (
     build_review_playlist,
     resolve_playlist,
 )
-from dna.site_routing import site_for_client
+from dna.site_routing import SITE_HEADER, site_for_dispatch
 from dna.storage_providers.storage_provider_base import (
     StorageProviderBase,
     get_storage_provider,
@@ -2005,9 +2005,7 @@ async def dispatch_bot(
     _: CurrentUserDep,
 ) -> BotSession:
     """Dispatch a transcription bot to a meeting."""
-    dispatch_site = site_for_client(
-        http_request.client.host if http_request.client else None
-    )
+    dispatch_site = site_for_dispatch(http_request.headers.get(SITE_HEADER))
     try:
         session = await transcription_provider.dispatch_bot(
             platform=request.platform,
@@ -2031,9 +2029,11 @@ async def dispatch_bot(
                 # recording path off for this playlist rather than leaving the collector to
                 # rediscover, once every poll and forever, that there is nothing to fetch.
                 recording_enabled=session.recording_enabled,
-                # The side that asked for this recording owns collecting it. Its collector runs
-                # beside the front end that dispatched, which is the host this request's peer
-                # belongs to — so the media is archived where the player will look for it.
+                # The side that asked for this recording owns collecting it, so the media is
+                # archived where the player will look for it. The front end NAMES that side in
+                # X-DNA-Site, from the same COLLECTOR_SITE the collector beside it reads; nothing
+                # is inferred from the connection, which on a proxied backend describes the last
+                # hop rather than the deployment.
                 collector_site=dispatch_site,
                 transcription_paused=False,
                 clear_resumed_at=True,

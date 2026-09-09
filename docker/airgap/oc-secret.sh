@@ -54,6 +54,9 @@ case "$APP" in
             REVIEW_SESSIONS_URL=REVIEW_SESSIONS_URL
             RECORDING_NETWORK_PATH=RECORDING_NETWORK_PATH
             APP_BASE_PATH=APP_BASE_PATH
+            # The same site name the collector below reads: nginx sends it as X-DNA-Site on every
+            # dispatch, which is what routes the recording to this namespace's own collector.
+            COLLECTOR_SITE=COLLECTOR_SITE
             # One share, one identity: nginx must SERVE as the uid that WROTE the files, because
             # the NFS server discounts supplementary groups and knows only the primary uid/gid.
             NGINX_UID=COLLECTOR_UID

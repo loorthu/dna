@@ -1,4 +1,4 @@
-"""Which side of the deployment a request came from, and therefore which collector owns the job.
+"""Which side of the deployment asked for a recording, and therefore which collector owns it.
 
 A single DNA backend serves more than one front end — the air-gapped host's nginx and a
 development machine both dispatch bots to it. Recordings are collected by a service running
@@ -11,60 +11,45 @@ The rule is simple: the collector on the side that ASKED for the recording is th
 collect it. Anything else risks archiving a file onto a host that is not the one serving playback
 — a recording that exists, cannot be played, and whose upstream copy is already gone.
 
-The side is inferred from the immediate peer of the dispatch. `Host` and `X-Forwarded-For`
-describe the browser, and change with how someone happened to type the address; the peer is the
-front end's own proxy, which is also the host its collector runs on.
+THE SIDE IS DECLARED, NOT INFERRED. Each front end sends its own name in `X-DNA-Site`, set by that
+deployment's nginx from the same `COLLECTOR_SITE` its collector reads. One variable, one host: the
+two halves that have to agree are the same string in the same file, so they cannot drift apart.
 
-Routing is OPT-IN, via DNA_COLLECTOR_SITES. Until that map is configured nothing is sited at all,
-and the single collector — which declares no site either — is offered every job. That is the
-common deployment, and it must need no configuration.
+This was previously inferred from the dispatch's peer address against a configured map, and the
+inference is what broke. On a host whose backend sits behind an edge proxy and a loopback-published
+port, every request arrives from the docker bridge gateway — the real client address never reaches
+`request.client.host` at all. So every front end looked like one site, a prod recording was stamped
+`dev` and archived onto a host that does not serve it, and the map's entry for the prod address
+could never match anything. Addresses also move: a migrated server or a renumbered network silently
+re-sites every dispatch. Nothing about a peer address says which deployment it is; a name does, and
+the deployment already knows its own.
 
-Deriving a site from the peer whenever one merely EXISTS is what makes it need configuration: a
-real HTTP request always has a peer, so every job would be stamped with some address, while an
-unconfigured collector asks for the unrouted ones and matches none of them. Recordings then queue
-up addressed to a site no collector claims, and the only repair is pasting a literal IP into the
-collector's COLLECTOR_SITE — the deployment reaching for a hardcoded address is the symptom.
+WHAT THE HEADER IS AND IS NOT. That nginx SETS it — `proxy_set_header` overwrites whatever the
+browser sent — so a client on the far side of it cannot claim a site. Anything that reaches this
+API directly can, and no peer-address map provided that boundary either. What this does provide is
+that the value is compared for equality with a collector's own label and used for nothing else, so
+an unrecognised one addresses the job to a collector that does not exist: it waits, visibly,
+instead of being archived onto the wrong host.
+
+Naming no site leaves the job unrouted, and an unrouted job is offered only to a collector that
+also declares no site — so the two queues never overlap, and a single-collector deployment needs no
+configuration at all.
 """
 
-import os
 from typing import Optional
 
-SITE_MAP_ENV = "DNA_COLLECTOR_SITES"
+# Written down twice — here, and in the front end's nginx template. `test_site_routing` holds the
+# two together whenever the frontend tree is present.
+SITE_HEADER = "X-DNA-Site"
 
 
-def _site_map() -> dict[str, str]:
-    """`DNA_COLLECTOR_SITES="10.0.0.7=prod,172.19.0.1=dev"` → {address: name}.
+def site_for_dispatch(declared: Optional[str]) -> Optional[str]:
+    """The site the dispatching front end named, or None when it named none.
 
-    Configuring this is what turns routing ON; an empty result means every job is unrouted.
-    Malformed entries are skipped rather than raising: a typo here should not stop bots being
-    dispatched — though note that a map which parses to nothing switches routing off entirely,
-    which is the safe direction (one collector taking everything, rather than none taking it).
+    Empty is the same as absent, deliberately: `proxy_set_header X-DNA-Site "";` sends no header at
+    all, which is what an unset COLLECTOR_SITE renders to, and a deployment that sets the variable
+    to nothing means the same as one that never set it. Surrounding whitespace is trimmed for the
+    same reason — matching is by equality, so a stray space in a `.env` would otherwise address the
+    job to a site no collector claims.
     """
-    raw = os.getenv(SITE_MAP_ENV, "")
-    mapping: dict[str, str] = {}
-    for entry in raw.split(","):
-        address, _, name = entry.partition("=")
-        address, name = address.strip(), name.strip()
-        if address and name:
-            mapping[address] = name
-    return mapping
-
-
-def site_for_client(client_host: Optional[str]) -> Optional[str]:
-    """The site that owns work dispatched by this peer, or None if nothing is routed.
-
-    None means unrouted, and an unrouted job is offered only to a collector that also declares no
-    site — so the two queues never overlap and a single-collector deployment keeps working with no
-    configuration at all.
-
-    An address absent from a CONFIGURED map is still its own site: once routing is on, a front end
-    nobody named must not quietly fall into the unrouted queue that another collector is draining.
-    """
-    if not client_host:
-        return None
-
-    mapping = _site_map()
-    if not mapping:
-        return None
-
-    return mapping.get(client_host, client_host)
+    return (declared or "").strip() or None

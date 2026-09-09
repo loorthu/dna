@@ -69,6 +69,12 @@ services:
       # ends of the share — see frontend/docker-entrypoint.d/20-serve-as-share-user.sh.
       - NGINX_UID=${COLLECTOR_UID:-}
       - NGINX_SHARE_GID=${COLLECTOR_GID:-}
+      # Which deployment this is. nginx sends it to the backend on every dispatch (X-DNA-Site), so
+      # the recording is collected by the collector BELOW, on this host, and archived where this
+      # nginx can serve it. One variable feeds both containers on purpose: the front end's name and
+      # its collector's name are the two halves that have to agree, and they are now the same
+      # string in the same file rather than a setting here and an address configured on the backend.
+      - COLLECTOR_SITE=${COLLECTOR_SITE:-}
     volumes:
       # The archived recordings, served straight off the share by nginx (see
       # default.conf.template). Read-only: the collector writes them, this only

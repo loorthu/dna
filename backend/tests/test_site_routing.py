@@ -8,52 +8,66 @@ copy. Worse was available — had the other one won, DNA would hold an archive o
 the one serving playback.
 """
 
+import os
+import re
 from unittest import mock
 
 import pytest
 
-from dna.site_routing import SITE_MAP_ENV, site_for_client
+from dna.site_routing import SITE_HEADER, site_for_dispatch
 
 
-class TestSiteForClient:
-    def test_routing_off_until_configured(self):
+class TestSiteForDispatch:
+    def test_naming_no_site_is_unrouted(self):
         """The single-collector deployment must need no configuration.
 
-        A real HTTP request always has a peer, so deriving a site from merely having one stamped
-        every job with an address while the lone collector — declaring no site — asked for the
-        unrouted queue. The two never met: recordings piled up addressed to a site nobody claimed,
-        and the only repair was pasting a literal IP into COLLECTOR_SITE.
+        The unrouted queue is drained by a collector that declares no site either, so a deployment
+        that has never heard of any of this keeps working.
         """
-        with mock.patch.dict("os.environ", {}, clear=True):
-            assert site_for_client("10.5.81.74") is None
+        assert site_for_dispatch(None) is None
 
-    def test_an_unmapped_peer_is_its_own_site_once_routing_is_on(self):
-        """A name is a convenience; the address routes perfectly well without one.
-
-        Only once the map exists, though — a front end nobody named must not fall into the
-        unrouted queue another collector is draining.
+    def test_an_empty_declaration_is_the_same_as_none(self):
+        """`proxy_set_header X-DNA-Site "";` sends no header at all, and that is exactly what an
+        unset COLLECTOR_SITE renders to — so the two cannot be allowed to mean different things.
         """
-        with mock.patch.dict("os.environ", {SITE_MAP_ENV: "10.0.0.9=other"}):
-            assert site_for_client("10.5.81.74") == "10.5.81.74"
+        assert site_for_dispatch("") is None
+        assert site_for_dispatch("   ") is None
 
-    def test_a_mapped_peer_gets_its_name(self):
-        with mock.patch.dict(
-            "os.environ", {SITE_MAP_ENV: "10.5.81.74=prod,172.19.0.1=dev"}
-        ):
-            assert site_for_client("10.5.81.74") == "prod"
-            assert site_for_client("172.19.0.1") == "dev"
+    def test_a_declared_site_is_taken_at_its_word(self):
+        """No map, no lookup, no inference. The deployment knows its own name."""
+        assert site_for_dispatch("prod") == "prod"
+        assert site_for_dispatch("laptop") == "laptop"
 
-    def test_no_peer_is_unrouted(self):
-        assert site_for_client(None) is None
-        assert site_for_client("") is None
+    def test_stray_whitespace_does_not_invent_a_second_site(self):
+        """Matching is by equality against the collector's own label, so ` prod` would address the
+        job to a site nobody runs — and the job would wait for a collector that cannot exist."""
+        assert site_for_dispatch("  prod\n") == "prod"
 
-    def test_a_malformed_map_does_not_stop_a_dispatch(self):
-        """A typo in configuration must not take bot dispatch down with it."""
-        with mock.patch.dict(
-            "os.environ", {SITE_MAP_ENV: "garbage,,=x,y=,10.0.0.1=ok"}
-        ):
-            assert site_for_client("10.0.0.1") == "ok"
-            assert site_for_client("10.0.0.2") == "10.0.0.2"
+
+class TestTheTwoHalvesAgree:
+    """The header this package reads is the header the front end sends.
+
+    The name is written down twice, in two languages, on hosts that deploy separately — which is
+    precisely the drift that put a prod recording on a dev host. Skipped when the frontend tree is
+    absent: the backend's test image mounts only `src` and `tests`.
+    """
+
+    TEMPLATE = os.path.join(
+        os.path.dirname(__file__), "..", "..", "frontend", "default.conf.template"
+    )
+
+    @pytest.mark.skipif(
+        not os.path.exists(TEMPLATE), reason="frontend tree not mounted in this test image"
+    )
+    def test_the_nginx_template_sets_the_header_the_backend_reads(self):
+        with open(self.TEMPLATE) as handle:
+            template = handle.read()
+
+        assert re.search(rf"proxy_set_header\s+{SITE_HEADER}\s", template), (
+            f"{SITE_HEADER} is what dispatch reads, and the API location in "
+            "frontend/default.conf.template is the only thing that sets it — renaming one "
+            "without the other silently unroutes every recording that front end dispatches"
+        )
 
 
 class TestTheQueuesNeverOverlap:

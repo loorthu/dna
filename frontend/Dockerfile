@@ -103,6 +103,12 @@ COPY --from=builder /app/packages/app/dist /usr/share/nginx/html
 # literal ${APP_BASE_PATH} in the rendered config and nginx would refuse to start.
 ENV APP_BASE_PATH=
 
+# Which deployment this front end is, sent to the backend on every dispatch so the recording is
+# collected by the collector beside it. Declared EMPTY for the same reason as APP_BASE_PATH — and
+# empty is meaningful here rather than merely safe: nginx omits a header set to "", which leaves
+# the job unrouted, which is right for a deployment with one collector and no sites at all.
+ENV COLLECTOR_SITE=
+
 # ── Running under an arbitrary, non-root UID (OpenShift assigns one per namespace) ─────────────
 #
 # Render the templates into /tmp instead of /etc/nginx/conf.d. The stock
