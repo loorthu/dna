@@ -41,9 +41,9 @@ cp frontend/packages/app/.env.example frontend/packages/app/.env
 
 # 2. this deployment's overrides + build mechanics
 cp docker/airgap/.env.example docker/airgap/.env
-# set BACKEND_URL=http://<backend-host>:8000  (e.g. 160.33.19.70:8000)
+# set BACKEND_URL=http://<backend-host>:8000   (required — no default)
 #     RECORDING_NETWORK_PATH = the real share mount
-#     NPM_REGISTRY = Artifactory (to build on prod)
+#     NPM_REGISTRY = your npm mirror (to build without public registry access)
 ```
 
 **No credentials go in `docker/airgap/.env`.** They live where the ASWF upstream
@@ -94,8 +94,8 @@ everywhere. See `collector/README.md` for the ordering guarantee and how it resu
 
 ## The same thing on OpenShift
 
-There is a second deployment of this front end: the `sg` namespace on OpenShift, served at
-`https://sg.spimageworks.com/dna/` beside the other ShotGrid tools. It runs the **same two images**
+There is a second deployment of this front end: an OpenShift namespace, serving the app under a
+path prefix beside other tools rather than at a host root. It runs the **same two images**
 built from the **same `.env`** — the cluster changes so little that a second config file would be a
 copy waiting to drift, so `.env.openshift` holds only the four keys it does change (the mount path,
 and the three URLs that follow from it) and inherits the rest.

@@ -30,7 +30,7 @@ RECORDING_ARCHIVE_DIR / <YYYYMMDD> / <playlist>_<start>_Recording.mp4
 `RECORDING_ARCHIVE_DIR` substitutes `{show}` and is the ONLY place a directory layout is written
 down. Which folders a studio keeps recordings in is a fact about that studio, and a naming rule
 with one site's tree baked into it is one nobody else can adopt — so it is configuration, not
-code. SPI sets `/shots/{show}/lib.recording/pix/ref/dna`; unset, it defaults to
+code. A site might set `/mnt/shows/{show}/recordings/dailies`; unset, it defaults to
 `<RECORDING_NETWORK_PATH>/{show}`.
 
 The other half comes from `GET /recordings/{playlist_id}/archive-name`, which answers with the
@@ -58,7 +58,7 @@ no one will look for it.
 So the first recording for a new show waits for someone to run the equivalent of:
 
 ```sh
-mkdir -p /shots/<show>/lib.recording/pix/ref/dna     # whatever RECORDING_ARCHIVE_DIR resolves to
+mkdir -p /mnt/shows/<show>/recordings/dailies       # whatever RECORDING_ARCHIVE_DIR resolves to
 ```
 
 The collector names the full directory in the message it reports, so nobody has to reassemble it
@@ -150,7 +150,7 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 | `BACKEND_URL` | `http://localhost:8000` | where DNA's API answers |
 | `DNA_API_TOKEN` | *(empty)* | only if the backend runs with auth |
 | `COLLECTOR_STAGING_DIR` | `/staging` | must be durable across restarts |
-| `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share ROOT nginx serves (`/shots` in prod) |
+| `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share ROOT nginx serves |
 | `RECORDING_ARCHIVE_DIR` | `<root>/{show}` | which directory a show's recordings go in; must resolve under the root |
 | `COLLECTOR_POLL_SECONDS` | `10` | |
 | `COLLECTOR_MAX_PLAYLISTS` | `25` | work-queue depth per pass |

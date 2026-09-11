@@ -48,7 +48,11 @@ services:
       - "${DNA_FRONTEND_PORT:-8081}:8080"
     environment:
       # The host running the DNA backend (API + WS). nginx proxies /api + /ws here.
-      - BACKEND_URL=${BACKEND_URL:-http://160.33.19.70:8000}
+      # Required, with no default: there is no address that is right for a site
+      # other than the one it was hardcoded from, and an unset value renders
+      # `proxy_pass /;`, which nginx rejects at startup with a message about the
+      # config rather than about the setting. Fail here, naming the setting.
+      - BACKEND_URL=${BACKEND_URL:?set BACKEND_URL in docker/airgap/.env — the DNA backend's address, e.g. http://<backend-host>:8000}
       # Review player's session directory; nginx proxies /review-sessions here.
       # The default is a dead local port — Follow Along's session picker is
       # simply unavailable until a site points this at its own directory.
@@ -130,7 +134,7 @@ services:
       # The collector talks to the DNA backend DIRECTLY, not through this host's nginx:
       # it is a server-side client, so there is no origin to keep single and no reason
       # to add a proxy hop to several hundred MB per meeting.
-      - BACKEND_URL=${BACKEND_URL:-http://160.33.19.70:8000}
+      - BACKEND_URL=${BACKEND_URL:?set BACKEND_URL in docker/airgap/.env — the DNA backend's address, e.g. http://<backend-host>:8000}
       - DNA_API_TOKEN=${DNA_API_TOKEN:-}
       - COLLECTOR_STAGING_DIR=/staging
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}

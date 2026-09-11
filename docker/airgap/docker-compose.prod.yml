@@ -50,7 +50,9 @@ services:
       # default (feature off); see backend/example.docker-compose.local.yml.
       - PRODTRACK_VERSION_EXTERNAL_REF_FIELD=${PRODTRACK_VERSION_EXTERNAL_REF_FIELD:-}
       # Vexa runs on another host — reached over the network (not a shared docker net).
-      - VEXA_API_URL=${VEXA_API_URL:-http://160.33.19.70:18056}
+      # No default for the same reason as BACKEND_URL above: one site's address is
+      # nobody else's, and a wrong one fails as a timeout rather than as a setting.
+      - VEXA_API_URL=${VEXA_API_URL:?set VEXA_API_URL in docker/airgap/.env — where Vexa answers, e.g. http://<vexa-host>:18056}
       - VEXA_API_KEY=${VEXA_API_KEY:-}
       # LLM
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
