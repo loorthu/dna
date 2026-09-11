@@ -87,7 +87,7 @@ FROM ${NGINX_IMAGE}
 COPY default.conf.template /etc/nginx/templates/default.conf.template
 
 # Runs before nginx starts (the base image sources everything in here). Runs the workers as the
-# identity that owns the recordings share when NGINX_UID/NGINX_SHARE_GID are set — see the script
+# identity that owns the recordings share when COLLECTOR_UID/COLLECTOR_GID are set — see the script
 # for why neither `group_add` nor a supplementary group is enough.
 COPY docker-entrypoint.d/20-serve-as-share-user.sh /docker-entrypoint.d/20-serve-as-share-user.sh
 

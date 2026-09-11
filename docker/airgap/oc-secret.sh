@@ -4,12 +4,14 @@
 #
 # WHAT THIS IS: the compose file's `environment:` block, for the cluster.
 #
-# docker-compose.frontend.yml takes one .env and hands each container the subset it needs, under
-# the names that container expects — BACKEND_URL reaches the collector as DNA_API_URL, and
-# COLLECTOR_UID/GID reach nginx as NGINX_UID/NGINX_SHARE_GID, because they are one identity
-# described once. This script does exactly that for two Secrets instead of two containers, off the
-# same file. The names are not drift; they are the same mapping, and changing one without the
-# other is what breaks a deployment.
+# docker-compose.frontend.yml takes one .env and hands each container the subset it needs. This
+# script does the same for two Secrets instead of two containers, off the same file.
+#
+# A key is spelled the SAME in .env, in the Secret, and in the container that reads it. There is no
+# rename step and there should never be one: a value that arrives under a second name is a value
+# somebody has to be told about, and the earlier mapping (BACKEND_URL -> DNA_API_URL,
+# COLLECTOR_UID -> NGINX_UID) cost more in confusion than the neutral names were worth. If a new
+# consumer wants a different spelling, change the consumer.
 #
 # WHY AN ALLOWLIST, not sg-admin's `grep -v ^VITE_`: that works when one .env feeds one pod. This
 # .env also carries build mechanics (DNA_TAG, NPM_REGISTRY, PIP_*) and a backend flag, and it
@@ -50,33 +52,36 @@ case "$APP" in
     ui)
         # nginx substitutes these into default.conf.template at container start.
         KEYS=(
-            BACKEND_URL=BACKEND_URL
-            REVIEW_SESSIONS_URL=REVIEW_SESSIONS_URL
-            RECORDING_NETWORK_PATH=RECORDING_NETWORK_PATH
-            APP_BASE_PATH=APP_BASE_PATH
+            BACKEND_URL
+            REVIEW_SESSIONS_URL
+            RECORDING_NETWORK_PATH
+            APP_BASE_PATH
             # The same site name the collector below reads: nginx sends it as X-DNA-Site on every
             # dispatch, which is what routes the recording to this namespace's own collector.
-            COLLECTOR_SITE=COLLECTOR_SITE
+            COLLECTOR_SITE
             # One share, one identity: nginx must SERVE as the uid that WROTE the files, because
             # the NFS server discounts supplementary groups and knows only the primary uid/gid.
-            NGINX_UID=COLLECTOR_UID
-            NGINX_SHARE_GID=COLLECTOR_GID
+            # Same two keys the collector's `user:` takes, which is why they are not nginx-specific.
+            COLLECTOR_UID
+            COLLECTOR_GID
         )
         ;;
     collector)
         KEYS=(
             # The collector talks to the backend DIRECTLY, not through the UI's nginx: it is a
             # server-side client, and there is no reason to add a proxy hop to a few hundred MB.
-            DNA_API_URL=BACKEND_URL
-            DNA_API_TOKEN=DNA_API_TOKEN
-            RECORDING_NETWORK_PATH=RECORDING_NETWORK_PATH
-            RECORDING_ARCHIVE_DIR=RECORDING_ARCHIVE_DIR
-            RECORDING_ARCHIVE_TIMEZONE=RECORDING_ARCHIVE_TIMEZONE
-            COLLECTOR_POLL_SECONDS=COLLECTOR_POLL_SECONDS
-            COLLECTOR_MAX_PLAYLISTS=COLLECTOR_MAX_PLAYLISTS
-            COLLECTOR_SITE=COLLECTOR_SITE
-            RECORDING_POSTER_LEAD_SECONDS=RECORDING_POSTER_LEAD_SECONDS
-            LOG_LEVEL=LOG_LEVEL
+            # Same key the UI gets, and the bare address either way — nginx strips the path prefix
+            # before proxying, so nothing downstream ever sees /dna/api.
+            BACKEND_URL
+            DNA_API_TOKEN
+            RECORDING_NETWORK_PATH
+            RECORDING_ARCHIVE_DIR
+            RECORDING_ARCHIVE_TIMEZONE
+            COLLECTOR_POLL_SECONDS
+            COLLECTOR_MAX_PLAYLISTS
+            COLLECTOR_SITE
+            RECORDING_POSTER_LEAD_SECONDS
+            LOG_LEVEL
         )
         ;;
 esac
@@ -95,13 +100,12 @@ trap 'rm -f "$ENV_FILE"' EXIT
 
 INCLUDED=()
 OMITTED=()
-for pair in "${KEYS[@]}"; do
-    target="${pair%%=*}"; source_key="${pair#*=}"
-    if [ -n "${!source_key+set}" ]; then
-        printf '%s=%s\n' "$target" "${!source_key}" >> "$ENV_FILE"
-        INCLUDED+=("$target")
+for key in "${KEYS[@]}"; do
+    if [ -n "${!key+set}" ]; then
+        printf '%s=%s\n' "$key" "${!key}" >> "$ENV_FILE"
+        INCLUDED+=("$key")
     else
-        OMITTED+=("$target (from $source_key)")
+        OMITTED+=("$key")
     fi
 done
 for target in "${!FIXED[@]}"; do

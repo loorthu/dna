@@ -56,17 +56,15 @@ path, and the SPA's own asset URLs are built with the same prefix at build time.
 
 Secret keys (`secret-sg-dna`), all written by `./docker/airgap/oc-secret.sh ui`:
 
-```
-BACKEND_URL             the DNA backend, e.g. http://160.33.19.70:8000
-REVIEW_SESSIONS_URL     the review player's session directory
-RECORDING_NETWORK_PATH  the share ROOT (/shots) — nginx aliases /dna/recordings/ onto it
-APP_BASE_PATH           /dna
-COLLECTOR_SITE          this deployment's name — sent as X-DNA-Site on every bot dispatch, which
-                        is what routes the recording to the collector below. Same value in both
-                        Secrets; unique across every DNA deployment.
-NGINX_UID               the share's uid — nginx SERVES as the identity that WROTE the files
-NGINX_SHARE_GID         the share's gid
-```
+| Key in the Secret | Read from `.env` | What it is |
+|---|---|---|
+| `BACKEND_URL` | `BACKEND_URL` | the DNA backend, e.g. `http://160.33.19.70:8000` |
+| `REVIEW_SESSIONS_URL` | `REVIEW_SESSIONS_URL` | the review player's session directory |
+| `RECORDING_NETWORK_PATH` | `RECORDING_NETWORK_PATH` | the share ROOT (`/shots`) — nginx aliases `/dna/recordings/` onto it |
+| `APP_BASE_PATH` | `APP_BASE_PATH` | `/dna` |
+| `COLLECTOR_SITE` | `COLLECTOR_SITE` | this deployment's name — sent as `X-DNA-Site` on every bot dispatch, which is what routes the recording to the collector below. Same value in both Secrets; unique across every DNA deployment. |
+| `COLLECTOR_UID` | `COLLECTOR_UID` | the share's uid — nginx SERVES as the identity that WROTE the files |
+| `COLLECTOR_GID` | `COLLECTOR_GID` | the share's gid |
 
 ### `sg-dna-collector`
 
@@ -82,19 +80,49 @@ NGINX_SHARE_GID         the share's gid
 
 Secret keys (`secret-sg-dna-collector`), written by `./docker/airgap/oc-secret.sh collector`:
 
-```
-DNA_API_URL                    the DNA backend (the collector calls it directly, not via nginx)
-DNA_API_TOKEN                  only if the backend runs with auth
-COLLECTOR_STAGING_DIR          /staging
-RECORDING_NETWORK_PATH         the share root (/shots)
-RECORDING_ARCHIVE_DIR          where a show's recordings are filed, with {show} as the placeholder
-RECORDING_ARCHIVE_TIMEZONE     the clock archive names are rendered in
-COLLECTOR_POLL_SECONDS         default 10
-COLLECTOR_MAX_PLAYLISTS        work-queue depth per pass
-COLLECTOR_SITE                 which side's recordings this collector archives
-RECORDING_POSTER_LEAD_SECONDS  default 2
-LOG_LEVEL
-```
+| Key in the Secret | Read from `.env` | What it is |
+|---|---|---|
+| `BACKEND_URL` | `BACKEND_URL` | the DNA backend (the collector calls it directly, not via nginx) |
+| `DNA_API_TOKEN` | `DNA_API_TOKEN` | only if the backend runs with auth |
+| `COLLECTOR_STAGING_DIR` | **— fixed `/staging`** | the staging PVC's mount path is a property of the manifest, not of the host deployment, so the script hardcodes it |
+| `RECORDING_NETWORK_PATH` | `RECORDING_NETWORK_PATH` | the share root (`/shots`) |
+| `RECORDING_ARCHIVE_DIR` | `RECORDING_ARCHIVE_DIR` | where a show's recordings are filed, with `{show}` as the placeholder |
+| `RECORDING_ARCHIVE_TIMEZONE` | `RECORDING_ARCHIVE_TIMEZONE` | the clock archive names are rendered in — default `America/Los_Angeles` |
+| `COLLECTOR_POLL_SECONDS` | `COLLECTOR_POLL_SECONDS` | default 10 |
+| `COLLECTOR_MAX_PLAYLISTS` | `COLLECTOR_MAX_PLAYLISTS` | work-queue depth per pass — default 25 |
+| `COLLECTOR_SITE` | `COLLECTOR_SITE` | which side's recordings this collector archives |
+| `RECORDING_POSTER_LEAD_SECONDS` | `RECORDING_POSTER_LEAD_SECONDS` | default 2 |
+| `LOG_LEVEL` | `LOG_LEVEL` | default `INFO` |
+
+### Setting them
+
+Both Secrets are written from `docker/airgap/.env` layered with `.env.openshift`. **Every key is
+spelled the same in all three places** — in `.env`, in the Secret, and in the container that reads
+it — so what you set is what lands. There is no rename step. `COLLECTOR_STAGING_DIR` is the single
+exception, and it is not read from `.env` at all: the script fixes it at `/staging`.
+
+Four values feed **both** Secrets, so editing one for one pod also changes the other:
+
+- `BACKEND_URL` — the backend's real address in both cases, never `/dna/api`. nginx strips the
+  path prefix before proxying, and the collector calls the backend directly.
+- `COLLECTOR_SITE` — **must** match across the two: nginx stamps it as `X-DNA-Site` and that
+  header is what routes the recording to this namespace's collector.
+- `RECORDING_NETWORK_PATH` — the share root, for the pod that writes it and the pod that serves it.
+- `COLLECTOR_UID` / `COLLECTOR_GID` — one identity: the collector runs as it, and nginx serves as
+  it. They reach the UI Secret too, which is why they are not named for either container.
+
+**Unset and empty are different**, and for `DNA_API_TOKEN` the difference decides whether the
+collector authenticates:
+
+- **Unset** in `.env` — the key is left out of the Secret entirely, so the image's own default
+  applies. This is what `oc-secret.sh` reports under "Not set, so left to the image's default".
+- **Set but empty** — the key is written with an empty value, which is meaningful for several of
+  these: an empty `DNA_API_TOKEN` means the backend runs without auth, an empty `APP_BASE_PATH`
+  means the root.
+
+Nothing `VITE_*` appears in either Secret. Those are baked into the JS bundle at build time and are
+already in the browser before a pod starts; a Secret cannot change them. Repointing the front end
+means a rebuild and a new image tag, not a Secret edit and a rollout.
 
 ### Both pods
 
@@ -149,7 +177,8 @@ directories):
 
 What the share honours is the primary identity: `2443:20` and `65534:20` both read the file, and in
 both gid 20 was primary. So the UI pod serves **as the identity that wrote the files** — which is
-why `NGINX_UID`/`NGINX_SHARE_GID` are the collector's uid/gid and not a number chosen separately.
+why the UI Secret carries `COLLECTOR_UID`/`COLLECTOR_GID` rather than a number chosen separately:
+it is one identity, named for the side that writes, and nginx reads the very same two keys.
 
 The image's own `USER 1000:1000` is the unprivileged default for a plain `docker run`; the SCC
 overrides it, and the entrypoint says so in the log either way.

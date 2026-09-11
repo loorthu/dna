@@ -20,8 +20,8 @@
 # bits settle it and the stock user is fine.
 set -e
 
-uid="${NGINX_UID:-}"
-gid="${NGINX_SHARE_GID:-}"
+uid="${COLLECTOR_UID:-}"
+gid="${COLLECTOR_GID:-}"
 [ -z "$uid" ] && [ -z "$gid" ] && exit 0
 
 conf=/etc/nginx/nginx.conf

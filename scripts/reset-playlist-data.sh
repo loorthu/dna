@@ -70,7 +70,7 @@ _set() {      # _set VAR value origin -- only when VAR is still empty
 }
 
 if docker inspect "$COLLECTOR_CONTAINER" >/dev/null 2>&1; then
-  _set BACKEND_URL     "$(_coll_env DNA_API_URL)"             "collector $COLLECTOR_CONTAINER"
+  _set BACKEND_URL     "$(_coll_env BACKEND_URL)"             "collector $COLLECTOR_CONTAINER"
   _set RECORDINGS_DIR  "$(_coll_env RECORDING_NETWORK_PATH)"  "collector $COLLECTOR_CONTAINER"
   _set COLLECTOR_SITE  "$(_coll_env COLLECTOR_SITE)"          "collector $COLLECTOR_CONTAINER"
   # The staging volume is whatever is mounted at the collector's own staging dir --

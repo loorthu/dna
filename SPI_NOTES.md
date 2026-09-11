@@ -308,7 +308,7 @@ recreate is fine as well — `VEXA_API_KEY` lives inline in `backend/docker-comp
 
 ```sh
 docker run -d --name dna-collector --network backend_default \
-  -e DNA_API_URL=http://dna-backend:8000 -e COLLECTOR_STAGING_DIR=/staging \
+  -e BACKEND_URL=http://dna-backend:8000 -e COLLECTOR_STAGING_DIR=/staging \
   -e RECORDING_NETWORK_PATH=/net/media/dna-recordings -e COLLECTOR_POLL_SECONDS=10 \
   -v dna-collector-staging:/staging -v <host-archive-dir>:/net/media/dna-recordings \
   dna-collector:airgap
@@ -752,7 +752,7 @@ share and a hard-coded number would let them drift.
 
 What the share honours is the PRIMARY identity, which the evidence said all along: `2443:20` and
 `65534:20` both read the file, and in both gid 20 was primary. So the frontend now serves AS the
-collector — `NGINX_UID`/`NGINX_SHARE_GID` from `COLLECTOR_UID`/`COLLECTOR_GID`, with
+collector — nginx reads `COLLECTOR_UID`/`COLLECTOR_GID`, the very same keys, with
 `frontend/docker-entrypoint.d/20-serve-as-share-user.sh` creating that account and pointing
 nginx's `user` directive at it. The same identity writes the files and serves them, which is the
 arrangement that should have been obvious from the start.

@@ -108,9 +108,9 @@ and the three URLs that follow from it) and inherits the rest.
 ```
 
 `oc-secret.sh` is worth one line of explanation: it is this compose file's `environment:` block,
-for the cluster. One `.env`, two Secrets, the same renames — `BACKEND_URL` reaches the collector as
-`DNA_API_URL`, `COLLECTOR_UID`/`GID` reach nginx as `NGINX_UID`/`NGINX_SHARE_GID`, because those
-are one identity described once.
+for the cluster. One `.env`, two Secrets, and every key spelled the same in all three places —
+`.env`, the Secret, and the container that reads it. `BACKEND_URL` and `COLLECTOR_UID`/`GID` reach
+both pods under those names, because each is one value described once.
 
 Deploying a new image is **not** done from here: the namespace is ArgoCD-managed, so the tag is set
 in the `k8s-sg` repo. `oc-push.sh` prints what to hand over. The full contract — mounts, the uid,

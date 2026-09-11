@@ -147,7 +147,7 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 
 | Variable | Default | |
 |---|---|---|
-| `DNA_API_URL` | `http://localhost:8000` | where DNA's API answers |
+| `BACKEND_URL` | `http://localhost:8000` | where DNA's API answers |
 | `DNA_API_TOKEN` | *(empty)* | only if the backend runs with auth |
 | `COLLECTOR_STAGING_DIR` | `/staging` | must be durable across restarts |
 | `RECORDING_NETWORK_PATH` | `/net/media/dna-recordings` | the share ROOT nginx serves (`/shots` in prod) |

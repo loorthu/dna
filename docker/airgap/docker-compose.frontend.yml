@@ -65,10 +65,11 @@ services:
       # Serve as the identity that WROTE the files. On a network share the server decides by the
       # identity the client sends and discounts the supplementary group list, so neither
       # `group_add` nor adding a group to the nginx user gets a read: only the primary uid/gid
-      # counts. These follow COLLECTOR_UID/GID because it is literally the same identity on both
-      # ends of the share — see frontend/docker-entrypoint.d/20-serve-as-share-user.sh.
-      - NGINX_UID=${COLLECTOR_UID:-}
-      - NGINX_SHARE_GID=${COLLECTOR_GID:-}
+      # counts. nginx reads the SAME two keys the collector's `user:` takes, because it is
+      # literally the same identity on both ends of the share — see
+      # frontend/docker-entrypoint.d/20-serve-as-share-user.sh.
+      - COLLECTOR_UID=${COLLECTOR_UID:-}
+      - COLLECTOR_GID=${COLLECTOR_GID:-}
       # Which deployment this is. nginx sends it to the backend on every dispatch (X-DNA-Site), so
       # the recording is collected by the collector BELOW, on this host, and archived where this
       # nginx can serve it. One variable feeds both containers on purpose: the front end's name and
@@ -129,7 +130,7 @@ services:
       # The collector talks to the DNA backend DIRECTLY, not through this host's nginx:
       # it is a server-side client, so there is no origin to keep single and no reason
       # to add a proxy hop to several hundred MB per meeting.
-      - DNA_API_URL=${BACKEND_URL:-http://160.33.19.70:8000}
+      - BACKEND_URL=${BACKEND_URL:-http://160.33.19.70:8000}
       - DNA_API_TOKEN=${DNA_API_TOKEN:-}
       - COLLECTOR_STAGING_DIR=/staging
       - RECORDING_NETWORK_PATH=${RECORDING_NETWORK_PATH:-./recordings}

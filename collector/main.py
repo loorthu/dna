@@ -7,7 +7,7 @@ loop, and shutting down cleanly. Keeping the split sharp is what makes the inter
 
 Configuration, all via environment:
 
-    DNA_API_URL              where DNA's API answers        (default http://localhost:8000)
+    BACKEND_URL              where DNA's API answers        (default http://localhost:8000)
     DNA_API_TOKEN            bearer token, if AUTH_PROVIDER is not "none"
     COLLECTOR_STAGING_DIR    scratch space for parts        (default /staging)
     RECORDING_NETWORK_PATH   the share ROOT nginx serves    (default /net/media/dna-recordings)
@@ -251,7 +251,7 @@ def _require_reachable(path: str, setting: str) -> None:
 
 
 async def run_forever() -> None:
-    base_url = os.environ.get("DNA_API_URL", "http://localhost:8000")
+    base_url = os.environ.get("BACKEND_URL", "http://localhost:8000")
     staging = os.environ.get("COLLECTOR_STAGING_DIR", "/staging")
     archive = os.environ.get("RECORDING_NETWORK_PATH", "/net/media/dna-recordings")
     archive_dir = os.environ.get("RECORDING_ARCHIVE_DIR") or None

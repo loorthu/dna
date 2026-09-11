@@ -35,8 +35,8 @@ if [ "$APP" = "ui" ]; then
         -e BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:9}" \
         -e REVIEW_SESSIONS_URL="${REVIEW_SESSIONS_URL:-http://127.0.0.1:9}" \
         -e RECORDING_NETWORK_PATH="${RECORDING_NETWORK_PATH:-/shots}" \
-        ${NGINX_UID:+-e NGINX_UID="$NGINX_UID"} \
-        ${NGINX_SHARE_GID:+-e NGINX_SHARE_GID="$NGINX_SHARE_GID"} \
+        ${COLLECTOR_UID:+-e COLLECTOR_UID="$COLLECTOR_UID"} \
+        ${COLLECTOR_GID:+-e COLLECTOR_GID="$COLLECTOR_GID"} \
         "${IMAGE}:${VERSION}"
 
     sleep 2
@@ -61,7 +61,7 @@ else
     echo "message names which directory it could not write, which is the point of that probe."
     echo
     $DOCKER run --rm --name "$NAME" --user "${RUN_UID}:0" \
-        -e DNA_API_URL="${BACKEND_URL:-http://127.0.0.1:9}" \
+        -e BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:9}" \
         -e DNA_API_TOKEN="${DNA_API_TOKEN:-}" \
         -e COLLECTOR_STAGING_DIR=/staging \
         -e RECORDING_NETWORK_PATH="${RECORDING_NETWORK_PATH:-/shots}" \
