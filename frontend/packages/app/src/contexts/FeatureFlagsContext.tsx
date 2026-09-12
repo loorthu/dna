@@ -36,22 +36,28 @@ const ENV_FOLLOW_ALONG = readEnvOverride(
 //  - Transcript publish needs DNA_ENABLE_TRANSCRIPT_PUBLISH plus a provisioned
 //    ShotGrid custom entity; without both, the endpoint 404s. Keep this in step
 //    with the backend flag.
-//  - Note links reach ShotGrid only on a note's FIRST publish; `update_note`
-//    never re-sends them, so links added later go nowhere. Off until that
-//    round trip is complete.
-//  - Note subject is written by ShotGrid, not by a reviewer: every note on the
-//    site carries a tool-generated subject, and a playlist note's is the
-//    playlist name frozen at seeding time. Editing it here would produce the
-//    only hand-typed subject on the site. Off; publish still echoes the
-//    mirrored value back unchanged, which is what preserves that record.
 const ENV_NOTE_QC = readEnvOverride(import.meta.env.VITE_FEATURE_NOTE_QC);
 const ENV_TRANSCRIPT_PUBLISH = readEnvOverride(
   import.meta.env.VITE_FEATURE_TRANSCRIPT_PUBLISH
 );
-const ENV_NOTE_LINKS = readEnvOverride(import.meta.env.VITE_FEATURE_NOTE_LINKS);
-const ENV_NOTE_SUBJECT = readEnvOverride(
-  import.meta.env.VITE_FEATURE_NOTE_SUBJECT
-);
+
+// CONSTANTS, not flags — the same shape as ADDRESSING_FIELDS_ENABLED in
+// NoteOptionsInline. Both were build-time overrides, which advertised a choice
+// no deployment should be offered:
+//
+//  - Note links reach ShotGrid only on a note's FIRST publish; `update_note`
+//    never re-sends them, so links added later go nowhere. That cannot be fixed
+//    by configuration, and turning it on ships a silently lossy field.
+//  - Note subject is written by ShotGrid, not by a reviewer: every note on the
+//    site carries a tool-generated subject, and a playlist note's is the
+//    playlist name frozen at seeding time. Editing it here would produce the
+//    only hand-typed subject on the site. Publish still echoes the mirrored
+//    value back unchanged, which is what preserves that record.
+//
+// Flip either to true here when its half is genuinely finished, and it becomes
+// a flag again on purpose rather than by inheritance.
+const NOTE_LINKS_ENABLED = false;
+const NOTE_SUBJECT_ENABLED = false;
 
 interface FeatureFlagsContextValue {
   transcriptionEnabled: boolean;
@@ -65,13 +71,11 @@ interface FeatureFlagsContextValue {
   transcriptionLocked: boolean;
   aiLocked: boolean;
   inReviewLocked: boolean;
-  followAlongLocked: boolean;
   transcriptionLockReason: string | null;
   inReviewLockReason: string | null;
   setTranscriptionEnabled: (enabled: boolean) => void;
   setAiEnabled: (enabled: boolean) => void;
   setInReviewEnabled: (enabled: boolean) => void;
-  setFollowAlongEnabled: (enabled: boolean) => void;
 }
 
 const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(
@@ -99,7 +103,10 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
 
   // Follow Along stands apart from the russian-doll chain below: it moves only
   // the local selection and needs nothing from the transcription pipeline.
-  const [followAlongEnabled, setFollowAlongState] = useState(() => {
+  // No setter: there is no Settings toggle for Follow Along, so nothing ever
+  // wrote FOLLOW_ALONG_KEY. Read the stored value anyway — a site that set it
+  // by hand keeps working — but do not pretend it can be changed from here.
+  const [followAlongEnabled] = useState(() => {
     if (ENV_FOLLOW_ALONG !== null) return ENV_FOLLOW_ALONG;
     const stored = localStorage.getItem(FOLLOW_ALONG_KEY);
     return stored === null ? true : stored === 'true';
@@ -129,12 +136,6 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     setInReviewState(enabled);
   }, []);
 
-  const setFollowAlongEnabled = useCallback((enabled: boolean) => {
-    if (ENV_FOLLOW_ALONG !== null) return;
-    localStorage.setItem(FOLLOW_ALONG_KEY, String(enabled));
-    setFollowAlongState(enabled);
-  }, []);
-
   return (
     <FeatureFlagsContext.Provider
       value={{
@@ -146,12 +147,11 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
         // features that happened to share a switch.
         noteQcEnabled: (ENV_NOTE_QC ?? false) && aiEnabled,
         transcriptPublishEnabled: ENV_TRANSCRIPT_PUBLISH ?? false,
-        noteLinksEnabled: ENV_NOTE_LINKS ?? false,
-        noteSubjectEnabled: ENV_NOTE_SUBJECT ?? false,
+        noteLinksEnabled: NOTE_LINKS_ENABLED,
+        noteSubjectEnabled: NOTE_SUBJECT_ENABLED,
         transcriptionLocked: ENV_TRANSCRIPTION !== null || aiEnabled,
         aiLocked: ENV_AI !== null,
         inReviewLocked: ENV_IN_REVIEW !== null || transcriptionEnabled,
-        followAlongLocked: ENV_FOLLOW_ALONG !== null,
         transcriptionLockReason:
           ENV_TRANSCRIPTION !== null ? 'pipeline' : aiEnabled ? 'ai' : null,
         inReviewLockReason:
@@ -163,7 +163,6 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
         setTranscriptionEnabled,
         setAiEnabled,
         setInReviewEnabled,
-        setFollowAlongEnabled,
       }}
     >
       {children}

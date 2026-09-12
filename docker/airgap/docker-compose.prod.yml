@@ -67,6 +67,15 @@ services:
       # Playlist reset, for re-running an end-to-end test (see scripts/reset-playlist-data.sh)
       - DNA_ENABLE_PLAYLIST_RESET=${DNA_ENABLE_PLAYLIST_RESET:-false}
       - SHOTGRID_TRANSCRIPT_ENTITY=${SHOTGRID_TRANSCRIPT_ENTITY:-CustomEntity01}
+      # Meeting-recording playback: exposes GET /recordings/cuts/{playlist_id} and the Recording
+      # tab. Undeclared here until now — the same silent-inertness as
+      # PRODTRACK_VERSION_EXTERNAL_REF_FIELD above, and with the same symptom: the tab never
+      # appears however the env is written, because compose passes only what a service declares.
+      - DNA_ENABLE_RECORDING_PLAYBACK=${DNA_ENABLE_RECORDING_PLAYBACK:-false}
+      # The clock a recording's date directory and filename timestamp are rendered in. THIS pod
+      # does the naming — the collector asks for the name over HTTP — so this is the only service
+      # where the setting has any effect, and it reached no service at all before.
+      - RECORDING_ARCHIVE_TIMEZONE=${RECORDING_ARCHIVE_TIMEZONE:-America/Los_Angeles}
       # Email
       - EMAIL_PROVIDER=${EMAIL_PROVIDER:-gmail}
       - EMAIL_SENDER=${EMAIL_SENDER:-}

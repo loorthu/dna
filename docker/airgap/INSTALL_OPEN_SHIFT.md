@@ -56,15 +56,18 @@ path, and the SPA's own asset URLs are built with the same prefix at build time.
 
 Secret keys (`secret-sg-dna`), all written by `./docker/airgap/oc-secret.sh ui`:
 
-| Key in the Secret | Read from `.env` | What it is |
+**All seven are always present**, written empty when `.env` does not set them. The Secret's key
+set is fixed and does not vary with the operator's `.env` — see [Setting them](#setting-them).
+
+| Key | What it is | If it were missing |
 |---|---|---|
-| `BACKEND_URL` | `BACKEND_URL` | the DNA backend, e.g. `http://160.33.19.70:8000` |
-| `REVIEW_SESSIONS_URL` | `REVIEW_SESSIONS_URL` | the review player's session directory |
-| `RECORDING_NETWORK_PATH` | `RECORDING_NETWORK_PATH` | the share ROOT (`/shots`) — nginx aliases `/dna/recordings/` onto it |
-| `APP_BASE_PATH` | `APP_BASE_PATH` | `/dna` |
-| `COLLECTOR_SITE` | `COLLECTOR_SITE` | this deployment's name — sent as `X-DNA-Site` on every bot dispatch, which is what routes the recording to the collector below. Same value in both Secrets; unique across every DNA deployment. |
-| `COLLECTOR_UID` | `COLLECTOR_UID` | the share's uid — nginx SERVES as the identity that WROTE the files |
-| `COLLECTOR_GID` | `COLLECTOR_GID` | the share's gid |
+| `BACKEND_URL` | the DNA backend, e.g. `http://<backend-host>:8000` | nginx `[emerg] unknown "backend_url" variable` — **crash-loop** |
+| `REVIEW_SESSIONS_URL` | the review player's session directory | **crash-loop**, same mechanism. The image defaults it to a dead local port, so unset means "feature off", not "pod down" |
+| `RECORDING_NETWORK_PATH` | the share ROOT — nginx aliases `/dna/recordings/` onto it | **crash-loop**, same mechanism |
+| `APP_BASE_PATH` | `/dna`. Empty means the root | safe — the image declares it empty |
+| `COLLECTOR_SITE` | this deployment's name, sent as `X-DNA-Site` on every bot dispatch, which routes the recording to the collector below. Same value in both Secrets; unique across every DNA deployment | safe — the image declares it empty; empty means the unrouted queue |
+| `COLLECTOR_UID` | the share's uid — nginx SERVES as the identity that WROTE the files | no uid switch. On OpenShift the SCC pins `runAsUser` and the entrypoint only warns, so here these are a consistency check rather than the mechanism |
+| `COLLECTOR_GID` | the share's gid | as above |
 
 ### `sg-dna-collector`
 
@@ -80,19 +83,28 @@ Secret keys (`secret-sg-dna`), all written by `./docker/airgap/oc-secret.sh ui`:
 
 Secret keys (`secret-sg-dna-collector`), written by `./docker/airgap/oc-secret.sh collector`:
 
-| Key in the Secret | Read from `.env` | What it is |
+**All five are always present**, written empty when `.env` does not set them.
+
+| Key | What it is | If it were missing |
 |---|---|---|
-| `BACKEND_URL` | `BACKEND_URL` | the DNA backend (the collector calls it directly, not via nginx) |
-| `DNA_API_TOKEN` | `DNA_API_TOKEN` | only if the backend runs with auth |
-| `COLLECTOR_STAGING_DIR` | **— fixed `/staging`** | the staging PVC's mount path is a property of the manifest, not of the host deployment, so the script hardcodes it |
-| `RECORDING_NETWORK_PATH` | `RECORDING_NETWORK_PATH` | the share root (`/shots`) |
-| `RECORDING_ARCHIVE_DIR` | `RECORDING_ARCHIVE_DIR` | where a show's recordings are filed, with `{show}` as the placeholder |
-| `RECORDING_ARCHIVE_TIMEZONE` | `RECORDING_ARCHIVE_TIMEZONE` | the clock archive names are rendered in — default `America/Los_Angeles` |
-| `COLLECTOR_POLL_SECONDS` | `COLLECTOR_POLL_SECONDS` | default 10 |
-| `COLLECTOR_MAX_PLAYLISTS` | `COLLECTOR_MAX_PLAYLISTS` | work-queue depth per pass — default 25 |
-| `COLLECTOR_SITE` | `COLLECTOR_SITE` | which side's recordings this collector archives |
-| `RECORDING_POSTER_LEAD_SECONDS` | `RECORDING_POSTER_LEAD_SECONDS` | default 2 |
-| `LOG_LEVEL` | `LOG_LEVEL` | default `INFO` |
+| `BACKEND_URL` | the DNA backend (the collector calls it directly, not via nginx) | **the quietest failure in either image**: falls back to `http://localhost:8000`, polls itself forever, logs a retry per pass, and stays "healthy" — there is no HTTP probe to contradict it |
+| `RECORDING_NETWORK_PATH` | the share root | clean crash-loop from `_require_reachable`, naming the setting |
+| `RECORDING_ARCHIVE_DIR` | where a show's recordings are filed, with `{show}` as the placeholder | falls back to `<root>/{show}` — files land in a layout the site did not choose |
+| `COLLECTOR_SITE` | which side's recordings this collector archives | empty means the unrouted queue. Harmless with one collector; silent cross-wiring with more than one |
+| `COLLECTOR_STAGING_DIR` | fixed at `/staging` — the PVC mount path is a property of the manifest, so the script hardcodes it and it is not read from `.env` | n/a |
+
+**Deliberately not here.** These reach the collector through nothing and are not in its Secret:
+
+- `RECORDING_ARCHIVE_TIMEZONE` — read by `archive_timezone()` → `archive_name()`, which runs in
+  the **backend**. The collector asks the backend for its archive name over HTTP, so the key did
+  nothing on this pod. It belongs on the backend service.
+- `DNA_API_TOKEN` — DNA authenticates people, not programs. Every route resolves a bearer token to
+  a *user* through the configured provider, so there is nothing a headless collector can present.
+  The key was unvalidated under `AUTH_PROVIDER=none` and would have 401'd under `google`. Turning
+  auth on needs a machine-auth design first; a static string in a Secret was never one.
+- `COLLECTOR_POLL_SECONDS`, `COLLECTOR_MAX_PLAYLISTS`, `RECORDING_POSTER_LEAD_SECONDS`,
+  `LOG_LEVEL` — tuning knobs whose defaults live in the code that reads them (10s, 25, 2s, `INFO`).
+  A site that needs one adds it to `OPTIONAL` in `oc-secret.sh` **and** to the Deployment together.
 
 ### Setting them
 
@@ -111,14 +123,29 @@ Four values feed **both** Secrets, so editing one for one pod also changes the o
 - `COLLECTOR_UID` / `COLLECTOR_GID` — one identity: the collector runs as it, and nginx serves as
   it. They reach the UI Secret too, which is why they are not named for either container.
 
-**Unset and empty are different**, and for `DNA_API_TOKEN` the difference decides whether the
-collector authenticates:
+### The Secret's key set is fixed
 
-- **Unset** in `.env` — the key is left out of the Secret entirely, so the image's own default
-  applies. This is what `oc-secret.sh` reports under "Not set, so left to the image's default".
-- **Set but empty** — the key is written with an empty value, which is meaningful for several of
-  these: an empty `DNA_API_TOKEN` means the backend runs without auth, an empty `APP_BASE_PATH`
-  means the root.
+**Every key listed above is always written, empty when `.env` does not set it.** The key set is a
+property of this repo, not of the operator's `.env`, so a manifest can rely on it.
+
+That is a change, and it was made for a reason worth recording. The script used to omit any key
+`.env` had not set, which produced:
+
+```
+Error: couldn't find key DNA_API_TOKEN in Secret sg/secret-sg-dna-collector
+```
+
+That is the kubelet, not the app. The Deployments name keys one at a time
+(`env: valueFrom: secretKeyRef:`), and such a reference to an absent key is a
+`CreateContainerConfigError` — the pod never starts. A value nobody had set became a pod nobody
+could start. The sibling apps in this namespace never hit it, because they write their whole
+`.env` including empty values.
+
+> **Please switch to `envFrom: secretRef:`** — what the tables above have always specified, and
+> what `sg-reports` and `sg-api` already do. With `envFrom`, extra keys are inert and absent ones
+> harmless, so DNA's configuration surface can change without a manifest edit. Until then, every
+> key added to or removed from a Secret is a two-sided change that must land on both sides
+> together.
 
 Nothing `VITE_*` appears in either Secret. Those are baked into the JS bundle at build time and are
 already in the browser before a pod starts; a Secret cannot change them. Repointing the front end

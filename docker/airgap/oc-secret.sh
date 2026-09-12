@@ -48,10 +48,27 @@ oc_load_env "$SCRIPT_DIR" "$REPO_ROOT"
 # Nothing VITE_* appears in either: those are baked into the bundle at build time and are already
 # in the browser by the time a pod starts. Putting them in a Secret would imply they could be
 # changed there, which is the misunderstanding most likely to waste an afternoon.
+# REQUIRED keys are written ALWAYS, empty when .env does not set them. OPTIONAL keys are written
+# only when set. The difference is not style, it is what stops a pod refusing to start:
+#
+#   Error: couldn't find key DNA_API_TOKEN in Secret sg/secret-sg-dna-collector
+#
+# The k8s-sg Deployments name keys one at a time (`env: valueFrom: secretKeyRef:`), and such a
+# reference to a key the Secret lacks is a CreateContainerConfigError, not a fallback. This script
+# used to omit every unset key, so a value nobody had set became a pod nobody could start. The
+# sibling apps never hit it because they write their whole .env, empty values included.
+#
+# So: everything a manifest may name lives in REQUIRED and is always present. OPTIONAL is for keys
+# a manifest must NOT name — extras that appear only for a site that wants them, which are inert
+# under either consumption style. Adding a key here is safe; promoting one to REQUIRED is a
+# two-sided change until the manifests move to `envFrom: secretRef:` (see INSTALL_OPEN_SHIFT.md).
+OPTIONAL=()
 case "$APP" in
     ui)
-        # nginx substitutes these into default.conf.template at container start.
-        KEYS=(
+        # nginx substitutes these into default.conf.template at container start. The first three
+        # have NO default in the image: unset, envsubst leaves a literal ${VAR} and nginx refuses
+        # the config, so they must reach the pod even empty.
+        REQUIRED=(
             BACKEND_URL
             REVIEW_SESSIONS_URL
             RECORDING_NETWORK_PATH
@@ -62,27 +79,35 @@ case "$APP" in
             # One share, one identity: nginx must SERVE as the uid that WROTE the files, because
             # the NFS server discounts supplementary groups and knows only the primary uid/gid.
             # Same two keys the collector's `user:` takes, which is why they are not nginx-specific.
+            # On OpenShift the SCC pins runAsUser and the entrypoint can only warn on a mismatch —
+            # they are a consistency check there, and the mechanism on the host deployment.
             COLLECTOR_UID
             COLLECTOR_GID
         )
         ;;
     collector)
-        KEYS=(
+        REQUIRED=(
             # The collector talks to the backend DIRECTLY, not through the UI's nginx: it is a
             # server-side client, and there is no reason to add a proxy hop to a few hundred MB.
             # Same key the UI gets, and the bare address either way — nginx strips the path prefix
             # before proxying, so nothing downstream ever sees /dna/api.
+            #
+            # Wrong or missing, this is the quietest failure in either image: the collector polls
+            # its own localhost forever, logs a retry per pass, and stays "healthy" with no HTTP
+            # probe to contradict it. Hence required, not defaulted.
             BACKEND_URL
-            DNA_API_TOKEN
             RECORDING_NETWORK_PATH
             RECORDING_ARCHIVE_DIR
-            RECORDING_ARCHIVE_TIMEZONE
-            COLLECTOR_POLL_SECONDS
-            COLLECTOR_MAX_PLAYLISTS
             COLLECTOR_SITE
-            RECORDING_POSTER_LEAD_SECONDS
-            LOG_LEVEL
         )
+        # Tuning knobs live in the code's own defaults (poll 10s, queue 25, poster lead 2s,
+        # LOG_LEVEL INFO). They are NOT listed even as optional: a site that needs one adds it
+        # here and to the manifest together, deliberately.
+        #
+        # RECORDING_ARCHIVE_TIMEZONE is not here either, and that is a fix rather than a trim: it
+        # is read by archive_timezone() -> archive_name(), which runs in the BACKEND. The collector
+        # asks the backend for its archive name over HTTP, so the key did nothing on this pod. It
+        # belongs on the backend service — see docker-compose.prod.yml.
         ;;
 esac
 
@@ -91,16 +116,28 @@ esac
 declare -A FIXED=()
 [ "$APP" = "collector" ] && FIXED[COLLECTOR_STAGING_DIR]=/staging
 
-# An UNSET source key is omitted so the image's own default applies. An empty-but-set one is kept:
-# empty is meaningful for several of these (DNA_API_TOKEN empty means the backend runs without
-# auth; APP_BASE_PATH empty means the root).
 ENV_FILE="$(mktemp)"
 chmod 600 "$ENV_FILE"
 trap 'rm -f "$ENV_FILE"' EXIT
 
 INCLUDED=()
+DEFAULTED=()
 OMITTED=()
-for key in "${KEYS[@]}"; do
+
+# Required: always written. `${!key-}` is an unset key read as empty rather than an error, which
+# is the whole point — the key exists in the Secret either way, and empty is a meaningful value
+# for several (APP_BASE_PATH empty means the root; COLLECTOR_SITE empty means the unrouted queue).
+for key in "${REQUIRED[@]}"; do
+    printf '%s=%s\n' "$key" "${!key-}" >> "$ENV_FILE"
+    if [ -n "${!key+set}" ]; then
+        INCLUDED+=("$key")
+    else
+        DEFAULTED+=("$key")
+    fi
+done
+
+# Optional: written only when the site set one.
+for key in "${OPTIONAL[@]}"; do
     if [ -n "${!key+set}" ]; then
         printf '%s=%s\n' "$key" "${!key}" >> "$ENV_FILE"
         INCLUDED+=("$key")
@@ -116,9 +153,15 @@ done
 # Key NAMES only, never values — the transcript and the shell history are both places a secret
 # must not land (see the credential rule in sg-admin/CLAUDE.md).
 echo "Keys for ${SECRET} (namespace ${OC_NAMESPACE}):"
-printf '  %s\n' "${INCLUDED[@]}"
+[ ${#INCLUDED[@]} -gt 0 ] && printf '  %s\n' "${INCLUDED[@]}"
+# Written, but with nothing behind them. Not a warning — empty is the supported value for most of
+# these — but it is what to look at first when a pod starts and behaves as though unconfigured.
+if [ ${#DEFAULTED[@]} -gt 0 ]; then
+    echo "Written empty (not set in .env):"
+    printf '  %s\n' "${DEFAULTED[@]}"
+fi
 if [ ${#OMITTED[@]} -gt 0 ]; then
-    echo "Not set, so left to the image's default:"
+    echo "Not set, so left out entirely — the image's own default applies:"
     printf '  %s\n' "${OMITTED[@]}"
 fi
 

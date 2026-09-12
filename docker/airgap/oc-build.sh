@@ -49,8 +49,6 @@ if [ "$APP" = "ui" ]; then
         --build-arg VITE_FOLLOW_ALONG_SESSIONS_URL="${VITE_FOLLOW_ALONG_SESSIONS_URL:-}" \
         --build-arg VITE_FEATURE_NOTE_QC="${VITE_FEATURE_NOTE_QC:-false}" \
         --build-arg VITE_FEATURE_TRANSCRIPT_PUBLISH="${VITE_FEATURE_TRANSCRIPT_PUBLISH:-false}" \
-        --build-arg VITE_FEATURE_NOTE_LINKS="${VITE_FEATURE_NOTE_LINKS:-false}" \
-        --build-arg VITE_FEATURE_NOTE_SUBJECT="${VITE_FEATURE_NOTE_SUBJECT:-false}" \
         -f "$REPO_ROOT/frontend/Dockerfile" \
         -t "${IMAGE}:${VERSION}" -t "${IMAGE}:latest" \
         "$REPO_ROOT/frontend"

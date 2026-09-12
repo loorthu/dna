@@ -62,7 +62,6 @@ else
     echo
     $DOCKER run --rm --name "$NAME" --user "${RUN_UID}:0" \
         -e BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:9}" \
-        -e DNA_API_TOKEN="${DNA_API_TOKEN:-}" \
         -e COLLECTOR_STAGING_DIR=/staging \
         -e RECORDING_NETWORK_PATH="${RECORDING_NETWORK_PATH:-/shots}" \
         ${RECORDING_ARCHIVE_DIR:+-e RECORDING_ARCHIVE_DIR="$RECORDING_ARCHIVE_DIR"} \

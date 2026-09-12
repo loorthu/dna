@@ -31,6 +31,12 @@ COPY packages/core/ ./packages/core/
 COPY packages/app/ ./packages/app/
 
 # Build arguments for API URLs and authentication (baked into the static build)
+# Only the VITE_* that a build path actually passes are declared. Several used to be listed here
+# and were passed by neither docker-compose.frontend.yml nor oc-build.sh, so they were unset in
+# every image we have ever built — an ARG that looks like a knob and is wired to nothing. The
+# transcription/in-review/AI trio stays user-toggleable at runtime; the tab-sync pair is for an
+# extension that is loaded unpacked by developers; note links and note subject are now constants
+# in FeatureFlagsContext, because neither is a decision a deployment gets to make.
 ARG VITE_API_BASE_URL
 ARG VITE_WS_URL
 # Where the app is mounted. Empty/unset means the root, which is every deployment except one
@@ -46,13 +52,6 @@ ARG VITE_FOLLOW_ALONG_TOPIC
 ARG VITE_FOLLOW_ALONG_SESSIONS_URL
 ARG VITE_FEATURE_NOTE_QC
 ARG VITE_FEATURE_TRANSCRIPT_PUBLISH
-ARG VITE_FEATURE_NOTE_LINKS
-ARG VITE_FEATURE_NOTE_SUBJECT
-ARG VITE_FEATURE_TRANSCRIPTION
-ARG VITE_FEATURE_IN_REVIEW
-ARG VITE_FEATURE_AI
-ARG VITE_PRODTRACK_TAB_SYNC_EXTENSION_ID
-ARG VITE_PRODTRACK_TAB_SYNC_INSTALL_URL
 
 # Set environment variables for build
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
@@ -66,13 +65,6 @@ ENV VITE_FOLLOW_ALONG_TOPIC=$VITE_FOLLOW_ALONG_TOPIC
 ENV VITE_FOLLOW_ALONG_SESSIONS_URL=$VITE_FOLLOW_ALONG_SESSIONS_URL
 ENV VITE_FEATURE_NOTE_QC=$VITE_FEATURE_NOTE_QC
 ENV VITE_FEATURE_TRANSCRIPT_PUBLISH=$VITE_FEATURE_TRANSCRIPT_PUBLISH
-ENV VITE_FEATURE_NOTE_LINKS=$VITE_FEATURE_NOTE_LINKS
-ENV VITE_FEATURE_NOTE_SUBJECT=$VITE_FEATURE_NOTE_SUBJECT
-ENV VITE_FEATURE_TRANSCRIPTION=$VITE_FEATURE_TRANSCRIPTION
-ENV VITE_FEATURE_IN_REVIEW=$VITE_FEATURE_IN_REVIEW
-ENV VITE_FEATURE_AI=$VITE_FEATURE_AI
-ENV VITE_PRODTRACK_TAB_SYNC_EXTENSION_ID=$VITE_PRODTRACK_TAB_SYNC_EXTENSION_ID
-ENV VITE_PRODTRACK_TAB_SYNC_INSTALL_URL=$VITE_PRODTRACK_TAB_SYNC_INSTALL_URL
 
 # Build the application (vite handles transpilation, skip tsc type checking)
 WORKDIR /app/packages/app
@@ -102,6 +94,14 @@ COPY --from=builder /app/packages/app/dist /usr/share/nginx/html
 # envsubst only replaces variables present in the environment, so an unset one would leave the
 # literal ${APP_BASE_PATH} in the rendered config and nginx would refuse to start.
 ENV APP_BASE_PATH=
+
+# Where nginx forwards /review-sessions. Declared with a DEAD LOCAL PORT rather than left unset,
+# for the reason APP_BASE_PATH is declared empty above: envsubst only replaces variables present
+# in the environment, so an unset one leaves a literal ${REVIEW_SESSIONS_URL} inside proxy_pass
+# and nginx refuses the config. A site with no session directory would then crash-loop over a
+# feature it never asked for. The dead port renders a valid block and makes the picker simply
+# unavailable, which is what "off" should look like.
+ENV REVIEW_SESSIONS_URL=http://127.0.0.1:9
 
 # Which deployment this front end is, sent to the backend on every dispatch so the recording is
 # collected by the collector beside it. Declared EMPTY for the same reason as APP_BASE_PATH — and

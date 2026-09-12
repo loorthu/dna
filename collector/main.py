@@ -8,7 +8,6 @@ loop, and shutting down cleanly. Keeping the split sharp is what makes the inter
 Configuration, all via environment:
 
     BACKEND_URL              where DNA's API answers        (default http://localhost:8000)
-    DNA_API_TOKEN            bearer token, if AUTH_PROVIDER is not "none"
     COLLECTOR_STAGING_DIR    scratch space for parts        (default /staging)
     RECORDING_NETWORK_PATH   the share ROOT nginx serves    (default /net/media/dna-recordings)
     RECORDING_ARCHIVE_DIR    which directory a show's recordings go in, with `{show}` standing
@@ -42,7 +41,7 @@ from dna.recording_collector import (  # noqa: E402
 )
 
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
 )
 logger = logging.getLogger("collector")
@@ -55,15 +54,17 @@ class DnaCollectorClient:
     reaches Vexa, and it holds the API key so that credential never crosses over.
     """
 
-    def __init__(
-        self, base_url: str, token: Optional[str] = None, timeout: float = 120.0
-    ):
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
+    # NO CREDENTIAL, deliberately. DNA authenticates people, not programs: every route runs
+    # through get_current_user, which turns a bearer token into a USER via the configured
+    # provider. There is nothing a machine can present. The token this used to send was inert
+    # under AUTH_PROVIDER=none (the noop provider reads the token AS the email) and would have
+    # 401'd under `google`, where only a real ID token validates — so it named a capability
+    # that has never existed. Switching auth on needs a machine-auth design first; a static
+    # string in a Secret is not one.
+    def __init__(self, base_url: str, timeout: float = 120.0):
         # A generous timeout: a part is a few MB over a link whose characteristics are not
         # documented anywhere, and a slow fetch that completes beats a fast one that fails.
-        self.client = httpx.AsyncClient(
-            base_url=base_url.rstrip("/"), headers=headers, timeout=timeout
-        )
+        self.client = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout)
 
     async def aclose(self) -> None:
         await self.client.aclose()
@@ -263,7 +264,7 @@ async def run_forever() -> None:
     _require_writable(staging, "COLLECTOR_STAGING_DIR")
     _require_reachable(archive, "RECORDING_NETWORK_PATH")
 
-    client = DnaCollectorClient(base_url, os.environ.get("DNA_API_TOKEN"))
+    client = DnaCollectorClient(base_url)
     collector = RecordingCollector(
         client=client,
         staging_dir=staging,
