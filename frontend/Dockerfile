@@ -32,8 +32,8 @@ COPY packages/app/ ./packages/app/
 
 # Build arguments for API URLs and authentication (baked into the static build)
 # Only the VITE_* that a build path actually passes are declared. Several used to be listed here
-# and were passed by neither docker-compose.frontend.yml nor oc-build.sh, so they were unset in
-# every image we have ever built — an ARG that looks like a knob and is wired to nothing. The
+# and were passed by no build path at all, so they were unset in every image we have ever built —
+# an ARG that looks like a knob and is wired to nothing. The
 # transcription/in-review/AI trio stays user-toggleable at runtime; the tab-sync pair is for an
 # extension that is loaded unpacked by developers; note links and note subject are now constants
 # in FeatureFlagsContext, because neither is a decision a deployment gets to make.

@@ -20,14 +20,14 @@
 # Idempotent — `oc create ... --dry-run=client | oc apply` upserts whether or not it exists.
 #
 # After applying, restart the Deployment: envFrom is read at pod start, not live.
-#   ./docker/airgap/oc-rollout.sh <app>
+#   ./docker/airgap/oc.sh rollout <app>
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/oc-common.sh"
+. "$SCRIPT_DIR/common.sh"
 
 oc_resolve_app "${1:-}" || { echo "Usage: $0 {ui|collector} [--diff]" >&2; exit 1; }
 shift
@@ -188,4 +188,4 @@ oc create secret generic "$SECRET" \
 
 echo
 echo "Done. Restart the deployment to pick it up (envFrom is read at pod start):"
-echo "  ./docker/airgap/oc-rollout.sh ${APP}"
+echo "  ./docker/airgap/oc.sh rollout ${APP}"

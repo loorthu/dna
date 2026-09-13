@@ -1,7 +1,12 @@
-# Shared by the oc-* scripts. Sourced, not run.
+# Shared by push.sh, run.sh, oc.sh and oc-secret.sh. Sourced, not run.
 #
-# One place for the two things every one of them needs: what an app is CALLED in the cluster, and
-# the layered env files it is configured from.
+# One place for the two things they all need: what an app is CALLED in the cluster, and the
+# layered env files it is configured from. The functions keep an `oc_` prefix because that is what
+# they are about — cluster naming and a cluster login — even though push.sh and run.sh talk to a
+# registry and a local daemon rather than to OpenShift.
+#
+# build.sh does NOT source this: it layers env through `docker compose --env-file` rather than by
+# sourcing, so the values reach the build as compose interpolation instead of as shell exports.
 
 # The `sg` namespace's naming, matching the sibling sg-admin apps
 # (image sg-admin-<app> -> Deployment sg-<app> -> Service sg-<app>-service -> Secret secret-sg-<app>).

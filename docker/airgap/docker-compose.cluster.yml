@@ -1,0 +1,48 @@
+# Build-time overlay for the OpenShift images. Layered OVER docker-compose.frontend.yml:
+#
+#   docker compose -f docker-compose.frontend.yml -f docker-compose.cluster.yml build
+#
+# WHY AN OVERLAY, not a second build script. The two deployments build the SAME Dockerfiles from
+# the SAME sources and differ in four things, all of them expressible here. They used to differ in
+# a hand-maintained `docker build` invocation instead, which meant every VITE_* build arg was
+# written out twice and their defaults had already drifted apart (VITE_API_BASE_URL defaulted to
+# /api in compose and to empty in the script). One list, one place, no drift.
+#
+# The old script's stated reason for existing — that compose cannot pass a BuildKit named context —
+# stopped being true: the collector's `dna` context is declared in the base file and works.
+#
+# What genuinely differs, and is therefore all that lives here:
+#
+#   1. IMAGE NAME. The cluster's front end is `dna-ui` (Deployment sg-dna), the host's is
+#      `dna-frontend`. Same image, different name, because the two deployments are named by
+#      different conventions and a shared name would make `docker images` ambiguous.
+#   2. TAG. `VERSION` rather than DNA_TAG — releases to Artifactory are immutable and ArgoCD
+#      deploys by tag, so the cluster tag is a release number, not a moving label. build.sh
+#      exports DNA_TAG from VERSION for a cluster build.
+#   3. PLATFORM. The cluster is linux/amd64 whatever the build host is.
+#   4. BASE IMAGES. Pulled through the registry mirror, because a cluster build may run where
+#      Docker Hub is not reachable. The public names are the Dockerfile defaults, so this is the
+#      only place a mirror is named.
+#
+# NOT here: anything runtime. Ports, volumes and `environment:` in the base file are for the host
+# deployment's containers; the cluster's runtime config arrives as a Secret. `docker compose build`
+# reads only the build blocks, so the rest is inert — but it is still interpolated, which is why a
+# cluster build wants BACKEND_URL set in .env even though it bakes nothing from it.
+
+services:
+  frontend:
+    image: dna-ui:${DNA_TAG:-latest}
+    build:
+      platforms:
+        - ${BUILD_PLATFORM:-linux/amd64}
+      args:
+        NODE_IMAGE: ${REGISTRY_MIRROR:-docker.io}/node:20-alpine
+        NGINX_IMAGE: ${REGISTRY_MIRROR:-docker.io}/nginx:alpine
+
+  collector:
+    image: dna-collector:${DNA_TAG:-latest}
+    build:
+      platforms:
+        - ${BUILD_PLATFORM:-linux/amd64}
+      args:
+        PYTHON_IMAGE: ${REGISTRY_MIRROR:-docker.io}/python:3.11-slim

@@ -71,6 +71,22 @@ On an internet machine (leave `NPM_REGISTRY` empty → public):
 `./docker/airgap/build.sh && ./docker/airgap/save.sh` → copy `dist/*` → prod
 `./docker/airgap/load.sh && ./docker/airgap/up.sh`.
 
+## The scripts
+
+Ten, split by what they talk to. The `oc-` prefix means "needs a cluster login" and nothing else —
+pushing to Artifactory and running an image locally are Docker work, so they are not `oc-`.
+
+| | |
+|---|---|
+| `build.sh [host\|cluster] [ui\|collector]` | build images. One path for both targets; the cluster's four differences live in `docker-compose.cluster.yml` |
+| `up.sh` / `down.sh` | start and stop the host deployment |
+| `save.sh` / `load.sh` | image tarballs, for moving builds to a host with no registry |
+| `run.sh <app>` | run a built image locally as an arbitrary high uid, the way OpenShift will |
+| `push.sh <app>` | tag and push the versioned image to Artifactory |
+| `oc-secret.sh <app>` | write the pod's Secret from the layered `.env` files |
+| `oc.sh {rollout\|logs\|shell} <app>` | act on a running pod |
+| `common.sh` | sourced, not run — cluster naming and the env layering |
+
 ## Meeting recordings
 
 `collector/` (at the repo root — it belongs to the recording feature, not to this
@@ -101,10 +117,11 @@ copy waiting to drift, so `.env.openshift` holds only the four keys it does chan
 and the three URLs that follow from it) and inherits the rest.
 
 ```sh
-./docker/airgap/oc-build.sh ui          # .env + .env.openshift, base images via Artifactory
-./docker/airgap/oc-run.sh   ui          # runs as uid 1000710000 — the OpenShift case, not root
-./docker/airgap/oc-push.sh  ui          # versioned tag only, to Artifactory
+./docker/airgap/build.sh cluster ui     # .env + .env.openshift, base images via Artifactory
+./docker/airgap/run.sh ui               # as uid 1000710000 — the OpenShift case, not root
+./docker/airgap/push.sh ui              # versioned tag only, to Artifactory
 ./docker/airgap/oc-secret.sh ui --diff  # key NAMES only, never values
+./docker/airgap/oc.sh rollout ui        # after a Secret change
 ```
 
 `oc-secret.sh` is worth one line of explanation: it is this compose file's `environment:` block,
@@ -113,7 +130,7 @@ for the cluster. One `.env`, two Secrets, and every key spelled the same in all 
 both pods under those names, because each is one value described once.
 
 Deploying a new image is **not** done from here: the namespace is ArgoCD-managed, so the tag is set
-in the `k8s-sg` repo. `oc-push.sh` prints what to hand over. The full contract — mounts, the uid,
+in the `k8s-sg` repo. `push.sh` prints what to hand over. The full contract — mounts, the uid,
 probes, secret keys — is in [INSTALL_OPEN_SHIFT.md](INSTALL_OPEN_SHIFT.md), beside this file.
 
 ## Notes

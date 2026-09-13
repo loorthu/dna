@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run a built image locally, the way the cluster will run it, before pushing.
-# Usage: ./docker/airgap/oc-run.sh {ui|collector}
+# Usage: ./docker/airgap/run.sh {ui|collector}
 #
 # The point is the UID. OpenShift assigns an arbitrary, high, non-root uid per namespace, and both
 # images behave differently under one: nginx cannot write /var/run or /var/cache, and the
@@ -16,7 +16,7 @@ DOCKER="${DOCKER:-docker}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # shellcheck disable=SC1091
-. "$SCRIPT_DIR/oc-common.sh"
+. "$SCRIPT_DIR/common.sh"
 
 oc_resolve_app "${1:-}" || { echo "Usage: $0 {ui|collector}" >&2; exit 1; }
 oc_load_env "$SCRIPT_DIR" "$REPO_ROOT"

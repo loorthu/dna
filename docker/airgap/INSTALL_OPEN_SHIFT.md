@@ -251,37 +251,43 @@ Bump `docker/proxy/VERSION` and roll that image.
 Requires Artifactory access and `docker login docker-local.artifactory.spimageworks.com`.
 
 ```bash
-./docker/airgap/oc-build.sh ui
-./docker/airgap/oc-run.sh   ui          # runs as uid 1000710000 — the OpenShift case
-./docker/airgap/oc-push.sh  ui
+./docker/airgap/build.sh cluster ui
+./docker/airgap/run.sh   ui          # runs as uid 1000710000 — the OpenShift case
+./docker/airgap/push.sh  ui
 
-./docker/airgap/oc-build.sh collector
-./docker/airgap/oc-push.sh  collector
+./docker/airgap/build.sh cluster collector
+./docker/airgap/push.sh  collector
 ```
 
 Configuration comes from `docker/airgap/.env` layered with `docker/airgap/.env.openshift` — the
 same file the host deployment uses, plus the four keys the cluster changes. Bump
 `docker/airgap/VERSION` before a release; only the versioned tag is pushed, never `:latest`.
 
-The images are built by hand rather than by an OpenShift `BuildConfig` because the collector needs
-a BuildKit **named build context** (`--build-context dna=backend/src/dna`) to take its collection
-logic from the backend package, which the Docker build strategy cannot pass. This is the same model
-`sg-admin` uses.
+Both targets build through the same compose file. `build.sh cluster` layers
+`docker-compose.cluster.yml` over it, which is the only place the four cluster-specific facts live:
+the image name (`dna-ui`), the tag (`VERSION` rather than `DNA_TAG`), `linux/amd64`, and base
+images through the Artifactory mirror. Everything else — the Dockerfiles, the sources, every
+`VITE_*` build arg — is shared, so the two images cannot drift apart by accident.
+
+They are still built here rather than by an OpenShift `BuildConfig`: the collector needs a BuildKit
+**named build context** (`dna: ../../backend/src/dna`) to take its collection logic from the backend
+package rather than a vendored copy, and the Docker build strategy cannot pass one. Compose can,
+which is why this no longer needs a bespoke `docker build` invocation.
 
 ## Secrets and rollouts
 
 ```bash
 ./docker/airgap/oc-secret.sh ui --diff     # key names only, never values
 ./docker/airgap/oc-secret.sh ui
-./docker/airgap/oc-rollout.sh ui           # envFrom is read at pod start, not live
-./docker/airgap/oc-logs.sh collector
+./docker/airgap/oc.sh rollout ui           # envFrom is read at pod start, not live
+./docker/airgap/oc.sh logs collector
 ```
 
 ## Deploying a new image
 
 **The `sg` namespace is managed by ArgoCD. Do not `oc set image`** — it will be reconciled back to
 whatever the GitOps repo says. Ask the platform team to set the tag in
-<https://gitlab.spimageworks.com/spi/dev/dev-ops/k8s-sg>; `oc-push.sh` prints the deployment name
+<https://gitlab.spimageworks.com/spi/dev/dev-ops/k8s-sg>; `push.sh` prints the deployment name
 and the full image path to hand over.
 
 ---
@@ -290,9 +296,9 @@ and the full image path to hand over.
 
 1. `https://sg.spimageworks.com/dna/` loads. In the network tab: assets under `/dna/`, the API
    under `/dna/api/`, and a WebSocket to `wss://sg.spimageworks.com/dna/ws`.
-2. `./docker/airgap/oc-shell.sh ui`, then `ls -L` a known archive under `/shots`. A dangling
+2. `./docker/airgap/oc.sh shell ui`, then `ls -L` a known archive under `/shots`. A dangling
    symlink here means `/net` is missing — the failure that otherwise looks like a missing file.
-3. `./docker/airgap/oc-logs.sh collector` shows the writability probe passing on **both** mounts,
+3. `./docker/airgap/oc.sh logs collector` shows the writability probe passing on **both** mounts,
    then the poll loop.
 4. One real meeting end to end: mirrored, muxed, written under the show's dated directory, recorded
    in DNA, upstream copy released, and the Recording tab plays it back **with seeking** — Range
