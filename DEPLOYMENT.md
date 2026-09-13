@@ -367,9 +367,14 @@ The following secrets must be configured in GitHub repository settings:
 | `VITE_AUTH_PROVIDER` | `none` for local (noop/email sign-in); `google` for Google OAuth |
 | `VITE_GOOGLE_CLIENT_ID` | Google OAuth Client ID (required when `VITE_AUTH_PROVIDER=google`) |
 | `VITE_FEATURE_NOTE_QC` | Default `false`. Note QC runs an LLM pass over every draft when the Publish dialog opens, so it stays off unless a site opts in. Off also hides the Note QC settings section. Requires AI to be enabled; AI note generation is unaffected by this flag. |
-| `VITE_FEATURE_NOTE_SUBJECT` | Default `false`. Shows the note Subject field. Off because ShotGrid writes subjects itself — every note on an SPI site has a tool-generated one, and a playlist note's is the playlist name as it stood when the note was seeded. Publishing still echoes the mirrored subject back unchanged; only the input is hidden. |
-| `VITE_FEATURE_NOTE_LINKS` | Default `false`. Shows the Links field on a note, which adds extra ShotGrid `note_links` beyond the Version, Playlist and parent Shot/Asset that publish attaches automatically. Off because links are sent only on a note's first publish — `update_note` does not re-send them, so links added later never reach ShotGrid. |
 | `VITE_FEATURE_TRANSCRIPT_PUBLISH` | Default `false`. Shows the per-version transcript checkboxes in the Publish dialog. Must be kept in step with the backend's `DNA_ENABLE_TRANSCRIPT_PUBLISH` — see [Transcript Publishing Setup](#transcript-publishing-setup-optional-issue-120). |
+
+The note **Subject** and **Links** fields are no longer configurable. Both are constants in
+`FeatureFlagsContext.tsx`, alongside `ADDRESSING_FIELDS_ENABLED`, because neither is a decision a
+deployment can make correctly: links reach ShotGrid only on a note's first publish (`update_note`
+never re-sends them, so links added later are lost), and subjects are written by ShotGrid, so a
+hand-typed one would be the only one on the site. Enabling either meant shipping a field that
+silently loses data. Flip the constant when its half is finished.
 
 ---
 

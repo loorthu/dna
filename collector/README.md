@@ -153,7 +153,9 @@ The pinned version determines the ffmpeg version — 0.6.0 carries 7.0.2, while 
 | `RECORDING_ARCHIVE_DIR` | `<root>/{show}` | which directory a show's recordings go in; must resolve under the root |
 | `COLLECTOR_POLL_SECONDS` | `10` | |
 | `COLLECTOR_MAX_PLAYLISTS` | `25` | work-queue depth per pass |
-| `COLLECTOR_UID` / `COLLECTOR_GID` | `1000` / `1000` | who the archives end up owned by |
+| `COLLECTOR_SITE` | *(empty)* | which side's recordings to collect. Empty asks for the UNROUTED queue, which is the whole queue when one collector exists. With more than one, every deployment needs its own name, and it must match the value the front end sends as `X-DNA-Site` — a front end naming a site no collector asks for is a recording nothing ever archives |
+| `LOG_LEVEL` | `INFO` | uppercased before use, so `debug` is accepted |
+| `COLLECTOR_UID` / `COLLECTOR_GID` | `1000` / `1000` | who the archives end up owned by. Not read by the collector itself — they are the container's `user:`, and the front end serves the share as the same identity |
 | `RECORDING_POSTER_LEAD_SECONDS` | `2` | how far into a shot's span its thumbnail is taken from |
 
 Staging is a named volume rather than a bind or a tmpfs precisely because a half-mirrored meeting

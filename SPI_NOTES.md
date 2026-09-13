@@ -385,8 +385,8 @@ addressings, so what goes out is down to our site's subscriptions on the linked 
 | Thing | Where | Why |
 |---|---|---|
 | To / CC on a note | `ADDRESSING_FIELDS_ENABLED` in `NoteOptionsInline.tsx` | `publish_notes` passes `to_users=[], cc_users=[]` (`main.py`, `# TODO: Parse to/cc`). The fields promised a notification that never went out, and To's *(required)* marker gated nothing. A constant, not a flag: no deployment makes them work. |
-| Links on a note | `VITE_FEATURE_NOTE_LINKS` | Links reach SG only on a note's **first** publish; `update_note` writes content and subject only, so links added afterwards silently go nowhere. Publish already attaches Version + Playlist + parent Shot/Asset by itself, so the field only ever added reach beyond those. |
-| Subject on a note | `VITE_FEATURE_NOTE_SUBJECT` | ShotGrid writes subjects; reviewers do not. Measured below. |
+| Links on a note | `NOTE_LINKS_ENABLED` in `FeatureFlagsContext.tsx` | Links reach SG only on a note's **first** publish; `update_note` writes content and subject only, so links added afterwards silently go nowhere. Publish already attaches Version + Playlist + parent Shot/Asset by itself, so the field only ever added reach beyond those. Was `VITE_FEATURE_NOTE_LINKS`; now a constant, for the same reason as the row above — no deployment can make it work. |
+| Subject on a note | `NOTE_SUBJECT_ENABLED` in `FeatureFlagsContext.tsx` | ShotGrid writes subjects; reviewers do not. Measured below. Was `VITE_FEATURE_NOTE_SUBJECT`; now a constant. |
 | Note QC | `VITE_FEATURE_NOTE_QC` | An ASWF feature we are not using. It was on: `get_qc_checks` **auto-seeded** an "Action Item Check" per user on first read, so everyone who had opened the Publish dialog had one, costing an LLM call per draft each time it opened. Seeding removed; the four already-seeded rows were deleted from Mongo (all the default, no custom ones). |
 | Transcript checkboxes in Publish | `VITE_FEATURE_TRANSCRIPT_PUBLISH` | The backend flag was already `false` everywhere, but the dialog still showed per-version checkboxes, **default-checked**, firing calls that 404'd into `Promise.allSettled` and vanished. |
 
