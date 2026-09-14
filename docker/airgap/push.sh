@@ -25,8 +25,22 @@ VERSION="$(tr -d '[:space:]' < "$SCRIPT_DIR/VERSION")"
 REGISTRY="${REGISTRY:-docker-local.artifactory.spimageworks.com/gitlab/spi/dev/infrastructure/web}"
 REGISTRY_TAG="${REGISTRY}/${IMAGE}:${VERSION}"
 
-if ! $DOCKER image inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
-    echo "Error: ${IMAGE}:${VERSION} not found locally. Run ./docker/airgap/build.sh cluster ${APP} first." >&2
+# Two different failures wear the same exit code here, and telling them apart is the difference
+# between "build it" and "you are not the user who built it". A daemon this user cannot reach
+# reports the image as absent, which sent somebody to rebuild an image that already existed.
+if ! err="$($DOCKER image inspect "${IMAGE}:${VERSION}" 2>&1 >/dev/null)"; then
+    case "$err" in
+        *"permission denied"*|*"Cannot connect to the Docker daemon"*|*"docker daemon is not running"*)
+            echo "Error: cannot reach the Docker daemon as $(id -un)." >&2
+            echo "       ${IMAGE}:${VERSION} may well exist — this cannot see it. If you built with" >&2
+            echo "       sudo, push with sudo too; the image belongs to whichever daemon built it." >&2
+            echo "       ($err)" >&2
+            ;;
+        *)
+            echo "Error: ${IMAGE}:${VERSION} not found locally." >&2
+            echo "       Run ./docker/airgap/build.sh cluster ${APP} first." >&2
+            ;;
+    esac
     exit 1
 fi
 

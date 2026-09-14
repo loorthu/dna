@@ -168,11 +168,18 @@ fi
 if [ "$DIFF_ONLY" = "1" ]; then
     echo
     echo "Keys currently in ${SECRET}:"
-    if oc get secret "$SECRET" -n "$OC_NAMESPACE" >/dev/null 2>&1; then
+    # "Absent" and "could not look" are different answers, and only one of them means the apply
+    # will create it. Reporting a Secret as missing to somebody who is merely logged out invites
+    # them to apply over one that already exists.
+    if ! oc whoami >/dev/null 2>&1; then
+        echo "  (unknown — not logged in to OpenShift, so the live Secret cannot be read)"
+    elif err="$(oc get secret "$SECRET" -n "$OC_NAMESPACE" 2>&1 >/dev/null)"; then
         oc get secret "$SECRET" -n "$OC_NAMESPACE" \
             -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}' | sort | sed 's/^/  /'
-    else
+    elif [ "${err#*NotFound}" != "$err" ] || [ "${err#*not found}" != "$err" ]; then
         echo "  (does not exist yet — apply will create it)"
+    else
+        echo "  (could not be read: $err)"
     fi
     exit 0
 fi

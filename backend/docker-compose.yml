@@ -46,6 +46,12 @@ services:
       # Serves the cut list that tells a player where each version was discussed in the
       # meeting recording. Recording a given meeting is asked for per meeting, not here.
       - DNA_ENABLE_RECORDING_PLAYBACK=false
+      # The clock a recording's date directory and filename timestamp are rendered in.
+      # THIS service does the naming — the collector asks for the name over HTTP rather
+      # than deriving it — so this is the only place the setting has any effect. Declared
+      # here because compose passes only what a service declares: set anywhere else and
+      # it is silently inert, which is what it was until now.
+      - RECORDING_ARCHIVE_TIMEZONE=America/Los_Angeles
       - DNA_ENABLE_TRANSCRIPT_PUBLISH=false
       # Lets DELETE /playlists/{id}/data forget a playlist's transcript, metadata and
       # draft notes, so a test can be re-run from a host that has only the API. Off

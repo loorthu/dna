@@ -23,6 +23,13 @@ IMAGES=( "dna-backend:$TAG" "dna-frontend:$TAG" "dna-collector:$TAG" "mongo:7" )
 echo "==> Images to save:"
 printf '      %s\n' "${IMAGES[@]}"
 
+# One unreachable daemon would otherwise mark every image MISSING and send you to rebuild what
+# you already have — so check the daemon once, first, and say which failure this is.
+if ! err="$(docker info 2>&1 >/dev/null)"; then
+  echo "Error: cannot reach the Docker daemon as $(id -un). ($err)" >&2
+  echo "       If you built with sudo, save with sudo too." >&2
+  exit 1
+fi
 missing=0
 for img in "${IMAGES[@]}"; do
   if ! docker image inspect "$img" >/dev/null 2>&1; then

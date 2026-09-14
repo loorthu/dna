@@ -54,8 +54,14 @@ oc_load_env() {
 }
 
 oc_require_login() {
+    if ! command -v oc >/dev/null 2>&1; then
+        echo "Error: the 'oc' client is not on PATH." >&2
+        return 1
+    fi
+    # Note for the sudo case: oc reads $KUBECONFIG or \$HOME/.kube/config, and sudo resets HOME,
+    # so a session that works as you looks logged out as root. These scripts need no privileges.
     if ! oc whoami >/dev/null 2>&1; then
-        echo "Error: not logged in to OpenShift. Run 'oc login' first." >&2
+        echo "Error: not logged in to OpenShift (as $(id -un)). Run 'oc login' first." >&2
         return 1
     fi
 }
